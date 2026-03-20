@@ -31,6 +31,7 @@ load File.join(__dir__, "config.in.rb")
 # --- Detect toolchain ---
 CC = ENV["CC"] || "cc"
 AR = ENV["AR"] || "ar"
+CLANG_FORMAT = RUBY_PLATFORM =~ /darwin/ ? "xcrun clang-format" : "clang-format"
 
 BASE_CFLAGS = "-std=c23 -Wall -Wextra -Werror -pedantic"
 EXTRA_CFLAGS = $mode_cflags.fetch(MODE, "")
@@ -96,6 +97,17 @@ File.open("build.ninja", "w") do |f|
   # Default: build everything
   all = $exes.map { |e| "#{BUILDDIR}/#{e[:name]}" }
   f.puts "default #{all.join(' ')}"
+  f.puts ""
+
+  # Format
+  all_srcs = ($libs.flat_map { |l| l[:srcs] } + $exes.flat_map { |e| e[:srcs] }).uniq
+  all_hdrs = all_srcs.flat_map { |s| [s.sub(/\.c$/, '.h'), s.sub(/\.c$/, '_intern.h')] }.select { |h| File.exist?(h) }
+  fmt_files = (all_srcs + all_hdrs).sort.uniq.join(' ')
+  f.puts "rule format"
+  f.puts "  command = #{CLANG_FORMAT} -i $in"
+  f.puts "  description = FORMAT"
+  f.puts ""
+  f.puts "build format: format #{fmt_files}"
 end
 
 puts "Generated build.ninja (mode=#{MODE}, cc=#{CC})"

@@ -19,7 +19,7 @@ And we pass `data` pointer around for ease of use.
 Resulting code:
 
 - src/ustr.h
-  - Basic API `ustr_new(size_t sz, char* data)`, `ustr_del(char* s)`
+  - Basic API `ustr_new(size_t sz, char* data, int32_t* err)`, `ustr_del(char* s)`
   - Codepoint iterator by scanning marks, which also trackes line and col.
     - iterator can start from middle of string by an offset
   - Slicing `ustr_slice(char* s, int32_t cp_start, int32_t cp_end)`

@@ -1,0 +1,31 @@
+A Automaton compiler, generates LLVM IR.
+
+Automaton matching is UTF-8 based, it expects inputs codepoint by codepoint (int).
+
+- Basic interface: `aut_new(function_name, source_file_name)`, `aut_del()`
+- `aut_transition(dfa, TransitionDef tdef, DebugInfo di) -> int32_t to_state_id`
+  - arg `tdef`: `{int32_t from_state_id, int32_t cp_start, int32_t cp_end_inclusive, int32_t action_id}`
+    - init state: 0
+    - special cp: `-1` for beginning of string, `-2` for end of string
+    - action_id:
+      - multiple transitions can result in same action_id
+      - 0: no trigger action
+      - -1: when this happens, return invalid match, useful for defining word boundaries
+      - note that we don't need special handling for 0 or -1
+  - arg `di`: `{int32_t source_file_line, int32_t source_file_col}`
+- `aut_epsilon(dfa, from_state, to_state)`
+  - define epsilon transition
+- `aut_optimize(dfa)`
+  - brzozowski
+- `aut_gen_dfa(dfa, IRWriter writer)`
+  - Generates function in LLVM IR
+  - C calling convention
+  - signature: `(int32_t state, int codepoint) -> (int32_t new_state, int32_t action_id)`
+  - returns the smallest action_id possible
+    - 0 for no action
+    - -1 for user defined transition invalid
+    - -2 for undefined transition invalid
+    - note that we don't need special handling for 0 or -1 because we have the `smallest` rule
+- IR also encodes debug infomation so lldb step-by-step can show the regexp source:
+  - utilize dfa's `source_file_name`
+  - utilize iterator's `line` and `col`
