@@ -7,6 +7,9 @@ lib "irwriter",
 lib "bitset",
   srcs: %w[src/bitset.c]
 
+lib "aut",
+  srcs: %w[src/aut.c]
+
 exe "test_ustr",
   srcs: %w[test/test_ustr.c src/ustr_naive.c],
   deps: %w[ustr]
@@ -22,6 +25,10 @@ exe "test_bitset",
 exe "bench_ustr",
   srcs: %w[test/bench_ustr.c src/ustr_naive.c],
   deps: %w[ustr]
+
+exe "test_aut",
+  srcs: %w[test/test_aut.c],
+  deps: %w[aut irwriter bitset]
 
 debug   cflags: "-O0 -g -fsanitize=address -fsanitize=undefined"
 release cflags: "-O2"

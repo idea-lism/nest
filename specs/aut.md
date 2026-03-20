@@ -2,9 +2,11 @@ A Automaton compiler, generates LLVM IR.
 
 Automaton matching is UTF-8 based, it expects inputs codepoint by codepoint (int).
 
+The building model is NFA, output is DFA.
+
 - Basic interface: `aut_new(function_name, source_file_name)`, `aut_del()`
-- `aut_transition(dfa, TransitionDef tdef, DebugInfo di) -> int32_t to_state_id`
-  - arg `tdef`: `{int32_t from_state_id, int32_t cp_start, int32_t cp_end_inclusive, int32_t action_id}`
+- `aut_transition(dfa, TransitionDef tdef, DebugInfo di)`
+  - arg `tdef`: `{int32_t from_state_id, int32_t to_state_id, int32_t cp_start, int32_t cp_end_inclusive, int32_t action_id}`
     - init state: 0
     - special cp: `-1` for beginning of string, `-2` for end of string
     - action_id:
@@ -18,19 +20,21 @@ Automaton matching is UTF-8 based, it expects inputs codepoint by codepoint (int
 - `aut_optimize(dfa)`
   - brzozowski
   - utilize bitset.h / bitset.c
-- `aut_gen_dfa(dfa, IRWriter writer)`
+- `aut_gen_dfa(dfa, IRWriter writer, debug_mode)`
   - Generates function in LLVM IR
   - C calling convention
-  - signature: `(int32_t state, int codepoint) -> (int32_t new_state, int32_t action_id)`
+  - signature: `(int32_t state, int cp) -> (int32_t new_state, int32_t action_id)`
   - char group range matching:
     - just generate a flat switch case, llvm can optimize this
+    - single char check code: `if (cp == ...)`
+    - range check code: `if (cp >= ... && cp <= ...)`, don't enumerate chars. llvm can optimize small range checks
   - returns the smallest action_id possible
     - 0 for no action
     - -1 for user defined transition invalid
     - -2 for undefined transition invalid
     - note that we don't need special handling for 0 or -1 because we have the `smallest` rule
   - dead state input:
-    - should not happen, abort() in debug mode (assert(false)), but still return `{last_state, -2}`
+    - should not happen, when in `debug_mode`, make debugger break at the trap, but still return `{last_state, -2}`
 - IR also encodes debug infomation so lldb step-by-step can show the regexp source:
   - utilize dfa's `source_file_name`
   - utilize iterator's `line` and `col`

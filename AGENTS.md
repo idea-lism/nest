@@ -11,3 +11,4 @@ Code style:
 
 - types use camel case
 - vars & functions use snake case
+- use stdint. for example, `int32_t` instead of `int`

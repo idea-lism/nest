@@ -28,6 +28,9 @@ struct IrWriter {
   const char* target_triple;
   const char* source_file;
   const char* directory;
+  const char** decls;
+  int ndecls;
+  int decls_cap;
 };
 
 IrWriter* irwriter_new(FILE* out, const char* target_triple) {
@@ -39,6 +42,10 @@ IrWriter* irwriter_new(FILE* out, const char* target_triple) {
 }
 
 void irwriter_del(IrWriter* w) {
+  for (int i = 0; i < w->ndecls; i++) {
+    free((void*)w->decls[i]);
+  }
+  free(w->decls);
   free(w->locs);
   free(w);
 }
@@ -247,4 +254,25 @@ const char* irwriter_insertvalue_imm(IrWriter* w, const char* agg_ty, const char
   emit_dbg_suffix(w, dbg);
   fprintf(w->out, "\n");
   return r;
+}
+
+void irwriter_declare(IrWriter* w, const char* ret_type, const char* name, const char* arg_types) {
+  for (int i = 0; i < w->ndecls; i++) {
+    if (strcmp(w->decls[i], name) == 0) {
+      return;
+    }
+  }
+  if (w->ndecls == w->decls_cap) {
+    w->decls_cap = w->decls_cap ? w->decls_cap * 2 : 8;
+    w->decls = realloc(w->decls, (size_t)w->decls_cap * sizeof(const char*));
+  }
+  w->decls[w->ndecls++] = strdup(name);
+  fprintf(w->out, "declare %s @%s(%s)\n\n", ret_type, name, arg_types);
+}
+
+void irwriter_call_void(IrWriter* w, const char* name) {
+  int dbg = reserve_dbg(w);
+  fprintf(w->out, "  call void @%s()", name);
+  emit_dbg_suffix(w, dbg);
+  fprintf(w->out, "\n");
 }

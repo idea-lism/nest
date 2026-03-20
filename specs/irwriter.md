@@ -16,3 +16,4 @@ API
 - starting a basic block
 - binop, binop_imm, etc
 - emits debug information
+- can create debugtrap

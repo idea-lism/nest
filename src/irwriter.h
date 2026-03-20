@@ -52,3 +52,9 @@ const char* irwriter_insertvalue(IrWriter* w, const char* agg_ty, const char* ag
                                  const char* elem_val, int idx);
 const char* irwriter_insertvalue_imm(IrWriter* w, const char* agg_ty, const char* agg_val, const char* elem_ty,
                                      int64_t elem_val, int idx);
+
+// Declare an external function (emitted once per name at module level)
+void irwriter_declare(IrWriter* w, const char* ret_type, const char* name, const char* arg_types);
+
+// Call a void function with no arguments
+void irwriter_call_void(IrWriter* w, const char* name);
