@@ -18,9 +18,9 @@ typedef enum {
   USTR_ERR_NONE,
   USTR_ERR_INVALID,
   USTR_ERR_TRUNCATED,
-} ustr_err;
+} UstrErr;
 
-ustr_err ustr_find_error(size_t sz, const char* data, size_t* pos);
+UstrErr ustr_find_error(size_t sz, const char* data, size_t* pos);
 char* ustr_slice(const char* s, int32_t start, int32_t end);
 
 int32_t ustr_bytesize(const char* s);
@@ -34,7 +34,7 @@ typedef struct {
   int32_t cp_idx;
   int32_t line;
   int32_t col;
-} ustr_iter;
+} UstrIter;
 
-void ustr_iter_init(ustr_iter* it, const char* s, int32_t char_offset);
-int32_t ustr_iter_next(ustr_iter* it);
+void ustr_iter_init(UstrIter* it, const char* s, int32_t char_offset);
+int32_t ustr_iter_next(UstrIter* it);

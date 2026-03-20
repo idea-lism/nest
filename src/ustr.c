@@ -76,7 +76,7 @@ int ustr_validate(const uint8_t* data, size_t sz, uint8_t* marks) { return ustr_
 
 // --- Error diagnostics ---
 
-ustr_err ustr_find_error(size_t sz, const char* data, size_t* pos) {
+UstrErr ustr_find_error(size_t sz, const char* data, size_t* pos) {
   const uint8_t* d = (const uint8_t*)data;
   uint8_t state = S_ACC;
   size_t seq_start = 0;
@@ -205,7 +205,7 @@ int32_t ustr_size(const char* s) {
 
 // --- Iterator ---
 
-void ustr_iter_init(ustr_iter* it, const char* s, int32_t char_offset) {
+void ustr_iter_init(UstrIter* it, const char* s, int32_t char_offset) {
   int32_t size = ustr_bytesize(s);
   const uint8_t* marks = _marks_ptr_const(s, size);
   int32_t byte_off;
@@ -245,7 +245,7 @@ static inline int32_t _decode_cp(const uint8_t* p, int32_t* adv) {
   }
 }
 
-int32_t ustr_iter_next(ustr_iter* it) {
+int32_t ustr_iter_next(UstrIter* it) {
   if (it->byte_off >= it->size) {
     return -1;
   }

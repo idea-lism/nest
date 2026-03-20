@@ -142,7 +142,7 @@ TEST(test_iter_ascii) {
   char* s = ustr_new(5, "hello");
   assert(s != NULL);
 
-  ustr_iter it;
+  UstrIter it;
   ustr_iter_init(&it, s, 0);
   assert(ustr_iter_next(&it) == 'h');
   assert(it.line == 0 && it.col == 1);
@@ -161,7 +161,7 @@ TEST(test_iter_multibyte) {
   char* s = ustr_new(sizeof(input) - 1, input);
   assert(s != NULL);
 
-  ustr_iter it;
+  UstrIter it;
   ustr_iter_init(&it, s, 0);
   assert(ustr_iter_next(&it) == 'a');
   assert(ustr_iter_next(&it) == 0xE9);
@@ -178,7 +178,7 @@ TEST(test_iter_line_col) {
   char* s = ustr_new(7, input);
   assert(s != NULL);
 
-  ustr_iter it;
+  UstrIter it;
   ustr_iter_init(&it, s, 0);
   assert(ustr_iter_next(&it) == 'a');
   assert(it.line == 0 && it.col == 1);
@@ -203,7 +203,7 @@ TEST(test_iter_from_middle) {
   char* s = ustr_new(6, input);
   assert(s != NULL);
 
-  ustr_iter it;
+  UstrIter it;
   ustr_iter_init(&it, s, 3);
   assert(it.cp_idx == 3);
   assert(ustr_iter_next(&it) == 'd');
@@ -219,7 +219,7 @@ TEST(test_iter_from_middle_multibyte) {
   char* s = ustr_new(7, input);
   assert(s != NULL);
 
-  ustr_iter it;
+  UstrIter it;
   ustr_iter_init(&it, s, 2);
   assert(it.cp_idx == 2);
   assert(ustr_iter_next(&it) == 0x20AC);
@@ -359,7 +359,7 @@ TEST(test_large_multibyte) {
   assert(ustr_bytesize(s) == 512);
   assert(ustr_size(s) == 256);
 
-  ustr_iter it;
+  UstrIter it;
   ustr_iter_init(&it, s, 0);
   for (int i = 0; i < 256; i++) {
     int32_t cp = ustr_iter_next(&it);
@@ -383,7 +383,7 @@ TEST(test_large_mixed) {
   assert(ustr_bytesize(s) == 200);
   assert(ustr_size(s) == 4 * reps);
 
-  ustr_iter it;
+  UstrIter it;
   ustr_iter_init(&it, s, 0);
   for (int i = 0; i < reps; i++) {
     assert(ustr_iter_next(&it) == 'a');

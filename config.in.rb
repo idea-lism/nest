@@ -1,5 +1,5 @@
 lib "ustr",
-  srcs: %w[src/ustr.c src/ustr_arm64.c]
+  srcs: %w[src/ustr.c src/ustr_neon.c]
 
 lib "irwriter",
   srcs: %w[src/irwriter.c]
