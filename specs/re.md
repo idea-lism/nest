@@ -18,3 +18,6 @@ On top of aut.
   - `re_append_range(re, range)`
   - `re_rparen(re)` pop a stack state
   - `re_action(re, action_id)` make it emit action at current state
+- Define special codepoint (matches spec in aut.md)
+  - `LEX_CP_BOF`: -1
+  - `LEX_CP_EOF`: -2
