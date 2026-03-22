@@ -1,11 +1,7 @@
-// Naive (bit-by-bit) implementations of size/slice for benchmarking.
-// Not part of the public library.
-
 #include "ustr.h"
 #include "ustr_intern.h"
 #include <string.h>
 
-// These duplicate the internal accessors from ustr.c -- kept minimal.
 static inline int32_t _bytesize(const char* s) { return *(const int32_t*)(s - sizeof(int32_t)); }
 
 static inline const uint8_t* _marks(const char* s, int32_t size) { return (const uint8_t*)(s + size + 1); }

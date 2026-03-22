@@ -1,0 +1,14 @@
+#pragma once
+
+#include "ustr.h"
+#include "bitset.h"
+
+#ifdef RE_RT_IMPLEMENTATION
+
+#include "ustr_intern.h"
+#include "ustr.c"
+#include "ustr_avx.c"
+#include "ustr_neon.c"
+#include "bitset.c"
+
+#endif

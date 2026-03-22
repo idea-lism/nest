@@ -17,7 +17,7 @@ Can define actions (terminal states) on certain states -- because optimization m
 - `aut_action(dfa, state, action_id)`
   - marks a terminal state for emitting `action_id` when parsing
   - this functions means just "alias ephemeral state to eternal action_id". action numbering and meaning:
-    - -1: in generated code: when this happens, return invalid match, useful for defining word boundaries
+    - -1: in generated code: when this happens, return invalid match, useful for predicates
     - 0: no effect, can continue with more feeds
     - positive values: user defined action trigger, also can continue with more feeds
   - MIN-RULE: when defining different action_id on a same state, the minimal remains.
@@ -44,6 +44,10 @@ Can define actions (terminal states) on certain states -- because optimization m
     - note that we don't need special handling for 0 or -1 because we have the `smallest` rule
   - dead state input:
     - should not happen, when in `debug_mode`, make debugger break at the trap, but still return `{last_state, -2}`
+- Moore semantics, Mealy encoding:
+  - actions are properties of states (Moore): `aut_action` marks states, MIN-RULE resolves conflicts by state content
+  - generated function returns action alongside transition (Mealy): avoids a separate state→action table lookup per character
+  - all transitions into the same DFA state carry the same action_id, so no information is lost
 - IR also encodes debug information so lldb step-by-step can show the regexp source:
   - utilize dfa's `source_file_name`
   - utilize iterator's `line` and `col`

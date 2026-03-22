@@ -1,4 +1,6 @@
+#include "../src/darray.h"
 #include "../src/re.h"
+#include "compat.h"
 #include <assert.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -17,7 +19,7 @@
 static char* _gen_ir(void (*fn)(Aut*, Re*, IrWriter*)) {
   char* buf = NULL;
   size_t sz = 0;
-  FILE* f = open_memstream(&buf, &sz);
+  FILE* f = compat_open_memstream(&buf, &sz);
   assert(f);
   IrWriter* w = irwriter_new(f, TARGET);
   irwriter_start(w, "test.rules", ".");
@@ -30,7 +32,7 @@ static char* _gen_ir(void (*fn)(Aut*, Re*, IrWriter*)) {
 
   irwriter_end(w);
   irwriter_del(w);
-  fclose(f);
+  compat_close_memstream(f, &buf, &sz);
   return buf;
 }
 
@@ -47,7 +49,7 @@ TEST(test_lifecycle) {
 TEST(test_range_lifecycle) {
   ReRange* r = re_range_new();
   assert(r);
-  assert(r->len == 0);
+  assert(darray_size(r->ivs) == 0);
   re_range_del(r);
 }
 
@@ -56,7 +58,7 @@ TEST(test_range_lifecycle) {
 TEST(test_range_add_single) {
   ReRange* r = re_range_new();
   re_range_add(r, 10, 20);
-  assert(r->len == 1);
+  assert(darray_size(r->ivs) == 1);
   assert(r->ivs[0].start == 10);
   assert(r->ivs[0].end == 20);
   re_range_del(r);
@@ -66,7 +68,7 @@ TEST(test_range_add_disjoint) {
   ReRange* r = re_range_new();
   re_range_add(r, 10, 20);
   re_range_add(r, 30, 40);
-  assert(r->len == 2);
+  assert(darray_size(r->ivs) == 2);
   assert(r->ivs[0].start == 10 && r->ivs[0].end == 20);
   assert(r->ivs[1].start == 30 && r->ivs[1].end == 40);
   re_range_del(r);
@@ -76,7 +78,7 @@ TEST(test_range_add_disjoint_unsorted) {
   ReRange* r = re_range_new();
   re_range_add(r, 30, 40);
   re_range_add(r, 10, 20);
-  assert(r->len == 2);
+  assert(darray_size(r->ivs) == 2);
   assert(r->ivs[0].start == 10 && r->ivs[0].end == 20);
   assert(r->ivs[1].start == 30 && r->ivs[1].end == 40);
   re_range_del(r);
@@ -86,7 +88,7 @@ TEST(test_range_add_overlap) {
   ReRange* r = re_range_new();
   re_range_add(r, 10, 20);
   re_range_add(r, 15, 30);
-  assert(r->len == 1);
+  assert(darray_size(r->ivs) == 1);
   assert(r->ivs[0].start == 10 && r->ivs[0].end == 30);
   re_range_del(r);
 }
@@ -95,7 +97,7 @@ TEST(test_range_add_adjacent) {
   ReRange* r = re_range_new();
   re_range_add(r, 10, 20);
   re_range_add(r, 21, 30);
-  assert(r->len == 1);
+  assert(darray_size(r->ivs) == 1);
   assert(r->ivs[0].start == 10 && r->ivs[0].end == 30);
   re_range_del(r);
 }
@@ -104,7 +106,7 @@ TEST(test_range_add_subset) {
   ReRange* r = re_range_new();
   re_range_add(r, 10, 40);
   re_range_add(r, 15, 25);
-  assert(r->len == 1);
+  assert(darray_size(r->ivs) == 1);
   assert(r->ivs[0].start == 10 && r->ivs[0].end == 40);
   re_range_del(r);
 }
@@ -113,7 +115,7 @@ TEST(test_range_add_superset) {
   ReRange* r = re_range_new();
   re_range_add(r, 15, 25);
   re_range_add(r, 10, 40);
-  assert(r->len == 1);
+  assert(darray_size(r->ivs) == 1);
   assert(r->ivs[0].start == 10 && r->ivs[0].end == 40);
   re_range_del(r);
 }
@@ -123,10 +125,10 @@ TEST(test_range_add_merge_three) {
   re_range_add(r, 10, 20);
   re_range_add(r, 30, 40);
   re_range_add(r, 50, 60);
-  assert(r->len == 3);
+  assert(darray_size(r->ivs) == 3);
   // now merge all three
   re_range_add(r, 15, 55);
-  assert(r->len == 1);
+  assert(darray_size(r->ivs) == 1);
   assert(r->ivs[0].start == 10 && r->ivs[0].end == 60);
   re_range_del(r);
 }
@@ -136,7 +138,7 @@ TEST(test_range_add_merge_three) {
 TEST(test_range_neg_empty) {
   ReRange* r = re_range_new();
   re_range_neg(r);
-  assert(r->len == 1);
+  assert(darray_size(r->ivs) == 1);
   assert(r->ivs[0].start == 0 && r->ivs[0].end == 0x10FFFF);
   re_range_del(r);
 }
@@ -145,7 +147,7 @@ TEST(test_range_neg_full) {
   ReRange* r = re_range_new();
   re_range_add(r, 0, 0x10FFFF);
   re_range_neg(r);
-  assert(r->len == 0);
+  assert(darray_size(r->ivs) == 0);
   re_range_del(r);
 }
 
@@ -153,7 +155,7 @@ TEST(test_range_neg_single) {
   ReRange* r = re_range_new();
   re_range_add(r, 10, 20);
   re_range_neg(r);
-  assert(r->len == 2);
+  assert(darray_size(r->ivs) == 2);
   assert(r->ivs[0].start == 0 && r->ivs[0].end == 9);
   assert(r->ivs[1].start == 21 && r->ivs[1].end == 0x10FFFF);
   re_range_del(r);
@@ -163,7 +165,7 @@ TEST(test_range_neg_at_start) {
   ReRange* r = re_range_new();
   re_range_add(r, 0, 5);
   re_range_neg(r);
-  assert(r->len == 1);
+  assert(darray_size(r->ivs) == 1);
   assert(r->ivs[0].start == 6 && r->ivs[0].end == 0x10FFFF);
   re_range_del(r);
 }
@@ -172,7 +174,7 @@ TEST(test_range_neg_at_end) {
   ReRange* r = re_range_new();
   re_range_add(r, 0x10FFFE, 0x10FFFF);
   re_range_neg(r);
-  assert(r->len == 1);
+  assert(darray_size(r->ivs) == 1);
   assert(r->ivs[0].start == 0 && r->ivs[0].end == 0x10FFFD);
   re_range_del(r);
 }
@@ -182,7 +184,7 @@ TEST(test_range_neg_multiple) {
   re_range_add(r, 5, 10);
   re_range_add(r, 20, 30);
   re_range_neg(r);
-  assert(r->len == 3);
+  assert(darray_size(r->ivs) == 3);
   assert(r->ivs[0].start == 0 && r->ivs[0].end == 4);
   assert(r->ivs[1].start == 11 && r->ivs[1].end == 19);
   assert(r->ivs[2].start == 31 && r->ivs[2].end == 0x10FFFF);
@@ -196,7 +198,7 @@ TEST(test_range_neg_double) {
   re_range_add(r, 20, 30);
   re_range_neg(r);
   re_range_neg(r);
-  assert(r->len == 2);
+  assert(darray_size(r->ivs) == 2);
   assert(r->ivs[0].start == 5 && r->ivs[0].end == 10);
   assert(r->ivs[1].start == 20 && r->ivs[1].end == 30);
   re_range_del(r);
@@ -205,7 +207,7 @@ TEST(test_range_neg_double) {
 // --- re_append_ch ---
 
 static void _build_ch(Aut* a, Re* re, IrWriter* w) {
-  re_append_ch(re, 'A');
+  re_append_ch(re, 'A', (DebugInfo){0, 0});
   re_action(re, 1);
   aut_gen_dfa(a, w, false);
 }
@@ -217,8 +219,8 @@ TEST(test_append_ch) {
 }
 
 static void _build_ch_seq(Aut* a, Re* re, IrWriter* w) {
-  re_append_ch(re, 'H');
-  re_append_ch(re, 'i');
+  re_append_ch(re, 'H', (DebugInfo){0, 0});
+  re_append_ch(re, 'i', (DebugInfo){0, 0});
   re_action(re, 1);
   aut_gen_dfa(a, w, false);
 }
@@ -235,7 +237,7 @@ TEST(test_append_ch_seq) {
 static void _build_append_range(Aut* a, Re* re, IrWriter* w) {
   ReRange* r = re_range_new();
   re_range_add(r, 'A', 'Z');
-  re_append_range(re, r);
+  re_append_range(re, r, (DebugInfo){0, 0});
   re_range_del(r);
   re_action(re, 1);
   aut_gen_dfa(a, w, false);
@@ -252,7 +254,7 @@ static void _build_append_multi_range(Aut* a, Re* re, IrWriter* w) {
   ReRange* r = re_range_new();
   re_range_add(r, 'A', 'Z');
   re_range_add(r, 'a', 'z');
-  re_append_range(re, r);
+  re_append_range(re, r, (DebugInfo){0, 0});
   re_range_del(r);
   re_action(re, 1);
   aut_gen_dfa(a, w, false);
@@ -272,10 +274,10 @@ TEST(test_append_multi_range) {
 
 static void _build_group(Aut* a, Re* re, IrWriter* w) {
   re_lparen(re);
-  re_append_ch(re, 'a');
-  re_append_ch(re, 'b');
+  re_append_ch(re, 'a', (DebugInfo){0, 0});
+  re_append_ch(re, 'b', (DebugInfo){0, 0});
   re_rparen(re);
-  re_append_ch(re, 'c');
+  re_append_ch(re, 'c', (DebugInfo){0, 0});
   re_action(re, 1);
   aut_gen_dfa(a, w, false);
 }
@@ -292,9 +294,9 @@ TEST(test_group) {
 
 static void _build_alt(Aut* a, Re* re, IrWriter* w) {
   re_lparen(re);
-  re_append_ch(re, 'a');
+  re_append_ch(re, 'a', (DebugInfo){0, 0});
   re_fork(re);
-  re_append_ch(re, 'b');
+  re_append_ch(re, 'b', (DebugInfo){0, 0});
   re_rparen(re);
   re_action(re, 1);
   aut_gen_dfa(a, w, false);
@@ -311,13 +313,13 @@ TEST(test_alt) {
 
 static void _build_complex(Aut* a, Re* re, IrWriter* w) {
   re_lparen(re);
-  re_append_ch(re, 'a');
-  re_append_ch(re, 'b');
+  re_append_ch(re, 'a', (DebugInfo){0, 0});
+  re_append_ch(re, 'b', (DebugInfo){0, 0});
   re_fork(re);
-  re_append_ch(re, 'c');
-  re_append_ch(re, 'd');
+  re_append_ch(re, 'c', (DebugInfo){0, 0});
+  re_append_ch(re, 'd', (DebugInfo){0, 0});
   re_rparen(re);
-  re_append_ch(re, 'e');
+  re_append_ch(re, 'e', (DebugInfo){0, 0});
   re_action(re, 1);
   aut_optimize(a);
   aut_gen_dfa(a, w, false);
@@ -325,7 +327,7 @@ static void _build_complex(Aut* a, Re* re, IrWriter* w) {
 
 TEST(test_complex) {
   char* out = _gen_ir(_build_complex);
-  assert(strstr(out, "define {i32, i32} @match"));
+  assert(strstr(out, "define {i64, i64} @match"));
   assert(strstr(out, "i32 97"));  // a
   assert(strstr(out, "i32 98"));  // b
   assert(strstr(out, "i32 99"));  // c
@@ -337,7 +339,7 @@ TEST(test_complex) {
 // --- re_action ---
 
 static void _build_action(Aut* a, Re* re, IrWriter* w) {
-  re_append_ch(re, 'x');
+  re_append_ch(re, 'x', (DebugInfo){0, 0});
   re_action(re, 42);
   aut_gen_dfa(a, w, false);
 }
@@ -352,8 +354,8 @@ TEST(test_action) {
 
 static void _write_and_compile(void (*fn)(Aut*, Re*, IrWriter*), const char* test_name) {
   char ll_path[128], obj_path[128];
-  snprintf(ll_path, sizeof(ll_path), "/tmp/test_re_%s.ll", test_name);
-  snprintf(obj_path, sizeof(obj_path), "/tmp/test_re_%s.o", test_name);
+  snprintf(ll_path, sizeof(ll_path), "%s/test_re_%s.ll", BUILD_DIR, test_name);
+  snprintf(obj_path, sizeof(obj_path), "%s/test_re_%s.o", BUILD_DIR, test_name);
 
   FILE* f = fopen(ll_path, "w");
   assert(f);
@@ -371,13 +373,13 @@ static void _write_and_compile(void (*fn)(Aut*, Re*, IrWriter*), const char* tes
   fclose(f);
 
   char cmd[256];
-  snprintf(cmd, sizeof(cmd), "xcrun clang -c %s -o %s 2>&1", ll_path, obj_path);
-  FILE* p = popen(cmd, "r");
+  snprintf(cmd, sizeof(cmd), "%s -c %s -o %s 2>&1", compat_llvm_cc(), ll_path, obj_path);
+  FILE* p = compat_popen(cmd, "r");
   assert(p);
   char output[4096] = {0};
   size_t n = fread(output, 1, sizeof(output) - 1, p);
   output[n] = '\0';
-  int32_t status = pclose(p);
+  int32_t status = compat_pclose(p);
   if (status != 0) {
     fprintf(stderr, "\nclang failed for %s:\n%s\n", test_name, output);
     FILE* ll = fopen(ll_path, "r");

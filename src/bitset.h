@@ -13,3 +13,4 @@ bool bitset_contains(Bitset* bs, uint32_t offset);
 Bitset* bitset_or(Bitset* s1, Bitset* s2);
 Bitset* bitset_and(Bitset* s1, Bitset* s2);
 uint32_t bitset_size(Bitset* bs);
+bool bitset_equal(Bitset* a, Bitset* b);

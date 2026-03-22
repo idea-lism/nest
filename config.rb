@@ -7,7 +7,14 @@ MODE = (ARGV[0] || "debug").freeze
 # --- DSL state ---
 $libs = []
 $exes = []
+$combined_libs = []
+$amalgamates = []
+$dist_headers = []
 $mode_cflags = {}
+$extra_ninja = ""
+$extra_defaults = []
+$builddir_ref = "build/#{MODE}"
+
 
 def lib(name, srcs:)
   $libs << { name: name, srcs: srcs }
@@ -15,6 +22,18 @@ end
 
 def exe(name, srcs:, deps: [])
   $exes << { name: name, srcs: srcs, deps: deps }
+end
+
+def combined_lib(name, srcs:)
+  $combined_libs << { name: name, srcs: srcs }
+end
+
+def amalgamate(input:, output:, include_dirs: [])
+  $amalgamates << { input: input, output: output, include_dirs: include_dirs }
+end
+
+def dist_header(src, to:)
+  $dist_headers << { src: src, to: to }
 end
 
 def debug(cflags:)
@@ -25,6 +44,10 @@ def release(cflags:)
   $mode_cflags["release"] = cflags
 end
 
+def ninja_raw(text)
+  $extra_ninja += text + "\n"
+end
+
 # --- Load project config ---
 load File.join(__dir__, "config.in.rb")
 
@@ -33,11 +56,47 @@ CC = ENV["CC"] || "cc"
 AR = ENV["AR"] || "ar"
 CLANG_FORMAT = RUBY_PLATFORM =~ /darwin/ ? "xcrun clang-format" : "clang-format"
 
-BASE_CFLAGS = "-std=c23 -Wall -Wextra -Werror -pedantic"
+ARCH_CFLAGS = RUBY_PLATFORM =~ /x86_64|amd64/ ? "-mavx2" : ""
+# iso C doesn't include a lot of posix functions in std lib, define the _POSIX_C_SOURCE macro to ensure inclusion
+BASE_CFLAGS = "-std=c23 -D_POSIX_C_SOURCE=200809L -Wall -Wextra -Werror -fvisibility=hidden #{ARCH_CFLAGS}".strip
 EXTRA_CFLAGS = $mode_cflags.fetch(MODE, "")
 CFLAGS = "#{BASE_CFLAGS} #{EXTRA_CFLAGS}".strip
 
 BUILDDIR = "build/#{MODE}"
+
+# --- Ensure amalgamate tool is available ---
+require 'open-uri'
+require 'fileutils'
+
+def amalgamate_url
+  base = "https://github.com/rindeal/Amalgamate/releases/download/v0.99.0"
+  case RUBY_PLATFORM
+  when /darwin/
+    "#{base}/amalgamate-v0.99.0-darwin-arm64.zip"
+  when /mingw|mswin|cygwin/
+    "#{base}/amalgamate-v0.99.0-windows-amd64.zip"
+  else
+    "#{base}/amalgamate-v0.99.0-linux-amd64.zip"
+  end
+end
+
+TOOL_BIN = "build/tools/amalgamate"
+
+unless File.executable?(TOOL_BIN)
+  FileUtils.mkdir_p("build/tools")
+  zip_path = "build/tools/amalgamate.zip"
+  puts "Downloading amalgamate..."
+  URI.open(amalgamate_url) do |remote|
+    File.binwrite(zip_path, remote.read)
+  end
+  system("unzip", "-o", zip_path, "-d", "build/tools/", out: File::NULL) || abort("unzip failed")
+  # The zip contains a subdirectory; move the binary up
+  Dir.glob("build/tools/*/amalgamate").each do |bin|
+    FileUtils.mv(bin, TOOL_BIN)
+  end
+  FileUtils.chmod(0o755, TOOL_BIN) unless RUBY_PLATFORM =~ /mingw|mswin|cygwin/
+  FileUtils.rm_f(zip_path)
+end
 
 # --- Generate build.ninja ---
 File.open("build.ninja", "w") do |f|
@@ -46,6 +105,11 @@ File.open("build.ninja", "w") do |f|
   f.puts ""
   f.puts "rule cc"
   f.puts "  command = #{CC} #{CFLAGS} -MMD -MF $out.d -c $in -o $out"
+  f.puts "  depfile = $out.d"
+  f.puts "  description = CC $in"
+  f.puts ""
+  f.puts "rule cc_test"
+  f.puts "  command = #{CC} #{CFLAGS} -DBUILD_DIR=\\\"#{BUILDDIR}\\\" -MMD -MF $out.d -c $in -o $out"
   f.puts "  depfile = $out.d"
   f.puts "  description = CC $in"
   f.puts ""
@@ -61,12 +125,16 @@ File.open("build.ninja", "w") do |f|
   f.puts ""
 
   lib_outputs = {}
+  emitted = {}
 
   # Libraries
   $libs.each do |lib|
     objs = lib[:srcs].map do |src|
       obj = "#{BUILDDIR}/#{src.sub(/\.c$/, '.o')}"
-      f.puts "build #{obj}: cc #{src}"
+      unless emitted[obj]
+        f.puts "build #{obj}: cc #{src}"
+        emitted[obj] = true
+      end
       obj
     end
     ar_out = "#{BUILDDIR}/lib#{lib[:name]}.a"
@@ -75,14 +143,13 @@ File.open("build.ninja", "w") do |f|
     lib_outputs[lib[:name]] = ar_out
   end
 
-  emitted = {}
-
   # Executables
   $exes.each do |exe|
     objs = exe[:srcs].map do |src|
       obj = "#{BUILDDIR}/#{src.sub(/\.c$/, '.o')}"
       unless emitted[obj]
-        f.puts "build #{obj}: cc #{src}"
+        rule = src.start_with?("test/") ? "cc_test" : "cc"
+        f.puts "build #{obj}: #{rule} #{src}"
         emitted[obj] = true
       end
       obj
@@ -94,13 +161,63 @@ File.open("build.ninja", "w") do |f|
     f.puts ""
   end
 
+  # Combined libraries
+  $combined_libs.each do |cl|
+    all_objs = cl[:srcs].map do |src|
+      obj = "#{BUILDDIR}/#{src.sub(/\.c$/, '.o')}"
+      unless emitted[obj]
+        f.puts "build #{obj}: cc #{src}"
+        emitted[obj] = true
+      end
+      obj
+    end
+    out = "out/lib#{cl[:name]}.a"
+    f.puts "build #{out}: ar #{all_objs.join(' ')}"
+    f.puts ""
+  end
+
+  # Amalgamate
+  unless $amalgamates.empty?
+    f.puts "rule amalgamate"
+    f.puts "  command = #{TOOL_BIN} $flags $in $out"
+    f.puts "  description = AMALGAMATE $out"
+    f.puts ""
+
+    $amalgamates.each do |am|
+      flags = am[:include_dirs].map { |d| "-i #{d}" }.join(' ')
+      src_files = Dir.glob(am[:include_dirs].map { |d| "#{d}/*.{c,h}" }).sort.join(' ')
+      f.puts "build #{am[:output]}: amalgamate #{am[:input]} | #{src_files}"
+      f.puts "  flags = #{flags}"
+      f.puts ""
+    end
+  end
+
+  # Dist headers
+  unless $dist_headers.empty?
+    f.puts "rule cp"
+    f.puts "  command = cp $in $out"
+    f.puts "  description = CP $out"
+    f.puts ""
+    $dist_headers.each do |dh|
+      f.puts "build #{dh[:to]}: cp #{dh[:src]}"
+    end
+    f.puts ""
+  end
+
+  # Extra ninja rules from config.in.rb
+  f.puts $extra_ninja unless $extra_ninja.empty?
+
   # Default: build everything
   all = $exes.map { |e| "#{BUILDDIR}/#{e[:name]}" }
+  all += $combined_libs.map { |cl| "out/lib#{cl[:name]}.a" }
+  all += $amalgamates.map { |am| am[:output] }
+  all += $dist_headers.map { |dh| dh[:to] }
+  all += $extra_defaults
   f.puts "default #{all.join(' ')}"
   f.puts ""
 
   # Format
-  all_srcs = ($libs.flat_map { |l| l[:srcs] } + $exes.flat_map { |e| e[:srcs] }).uniq
+  all_srcs = ($libs.flat_map { |l| l[:srcs] } + $exes.flat_map { |e| e[:srcs] } + $combined_libs.flat_map { |cl| cl[:srcs] }).uniq
   all_hdrs = all_srcs.flat_map { |s| [s.sub(/\.c$/, '.h'), s.sub(/\.c$/, '_intern.h')] }.select { |h| File.exist?(h) }
   fmt_files = (all_srcs + all_hdrs).sort.uniq.join(' ')
   f.puts "rule format"
@@ -111,3 +228,22 @@ File.open("build.ninja", "w") do |f|
 end
 
 puts "Generated build.ninja (mode=#{MODE}, cc=#{CC})"
+
+# --- Generate compile_commands.json ---
+require 'json'
+
+project_root = File.expand_path(__dir__)
+all_srcs = ($libs.flat_map { |l| l[:srcs] } + $exes.flat_map { |e| e[:srcs] } + $combined_libs.flat_map { |cl| cl[:srcs] }).uniq
+test_define = "-DBUILD_DIR=\\\"#{BUILDDIR}\\\""
+
+entries = all_srcs.map do |src|
+  extra = src.start_with?("test/") ? " #{test_define}" : ""
+  {
+    directory: project_root,
+    file: src,
+    command: "#{CC} #{CFLAGS}#{extra} -c #{src} -o #{BUILDDIR}/#{src.sub(/\.c$/, '.o')}"
+  }
+end
+
+File.write("compile_commands.json", JSON.pretty_generate(entries) + "\n")
+puts "Generated compile_commands.json"

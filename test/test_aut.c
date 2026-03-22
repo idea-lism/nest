@@ -1,4 +1,5 @@
 #include "../src/aut.h"
+#include "compat.h"
 #include <assert.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -17,7 +18,7 @@
 static char* _gen_ir(void (*fn)(Aut*, IrWriter*)) {
   char* buf = NULL;
   size_t sz = 0;
-  FILE* f = open_memstream(&buf, &sz);
+  FILE* f = compat_open_memstream(&buf, &sz);
   assert(f);
   IrWriter* w = irwriter_new(f, TARGET);
   irwriter_start(w, "test.rules", ".");
@@ -28,7 +29,7 @@ static char* _gen_ir(void (*fn)(Aut*, IrWriter*)) {
 
   irwriter_end(w);
   irwriter_del(w);
-  fclose(f);
+  compat_close_memstream(f, &buf, &sz);
   return buf;
 }
 
@@ -43,7 +44,7 @@ static void _build_single(Aut* a, IrWriter* w) {
 
 TEST(test_single_transition) {
   char* out = _gen_ir(_build_single);
-  assert(strstr(out, "define {i32, i32} @match(i32 %state, i32 %cp)"));
+  assert(strstr(out, "define {i64, i64} @match(i64 %state_i64, i64 %cp_i64)"));
   assert(strstr(out, "switch i32 %state, label %dead"));
   assert(strstr(out, "i32 65, label %s0_t0"));
   assert(strstr(out, "s0_t0:"));
@@ -196,7 +197,7 @@ static void _build_redundant(Aut* a, IrWriter* w) {
 
 TEST(test_optimize) {
   char* out = _gen_ir(_build_redundant);
-  assert(strstr(out, "define {i32, i32} @match"));
+  assert(strstr(out, "define {i64, i64} @match"));
   assert(strstr(out, "switch i32 %state, label %dead"));
   free(out);
 }
@@ -291,7 +292,7 @@ TEST(test_optimize_preserves_action) {
   {
     char* buf = NULL;
     size_t sz = 0;
-    FILE* f = open_memstream(&buf, &sz);
+    FILE* f = compat_open_memstream(&buf, &sz);
     assert(f);
     IrWriter* w = irwriter_new(f, TARGET);
     irwriter_start(w, "test.rules", ".");
@@ -308,7 +309,7 @@ TEST(test_optimize_preserves_action) {
     aut_del(a);
     irwriter_end(w);
     irwriter_del(w);
-    fclose(f);
+    compat_close_memstream(f, &buf, &sz);
     unopt = buf;
   }
 
@@ -317,7 +318,7 @@ TEST(test_optimize_preserves_action) {
   {
     char* buf = NULL;
     size_t sz = 0;
-    FILE* f = open_memstream(&buf, &sz);
+    FILE* f = compat_open_memstream(&buf, &sz);
     assert(f);
     IrWriter* w = irwriter_new(f, TARGET);
     irwriter_start(w, "test.rules", ".");
@@ -335,7 +336,7 @@ TEST(test_optimize_preserves_action) {
     aut_del(a);
     irwriter_end(w);
     irwriter_del(w);
-    fclose(f);
+    compat_close_memstream(f, &buf, &sz);
     opt = buf;
   }
 
@@ -353,10 +354,13 @@ TEST(test_optimize_preserves_action) {
 
 static void _write_and_compile(void (*fn)(Aut*, IrWriter*), const char* test_name) {
   char ll_path[128], obj_path[128];
-  snprintf(ll_path, sizeof(ll_path), "/tmp/test_aut_%s.ll", test_name);
-  snprintf(obj_path, sizeof(obj_path), "/tmp/test_aut_%s.o", test_name);
+  snprintf(ll_path, sizeof(ll_path), "%s/test_aut_%s.ll", BUILD_DIR, test_name);
+  snprintf(obj_path, sizeof(obj_path), "%s/test_aut_%s.o", BUILD_DIR, test_name);
 
   FILE* f = fopen(ll_path, "w");
+  if (!f) {
+    fprintf(stderr, "fopen failed: %s\n", ll_path);
+  }
   assert(f);
   IrWriter* w = irwriter_new(f, TARGET);
   irwriter_start(w, "test.rules", ".");
@@ -370,13 +374,13 @@ static void _write_and_compile(void (*fn)(Aut*, IrWriter*), const char* test_nam
   fclose(f);
 
   char cmd[256];
-  snprintf(cmd, sizeof(cmd), "xcrun clang -c %s -o %s 2>&1", ll_path, obj_path);
-  FILE* p = popen(cmd, "r");
+  snprintf(cmd, sizeof(cmd), "%s -c %s -o %s 2>&1", compat_llvm_cc(), ll_path, obj_path);
+  FILE* p = compat_popen(cmd, "r");
   assert(p);
   char output[4096] = {0};
   size_t n = fread(output, 1, sizeof(output) - 1, p);
   output[n] = '\0';
-  int status = pclose(p);
+  int status = compat_pclose(p);
   if (status != 0) {
     fprintf(stderr, "\nclang failed for %s:\n%s\n", test_name, output);
     FILE* ll = fopen(ll_path, "r");
@@ -426,7 +430,7 @@ TEST(test_lifecycle) {
 TEST(test_empty_aut) {
   char* buf = NULL;
   size_t sz = 0;
-  FILE* f = open_memstream(&buf, &sz);
+  FILE* f = compat_open_memstream(&buf, &sz);
   assert(f);
   IrWriter* w = irwriter_new(f, TARGET);
   irwriter_start(w, "test.rules", ".");
@@ -437,9 +441,9 @@ TEST(test_empty_aut) {
 
   irwriter_end(w);
   irwriter_del(w);
-  fclose(f);
+  compat_close_memstream(f, &buf, &sz);
 
-  assert(strstr(buf, "define {i32, i32} @empty"));
+  assert(strstr(buf, "define {i64, i64} @empty"));
   assert(strstr(buf, "dead:"));
   free(buf);
 }

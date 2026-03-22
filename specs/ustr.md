@@ -28,7 +28,7 @@ Resulting code:
     - slicing is optimized with popcnt
   - Concat `ustr_cat(char* a, char* b)`
 - src/ustr.c
-- src/ustr_arm64.c
+- src/ustr_neon.c, src/ustr_avx.c
   - SIMD accelerated routine for `ustr_new`
 
 Also add tests in:

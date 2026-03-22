@@ -4,33 +4,18 @@
 #include <stdlib.h>
 #include <string.h>
 
-// Heap layout:
-//   [int32_t size][char data[size]]['\0'][uint8_t marks[(size+7)/8]]
-//   ^             ^
-//   heap          user pointer
-
 static inline int32_t* _size_ptr(char* s) { return (int32_t*)(s - sizeof(int32_t)); }
 
 static inline const int32_t* _size_ptr_const(const char* s) { return (const int32_t*)(s - sizeof(int32_t)); }
 
 static inline uint8_t* _marks_ptr(char* s, int32_t size) { return (uint8_t*)(s + size + 1); }
 
-static inline const uint8_t* _marks_ptr_const(const char* s, int32_t size) {
-  return (const uint8_t*)(s + size + 1);
-}
+static inline const uint8_t* _marks_ptr_const(const char* s, int32_t size) { return (const uint8_t*)(s + size + 1); }
 
-static inline size_t _alloc_size(int32_t size) {
-  return sizeof(int32_t) + (size_t)size + 1 + ((size_t)size + 7) / 8;
-}
-
-// Scalar UTF-8 DFA validator (Bjoern Hoehrmann style)
+static inline size_t _alloc_size(int32_t size) { return sizeof(int32_t) + (size_t)size + 1 + ((size_t)size + 7) / 8; }
 
 enum { S_ACC = 0, S_1, S_2, S_3, S_E0, S_ED, S_F0, S_F4, S_ERR = 8 };
 
-// Byte class table:
-//   0=ASCII, 1=cont80-8F, 2=cont90-9F, 3=contA0-BF,
-//   4=C0-C1(invalid), 5=C2-DF, 6=E0, 7=E1-EC, 8=ED,
-//   9=EE-EF, 10=F0, 11=F1-F3, 12=F4, 13=F5-FF(invalid)
 static const uint8_t utf8_class[256] = {
     0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,
     0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,
@@ -62,7 +47,6 @@ int ustr_validate_scalar(const uint8_t* data, size_t sz, uint8_t* marks) {
     if (state == S_ERR) {
       return -1;
     }
-    // ASCII (class 0) or lead byte (class >= 4) starts a codepoint
     if (c == 0 || c >= 4) {
       marks[i / 8] |= (uint8_t)(1u << (i % 8));
     }
@@ -70,11 +54,9 @@ int ustr_validate_scalar(const uint8_t* data, size_t sz, uint8_t* marks) {
   return (state == S_ACC) ? 0 : -1;
 }
 
-#ifndef __aarch64__
+#if !defined(__aarch64__) && !defined(__AVX2__)
 int ustr_validate(const uint8_t* data, size_t sz, uint8_t* marks) { return ustr_validate_scalar(data, sz, marks); }
 #endif
-
-// --- Error diagnostics ---
 
 UstrErr ustr_find_error(size_t sz, const char* data, size_t* pos) {
   const uint8_t* d = (const uint8_t*)data;
@@ -96,8 +78,6 @@ UstrErr ustr_find_error(size_t sz, const char* data, size_t* pos) {
   }
   return USTR_ERR_NONE;
 }
-
-// --- Public API ---
 
 char* ustr_new(size_t sz, const char* data) {
   if (sz > (size_t)INT32_MAX) {
@@ -131,15 +111,12 @@ void ustr_del(char* s) {
 
 int32_t ustr_bytesize(const char* s) { return *_size_ptr_const(s); }
 
-// --- Popcount helpers for marks traversal ---
-
 static inline uint64_t _marks_read64(const uint8_t* marks, size_t byte_off) {
   uint64_t v;
   memcpy(&v, marks + byte_off, 8);
   return v;
 }
 
-// Count set bits in marks[0 .. bit_count)
 static int32_t _marks_popcount(const uint8_t* marks, int32_t bit_count) {
   int32_t count = 0;
   int32_t bits = bit_count;
@@ -160,8 +137,6 @@ static int32_t _marks_popcount(const uint8_t* marks, int32_t bit_count) {
   return count;
 }
 
-// Find byte offset of the nth codepoint start (0-indexed).
-// Returns -1 if n >= total codepoints.
 static int32_t _marks_nth_cp(const uint8_t* marks, int32_t size, int32_t n) {
   int32_t remaining = n;
   int32_t byte_pos = 0;
@@ -202,8 +177,6 @@ int32_t ustr_size(const char* s) {
   const uint8_t* marks = _marks_ptr_const(s, size);
   return _marks_popcount(marks, size);
 }
-
-// --- Iterator ---
 
 void ustr_iter_init(UstrIter* it, const char* s, int32_t char_offset) {
   int32_t size = ustr_bytesize(s);
@@ -264,7 +237,7 @@ int32_t ustr_iter_next(UstrIter* it) {
   return cp;
 }
 
-// --- Slicing ---
+int32_t ustr_decode_cp(const uint8_t* p, int32_t* adv) { return _decode_cp(p, adv); }
 
 char* ustr_slice(const char* s, int32_t start, int32_t end) {
   int32_t size = ustr_bytesize(s);

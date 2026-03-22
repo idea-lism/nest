@@ -1,0 +1,236 @@
+# a line of comment starts with "#"
+
+# VPA section
+[[vpa]]
+
+%ignore @comment @space
+
+%keyword directives "%state" "%ignore" "%effect" "%keyword"
+
+%keyword ops "=" "|"
+
+# user-defined .set_quote hook will update this state
+%state $last_quote
+
+# no used in this syntax:
+# - `%effect .some_user_hook = .end | @some_token | ...`
+
+main = {
+  vpa
+  peg
+  *ignores
+}
+
+*ignores = {
+  /#[^\n]*/ @comment
+  /[ \t\n]+/ @space
+  /\n+/ @nl
+}
+
+# if leading regexp matches, push the scope {}
+vpa = /\s*\[\[vpa\]\]\n/ .begin {
+  /\[\[peg\]\]/ .unparse .end
+  re
+  directives
+  /\.begin/ @hook_begin
+  /\.end/ @hook_end
+  /\.fail/ @hook_fail
+  /\.unparse/ @hook_unparse
+  id @vpa_id
+  /\.{id}/ @user_hook_id
+  /\@{id}/ @tok_id .on_tok_def
+  /\${id}/ @state_id
+  ops
+  /{/ @scope_begin .scope_begin # custom hook
+  /}/ .scope_end @scope_end
+  re_str
+  *ignores
+}
+
+%keyword peg_ops "<" ">" "?" "+" "*"
+
+peg = /\s*\[\[peg\]\]\n/ .begin {
+  /[a-z_]\w*/ @id .on_id
+  # note: emit_id always attaches to previous regexp unit
+  #       so the @tok_id token starts and ends with `id`, excluding the `@`
+  /\@/ id @tok_id .on_tok_use
+  /: */ id @tag_id
+  /=/ @assign .on_assign # .on_id following .on_assign then we know the id is a rule name
+  /[/ @branches_begin
+  /]/ @branches_end
+  peg_ops
+  keyword_str
+  *ignores
+}
+
+id = /[a-z_]\w*/
+
+%keyword re_ops "|" "(" ")" "?" "+" "*"
+
+re = /(b|i|ib|bi)?\// .begin {
+  /\// .end
+  charclass
+  /\./ @re_dot
+  /\\s/ @re_space_class
+  /\\w/ @re_word_class
+  /\\d/ @re_digit_class
+  /\\h/ @re_hex_class
+  /\\a/ @re_bof
+  /\\z/ @re_eof
+  re_ops
+  *chars
+}
+
+charclass = /\[\^?/ .begin {
+  /\]/ @class_end .end
+  /.-/ @range_start  # char followed by dash: start of range
+  *chars
+}
+
+*chars = {
+  /\\\{\h+\}/ @codepoint
+  /\\[bfnrv]/ @c_escape
+  /\\./ @plain_escape
+  /./ @char
+}
+
+re_str = /["']/ .set_quote .begin @str_begin {
+  $last_quote @str_end .end # meet " and strings ends
+  *chars
+}
+
+keyword_str = /["']/ .set_quote .begin {
+  $last_quote .end
+  /(\\.|[^"\\])+/ @keyword_str # reduced token
+}
+
+# PEG section
+[[peg]]
+
+main = vpa peg
+
+### VPA rules
+
+vpa = @nl* vpa_line+<@nl> @nl*
+
+vpa_line = [ # branches
+  state_decl
+  ignore_toks
+  effect_spec
+  keyword_def
+  vpa_rule
+  vpa_macro_rule
+]
+
+state_decl = "%state" @state_id
+
+ignore_toks = "%ignore" @tok_id+
+
+effect_spec = "%effect" @user_hook_id "=" effect+<"|">
+
+effect = [
+  @tok_id
+  @hook_begin
+  @hook_end
+  @hook_fail
+  @hook_unparse
+]
+
+keyword_def = "%keyword" @id @tok_id+
+
+vpa_rule = @vpa_id "=" [
+  re followup*
+  re_str followup*
+  @vpa_id followup*
+]
+
+vpa_macro_rule = @macro_id "=" scope
+
+followup = [
+  re
+  re_str
+  @vpa_id
+  @tok_id
+  @hook_begin
+  @hook_end
+  @hook_fail
+  @hook_unparse
+  @user_hook_id
+]
+
+scope = @scope_begin @nl* scope_line+<@nl> @nl* @scope_end
+
+scope_line = [
+  re followup*
+  re_str followup*
+  @vpa_id followup*
+  @macro_id
+]
+
+### Regex AST rules
+
+re = re_quantified+
+
+re_quantified = re_unit [
+  "?" : maybe
+  "+" : plus
+  "*" : star
+  : unquantified
+]
+
+re_atom = [
+  "(" re ")"
+  charclass
+  @re_dot
+  @re_space_class
+  @re_word_class
+  @re_digit_class
+  @re_hex_class
+  @re_bof
+  @re_eof
+  @char
+  @codepoint
+  @c_escape
+  @plain_escape
+]
+
+charclass = charclass_unit+ @class_end
+
+charclass_unit = [
+  @range_start re_char : range
+  re_char              : single
+]
+
+re_str = re_str_char+
+
+re_str_char = [
+  @char
+  @codepoint
+  @c_escape
+  @plain_escape
+]
+
+### PEG rules
+
+peg = @nl* peg_rule+<@nl> @nl*
+
+peg_rule = id "=" seq
+
+seq = peg_unit+
+
+peg_unit = [
+  id multiplier?
+  @tok_id multiplier?
+  @keyword_str multiplier?
+  branches
+]
+
+multiplier = [
+  "?"
+  "+" interlace?
+  "*" interlace?
+]
+
+interlace = "<" seq ">"
+
+branches = @branches_begin @nl* seq+<@nl> @nl* @branches_end

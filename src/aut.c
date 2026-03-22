@@ -1,12 +1,11 @@
 #include "aut.h"
 #include "bitset.h"
+#include "darray.h"
 
 #include <assert.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-
-// --- NFA transition ---
 
 typedef struct {
   int32_t from;
@@ -22,8 +21,6 @@ typedef struct {
   int32_t to;
 } EpsTrans;
 
-// --- DFA state (after determinization) ---
-
 typedef struct {
   Bitset* nfa_states;
 } DfaState;
@@ -38,32 +35,16 @@ typedef struct {
   int32_t col;
 } DfaTrans;
 
-// --- Aut ---
-
 struct Aut {
   const char* function_name;
   const char* source_file_name;
 
   NfaTrans* nfa_trans;
-  int nfa_ntrans;
-  int nfa_trans_cap;
-
   EpsTrans* eps_trans;
-  int eps_ntrans;
-  int eps_trans_cap;
-
   int32_t* state_actions;
-  int32_t state_actions_cap;
-
   int32_t max_state;
-
   DfaState* dfa_states;
-  int dfa_nstates;
-  int dfa_states_cap;
-
   DfaTrans* dfa_trans;
-  int dfa_ntrans;
-  int dfa_trans_cap;
 
   int optimized;
 };
@@ -80,14 +61,14 @@ void aut_del(Aut* a) {
   if (!a) {
     return;
   }
-  free(a->nfa_trans);
-  free(a->eps_trans);
-  free(a->state_actions);
-  for (int i = 0; i < a->dfa_nstates; i++) {
+  darray_del(a->nfa_trans);
+  darray_del(a->eps_trans);
+  darray_del(a->state_actions);
+  for (size_t i = 0; i < darray_size(a->dfa_states); i++) {
     bitset_del(a->dfa_states[i].nfa_states);
   }
-  free(a->dfa_states);
-  free(a->dfa_trans);
+  darray_del(a->dfa_states);
+  darray_del(a->dfa_trans);
   free(a);
 }
 
@@ -98,28 +79,26 @@ static void _track_state(Aut* a, int32_t s) {
 }
 
 void aut_transition(Aut* a, TransitionDef tdef, DebugInfo di) {
-  if (a->nfa_ntrans == a->nfa_trans_cap) {
-    a->nfa_trans_cap = a->nfa_trans_cap ? a->nfa_trans_cap * 2 : 64;
-    a->nfa_trans = realloc(a->nfa_trans, (size_t)a->nfa_trans_cap * sizeof(NfaTrans));
+  if (!a->nfa_trans) {
+    a->nfa_trans = darray_new(sizeof(NfaTrans), 0);
   }
-  a->nfa_trans[a->nfa_ntrans++] = (NfaTrans){
-      .from = tdef.from_state_id,
-      .to = tdef.to_state_id,
-      .cp_start = tdef.cp_start,
-      .cp_end = tdef.cp_end_inclusive,
-      .line = di.source_file_line,
-      .col = di.source_file_col,
-  };
+  darray_push(a->nfa_trans, ((NfaTrans){
+                                 .from = tdef.from_state_id,
+                                 .to = tdef.to_state_id,
+                                 .cp_start = tdef.cp_start,
+                                 .cp_end = tdef.cp_end_inclusive,
+                                 .line = di.source_file_line,
+                                 .col = di.source_file_col,
+                             }));
   _track_state(a, tdef.from_state_id);
   _track_state(a, tdef.to_state_id);
 }
 
 void aut_epsilon(Aut* a, int32_t from_state, int32_t to_state) {
-  if (a->eps_ntrans == a->eps_trans_cap) {
-    a->eps_trans_cap = a->eps_trans_cap ? a->eps_trans_cap * 2 : 64;
-    a->eps_trans = realloc(a->eps_trans, (size_t)a->eps_trans_cap * sizeof(EpsTrans));
+  if (!a->eps_trans) {
+    a->eps_trans = darray_new(sizeof(EpsTrans), 0);
   }
-  a->eps_trans[a->eps_ntrans++] = (EpsTrans){from_state, to_state};
+  darray_push(a->eps_trans, ((EpsTrans){from_state, to_state}));
   _track_state(a, from_state);
   _track_state(a, to_state);
 }
@@ -129,27 +108,21 @@ void aut_action(Aut* a, int32_t state, int32_t action_id) {
     return;
   }
   _track_state(a, state);
-  if (state >= a->state_actions_cap) {
-    int32_t new_cap = a->state_actions_cap ? a->state_actions_cap : 64;
-    while (new_cap <= state) {
-      new_cap *= 2;
-    }
-    a->state_actions = realloc(a->state_actions, (size_t)new_cap * sizeof(int32_t));
-    memset(a->state_actions + a->state_actions_cap, 0, (size_t)(new_cap - a->state_actions_cap) * sizeof(int32_t));
-    a->state_actions_cap = new_cap;
+  if (!a->state_actions) {
+    a->state_actions = darray_new(sizeof(int32_t), 0);
   }
-  // MIN-RULE: keep the smallest non-zero action_id
+  size_t needed = (size_t)state + 1;
+  if (needed > darray_size(a->state_actions)) {
+    a->state_actions = darray_grow(a->state_actions, needed);
+  }
   if (a->state_actions[state] == 0 || action_id < a->state_actions[state]) {
     a->state_actions[state] = action_id;
   }
 }
 
-// --- Epsilon closure ---
-// Returns the closure bitset and writes the min non-zero action_id from states in the closure.
-
 static Bitset* _epsilon_closure(Bitset* states, EpsTrans* eps, int neps, int nstates, int32_t* sa, int32_t sa_n,
                                 int32_t* out_action) {
-  Bitset* result = bitset_or(states, states); // copy
+  Bitset* result = bitset_or(states, states);
   int changed = 1;
   while (changed) {
     changed = 0;
@@ -176,60 +149,38 @@ static Bitset* _epsilon_closure(Bitset* states, EpsTrans* eps, int neps, int nst
   return result;
 }
 
-// --- Bitset equality ---
-
-static int _bitset_equal(Bitset* a, Bitset* b, int nstates) {
-  for (int i = 0; i < nstates; i++) {
-    if (bitset_contains(a, (uint32_t)i) != bitset_contains(b, (uint32_t)i)) {
-      return 0;
-    }
-  }
-  return 1;
-}
-
-// --- Interval splitting for subset construction ---
-
 static int _cmp_int32(const void* a, const void* b) {
   int32_t x = *(const int32_t*)a;
   int32_t y = *(const int32_t*)b;
   return (x > y) - (x < y);
 }
 
-// --- Subset construction ---
-
 static void _determinize(Aut* a, Bitset* initial, NfaTrans* nfa, int nnfa, EpsTrans* eps, int neps, int nstates,
                          int32_t* sa, int32_t sa_n) {
-  // Clear existing DFA
-  for (int i = 0; i < a->dfa_nstates; i++) {
+  for (size_t i = 0; i < darray_size(a->dfa_states); i++) {
     bitset_del(a->dfa_states[i].nfa_states);
   }
-  a->dfa_nstates = 0;
-  a->dfa_ntrans = 0;
+  if (a->dfa_states) {
+    a->dfa_states = darray_grow(a->dfa_states, 0);
+  } else {
+    a->dfa_states = darray_new(sizeof(DfaState), 0);
+  }
+  if (a->dfa_trans) {
+    a->dfa_trans = darray_grow(a->dfa_trans, 0);
+  } else {
+    a->dfa_trans = darray_new(sizeof(DfaTrans), 0);
+  }
 
-  // DFA state 0 = epsilon closure of initial
   Bitset* start = _epsilon_closure(initial, eps, neps, nstates, sa, sa_n, NULL);
+  darray_push(a->dfa_states, ((DfaState){.nfa_states = start}));
 
-  if (a->dfa_nstates == a->dfa_states_cap) {
-    a->dfa_states_cap = a->dfa_states_cap ? a->dfa_states_cap * 2 : 64;
-    a->dfa_states = realloc(a->dfa_states, (size_t)a->dfa_states_cap * sizeof(DfaState));
-  }
-  a->dfa_states[a->dfa_nstates++] = (DfaState){.nfa_states = start};
-
-  // Collect all split points from NFA transitions
-  int32_t* splits = NULL;
-  int nsplits = 0;
-  int splits_cap = 0;
-
+  int32_t* splits = darray_new(sizeof(int32_t), 0);
   for (int i = 0; i < nnfa; i++) {
-    if (nsplits + 2 > splits_cap) {
-      splits_cap = splits_cap ? splits_cap * 2 : 128;
-      splits = realloc(splits, (size_t)splits_cap * sizeof(int32_t));
-    }
-    splits[nsplits++] = nfa[i].cp_start;
-    splits[nsplits++] = nfa[i].cp_end + 1;
+    darray_push(splits, nfa[i].cp_start);
+    darray_push(splits, (nfa[i].cp_end + 1));
   }
+  int nsplits = (int)darray_size(splits);
   qsort(splits, (size_t)nsplits, sizeof(int32_t), _cmp_int32);
-  // Deduplicate
   int dedup = 0;
   for (int i = 0; i < nsplits; i++) {
     if (dedup == 0 || splits[dedup - 1] != splits[i]) {
@@ -238,9 +189,8 @@ static void _determinize(Aut* a, Bitset* initial, NfaTrans* nfa, int nnfa, EpsTr
   }
   nsplits = dedup;
 
-  // Worklist
   int worklist_head = 0;
-  while (worklist_head < a->dfa_nstates) {
+  while (worklist_head < (int)darray_size(a->dfa_states)) {
     int cur_dfa = worklist_head++;
     Bitset* cur_set = a->dfa_states[cur_dfa].nfa_states;
 
@@ -248,7 +198,6 @@ static void _determinize(Aut* a, Bitset* initial, NfaTrans* nfa, int nnfa, EpsTr
       int32_t lo = splits[si];
       int32_t hi = splits[si + 1] - 1;
 
-      // Find all NFA transitions that fire on any codepoint in [lo, hi]
       Bitset* target = bitset_new();
       int32_t best_line = 0, best_col = 0;
       int has_line = 0;
@@ -276,60 +225,43 @@ static void _determinize(Aut* a, Bitset* initial, NfaTrans* nfa, int nnfa, EpsTr
       Bitset* closed = _epsilon_closure(target, eps, neps, nstates, sa, sa_n, &action);
       bitset_del(target);
 
-      // Find or create DFA state for closed
       int found = -1;
-      for (int d = 0; d < a->dfa_nstates; d++) {
-        if (_bitset_equal(a->dfa_states[d].nfa_states, closed, nstates)) {
+      for (int d = 0; d < (int)darray_size(a->dfa_states); d++) {
+        if (bitset_equal(a->dfa_states[d].nfa_states, closed)) {
           found = d;
           break;
         }
       }
       if (found < 0) {
-        if (a->dfa_nstates == a->dfa_states_cap) {
-          a->dfa_states_cap = a->dfa_states_cap ? a->dfa_states_cap * 2 : 64;
-          a->dfa_states = realloc(a->dfa_states, (size_t)a->dfa_states_cap * sizeof(DfaState));
-        }
-        found = a->dfa_nstates;
-        a->dfa_states[a->dfa_nstates++] = (DfaState){.nfa_states = closed};
+        found = (int)darray_size(a->dfa_states);
+        darray_push(a->dfa_states, ((DfaState){.nfa_states = closed}));
       } else {
         bitset_del(closed);
       }
 
-      // Add DFA transition
-      if (a->dfa_ntrans == a->dfa_trans_cap) {
-        a->dfa_trans_cap = a->dfa_trans_cap ? a->dfa_trans_cap * 2 : 64;
-        a->dfa_trans = realloc(a->dfa_trans, (size_t)a->dfa_trans_cap * sizeof(DfaTrans));
-      }
-      a->dfa_trans[a->dfa_ntrans++] = (DfaTrans){
-          .from = cur_dfa,
-          .to = found,
-          .cp_start = lo,
-          .cp_end = hi,
-          .action_id = action,
-          .line = best_line,
-          .col = best_col,
-      };
+      darray_push(a->dfa_trans, ((DfaTrans){
+                                     .from = cur_dfa,
+                                     .to = found,
+                                     .cp_start = lo,
+                                     .cp_end = hi,
+                                     .action_id = action,
+                                     .line = best_line,
+                                     .col = best_col,
+                                 }));
     }
   }
 
-  free(splits);
+  darray_del(splits);
 }
-
-// --- Simple determinization for when optimize is not called ---
 
 static void _simple_determinize(Aut* a) {
   int nstates = a->max_state + 1;
   Bitset* init = bitset_new();
   bitset_add_bit(init, 0);
-  _determinize(a, init, a->nfa_trans, a->nfa_ntrans, a->eps_trans, a->eps_ntrans, nstates, a->state_actions,
-               a->state_actions_cap);
+  _determinize(a, init, a->nfa_trans, (int)darray_size(a->nfa_trans), a->eps_trans, (int)darray_size(a->eps_trans),
+               nstates, a->state_actions, (int32_t)darray_size(a->state_actions));
   bitset_del(init);
 }
-
-// --- Partition refinement (Hopcroft-style) minimization ---
-// Determinize first, then merge equivalent DFA states.
-// Two states are equivalent if they have the same transitions
-// (same target partition and same action_id) for every codepoint interval.
 
 void aut_optimize(Aut* a) {
   if (a->max_state < 0) {
@@ -337,27 +269,22 @@ void aut_optimize(Aut* a) {
     return;
   }
 
-  // First determinize the NFA into a DFA
   _simple_determinize(a);
 
-  int n = a->dfa_nstates;
+  int n = (int)darray_size(a->dfa_states);
   if (n <= 1) {
     a->optimized = 1;
     return;
   }
 
-  // Collect all split points from DFA transitions
-  int32_t* splits = NULL;
-  int nsplits = 0;
-  int splits_cap = 0;
-  for (int t = 0; t < a->dfa_ntrans; t++) {
-    if (nsplits + 2 > splits_cap) {
-      splits_cap = splits_cap ? splits_cap * 2 : 128;
-      splits = realloc(splits, (size_t)splits_cap * sizeof(int32_t));
-    }
-    splits[nsplits++] = a->dfa_trans[t].cp_start;
-    splits[nsplits++] = a->dfa_trans[t].cp_end + 1;
+  int dfa_ntrans = (int)darray_size(a->dfa_trans);
+
+  int32_t* splits = darray_new(sizeof(int32_t), 0);
+  for (int t = 0; t < dfa_ntrans; t++) {
+    darray_push(splits, a->dfa_trans[t].cp_start);
+    darray_push(splits, (a->dfa_trans[t].cp_end + 1));
   }
+  int nsplits = (int)darray_size(splits);
   qsort(splits, (size_t)nsplits, sizeof(int32_t), _cmp_int32);
   int dedup = 0;
   for (int i = 0; i < nsplits; i++) {
@@ -368,15 +295,13 @@ void aut_optimize(Aut* a) {
   nsplits = dedup;
   int nintervals = nsplits > 1 ? nsplits - 1 : 0;
 
-  // For each state and interval, precompute (target_state, action_id).
-  // -1 means no transition.
   int32_t* tgt = calloc((size_t)(n * nintervals), sizeof(int32_t));
   int32_t* act = calloc((size_t)(n * nintervals), sizeof(int32_t));
   for (int i = 0; i < n * nintervals; i++) {
     tgt[i] = -1;
   }
 
-  for (int t = 0; t < a->dfa_ntrans; t++) {
+  for (int t = 0; t < dfa_ntrans; t++) {
     int s = a->dfa_trans[t].from;
     for (int si = 0; si < nintervals; si++) {
       int32_t lo = splits[si];
@@ -388,13 +313,9 @@ void aut_optimize(Aut* a) {
     }
   }
 
-  // Partition: partition[s] = partition id for state s
   int32_t* partition = calloc((size_t)n, sizeof(int32_t));
   int npartitions = 0;
 
-  // Initial partition: group by action signature (action_ids on all intervals)
-  // Two states with different action vectors must be in different partitions.
-  // Use a simple O(n^2) grouping.
   for (int i = 0; i < n; i++) {
     partition[i] = -1;
   }
@@ -421,12 +342,10 @@ void aut_optimize(Aut* a) {
     npartitions++;
   }
 
-  // Iterative refinement: split partitions where states differ in target partitions
   int changed = 1;
   while (changed) {
     changed = 0;
     for (int p = 0; p < npartitions; p++) {
-      // Collect states in this partition
       int pcount = 0;
       for (int s = 0; s < n; s++) {
         if (partition[s] == p) {
@@ -436,8 +355,6 @@ void aut_optimize(Aut* a) {
       if (pcount <= 1) {
         continue;
       }
-      // Group states by their target-partition vector
-      // Compare each pair; states matching the first state stay, others form new groups
       int first = -1;
       for (int s = 0; s < n; s++) {
         if (partition[s] == p) {
@@ -461,14 +378,11 @@ void aut_optimize(Aut* a) {
           }
         }
         if (differs) {
-          // Find or create a new partition for this signature
-          // Check if any already-split state from this partition has the same signature
           int found_part = -1;
           for (int s2 = first + 1; s2 < s; s2++) {
             if (partition[s2] < p || partition[s2] == p) {
               continue;
             }
-            // s2 was split from p; check if s matches s2
             int match = 1;
             for (int si = 0; si < nintervals; si++) {
               int32_t t1 = tgt[s * nintervals + si];
@@ -496,8 +410,6 @@ void aut_optimize(Aut* a) {
     }
   }
 
-  // Build minimized DFA
-  // Map old state -> representative (smallest state in same partition)
   int32_t* repr = calloc((size_t)n, sizeof(int32_t));
   int32_t* new_id = calloc((size_t)n, sizeof(int32_t));
   for (int i = 0; i < n; i++) {
@@ -510,7 +422,6 @@ void aut_optimize(Aut* a) {
       repr[partition[s]] = s;
     }
   }
-  // Assign new state ids: ensure state 0 maps to new state 0
   int32_t start_repr = repr[partition[0]];
   new_id[start_repr] = new_nstates++;
   for (int p = 0; p < npartitions; p++) {
@@ -519,16 +430,13 @@ void aut_optimize(Aut* a) {
     }
   }
 
-  // Rebuild transitions: for each transition, remap from/to to new ids.
-  // Skip duplicate transitions (same new_from, new_to, cp range, action).
   int new_ntrans = 0;
-  DfaTrans* new_trans = malloc((size_t)(a->dfa_ntrans > 0 ? a->dfa_ntrans : 1) * sizeof(DfaTrans));
-  for (int t = 0; t < a->dfa_ntrans; t++) {
+  DfaTrans* new_trans = malloc((size_t)(dfa_ntrans > 0 ? dfa_ntrans : 1) * sizeof(DfaTrans));
+  for (int t = 0; t < dfa_ntrans; t++) {
     int old_from = a->dfa_trans[t].from;
     int old_to = a->dfa_trans[t].to;
     int32_t nf = new_id[repr[partition[old_from]]];
     int32_t nt = new_id[repr[partition[old_to]]];
-    // Only emit from the representative state
     if (repr[partition[old_from]] != old_from) {
       continue;
     }
@@ -543,45 +451,40 @@ void aut_optimize(Aut* a) {
     };
   }
 
-  // Replace DFA states
-  for (int i = 0; i < a->dfa_nstates; i++) {
+  for (int i = 0; i < n; i++) {
     bitset_del(a->dfa_states[i].nfa_states);
   }
-  a->dfa_nstates = new_nstates;
-  if (new_nstates > a->dfa_states_cap) {
-    a->dfa_states_cap = new_nstates;
-    a->dfa_states = realloc(a->dfa_states, (size_t)a->dfa_states_cap * sizeof(DfaState));
-  }
+  a->dfa_states = darray_grow(a->dfa_states, (size_t)new_nstates);
   for (int i = 0; i < new_nstates; i++) {
     a->dfa_states[i] = (DfaState){.nfa_states = bitset_new()};
   }
 
-  // Replace DFA transitions
-  free(a->dfa_trans);
-  a->dfa_trans = new_trans;
-  a->dfa_ntrans = new_ntrans;
-  a->dfa_trans_cap = a->dfa_ntrans;
+  darray_del(a->dfa_trans);
+  a->dfa_trans = darray_new(sizeof(DfaTrans), (size_t)new_ntrans);
+  memcpy(a->dfa_trans, new_trans, (size_t)new_ntrans * sizeof(DfaTrans));
+  free(new_trans);
 
   free(partition);
   free(repr);
   free(new_id);
   free(tgt);
   free(act);
-  free(splits);
+  darray_del(splits);
 
-  // Merge adjacent transitions with same (from, to, action_id) and contiguous ranges
-  for (int i = 0; i < a->dfa_ntrans; i++) {
-    for (int j = i + 1; j < a->dfa_ntrans; j++) {
+  int final_ntrans = (int)darray_size(a->dfa_trans);
+  for (int i = 0; i < final_ntrans; i++) {
+    for (int j = i + 1; j < final_ntrans; j++) {
       if (a->dfa_trans[i].from == a->dfa_trans[j].from && a->dfa_trans[i].to == a->dfa_trans[j].to &&
           a->dfa_trans[i].action_id == a->dfa_trans[j].action_id &&
           a->dfa_trans[i].cp_end + 1 == a->dfa_trans[j].cp_start) {
         a->dfa_trans[i].cp_end = a->dfa_trans[j].cp_end;
-        memmove(&a->dfa_trans[j], &a->dfa_trans[j + 1], (size_t)(a->dfa_ntrans - j - 1) * sizeof(DfaTrans));
-        a->dfa_ntrans--;
+        memmove(&a->dfa_trans[j], &a->dfa_trans[j + 1], (size_t)(final_ntrans - j - 1) * sizeof(DfaTrans));
+        final_ntrans--;
         j--;
       }
     }
   }
+  a->dfa_trans = darray_grow(a->dfa_trans, (size_t)final_ntrans);
 
   a->optimized = 1;
 }
@@ -590,15 +493,16 @@ int32_t aut_dfa_nstates(Aut* a) {
   if (!a->optimized) {
     _simple_determinize(a);
   }
-  return a->dfa_nstates;
+  return (int32_t)darray_size(a->dfa_states);
 }
-
-// --- IR generation ---
 
 void aut_gen_dfa(Aut* a, IrWriter* w, bool debug_mode) {
   if (!a->optimized) {
     _simple_determinize(a);
   }
+
+  int dfa_nstates = (int)darray_size(a->dfa_states);
+  int dfa_ntrans = (int)darray_size(a->dfa_trans);
 
   if (debug_mode) {
     irwriter_declare(w, "void", "llvm.debugtrap", "");
@@ -609,26 +513,23 @@ void aut_gen_dfa(Aut* a, IrWriter* w, bool debug_mode) {
   const char* arg_names[] = {"state", "cp"};
   irwriter_define_start(w, a->function_name, ret_ty, 2, arg_types, arg_names);
 
-  // entry: switch on %state
   irwriter_bb(w, "entry");
   irwriter_switch_start(w, "i32", "%state", "dead");
-  for (int s = 0; s < a->dfa_nstates; s++) {
+  for (int s = 0; s < dfa_nstates; s++) {
     char label[32];
     snprintf(label, sizeof(label), "s%d", s);
     irwriter_switch_case(w, "i32", s, label);
   }
   irwriter_switch_end(w);
 
-  // For each DFA state, generate codepoint matching
-  for (int s = 0; s < a->dfa_nstates; s++) {
+  for (int s = 0; s < dfa_nstates; s++) {
     char state_label[32];
     snprintf(state_label, sizeof(state_label), "s%d", s);
     irwriter_bb(w, state_label);
 
-    // Collect transitions from this state
     int first_trans = -1;
     int ntrans_from = 0;
-    for (int t = 0; t < a->dfa_ntrans; t++) {
+    for (int t = 0; t < dfa_ntrans; t++) {
       if (a->dfa_trans[t].from == s) {
         if (first_trans < 0) {
           first_trans = t;
@@ -643,12 +544,10 @@ void aut_gen_dfa(Aut* a, IrWriter* w, bool debug_mode) {
       irwriter_br(w, nomatch_label);
       irwriter_bb(w, nomatch_label);
 
-      const char* v0 = irwriter_insertvalue(w, ret_ty, "undef", "i32", "%state", 0);
       char v0n[32];
-      snprintf(v0n, sizeof(v0n), "%s", v0);
-      const char* v1 = irwriter_insertvalue_imm(w, ret_ty, v0n, "i32", -2, 1);
+      irwriter_insertvalue(w, v0n, sizeof(v0n), ret_ty, "undef", "i32", "%state", 0);
       char v1n[32];
-      snprintf(v1n, sizeof(v1n), "%s", v1);
+      irwriter_insertvalue_imm(w, v1n, sizeof(v1n), ret_ty, v0n, "i32", -2, 1);
       irwriter_ret(w, ret_ty, v1n);
       continue;
     }
@@ -660,7 +559,7 @@ void aut_gen_dfa(Aut* a, IrWriter* w, bool debug_mode) {
 
     int has_switch = 0;
     int has_range = 0;
-    for (int t = 0; t < a->dfa_ntrans; t++) {
+    for (int t = 0; t < dfa_ntrans; t++) {
       if (a->dfa_trans[t].from != s) {
         continue;
       }
@@ -681,7 +580,7 @@ void aut_gen_dfa(Aut* a, IrWriter* w, bool debug_mode) {
       const char* sw_default = has_range > 0 ? after_switch_label : nomatch_label;
       irwriter_switch_start(w, "i32", "%cp", sw_default);
 
-      for (int t = 0; t < a->dfa_ntrans; t++) {
+      for (int t = 0; t < dfa_ntrans; t++) {
         if (a->dfa_trans[t].from != s || a->dfa_trans[t].cp_start != a->dfa_trans[t].cp_end) {
           continue;
         }
@@ -698,7 +597,7 @@ void aut_gen_dfa(Aut* a, IrWriter* w, bool debug_mode) {
       irwriter_bb(w, after_switch_label);
 
       int range_idx = 0;
-      for (int t = 0; t < a->dfa_ntrans; t++) {
+      for (int t = 0; t < dfa_ntrans; t++) {
         if (a->dfa_trans[t].from != s || a->dfa_trans[t].cp_start == a->dfa_trans[t].cp_end) {
           continue;
         }
@@ -713,7 +612,7 @@ void aut_gen_dfa(Aut* a, IrWriter* w, bool debug_mode) {
 
         char next_label[32];
         int next_range = -1;
-        for (int t2 = t + 1; t2 < a->dfa_ntrans; t2++) {
+        for (int t2 = t + 1; t2 < dfa_ntrans; t2++) {
           if (a->dfa_trans[t2].from == s && a->dfa_trans[t2].cp_start != a->dfa_trans[t2].cp_end) {
             next_range = t2;
             break;
@@ -725,15 +624,12 @@ void aut_gen_dfa(Aut* a, IrWriter* w, bool debug_mode) {
           snprintf(next_label, sizeof(next_label), "%s", nomatch_label);
         }
 
-        const char* lo = irwriter_icmp_imm(w, "sge", "i32", "%cp", dt->cp_start);
         char lo_n[32];
-        snprintf(lo_n, sizeof(lo_n), "%s", lo);
-        const char* hi = irwriter_icmp_imm(w, "sle", "i32", "%cp", dt->cp_end);
+        irwriter_icmp_imm(w, lo_n, sizeof(lo_n), "sge", "i32", "%cp", dt->cp_start);
         char hi_n[32];
-        snprintf(hi_n, sizeof(hi_n), "%s", hi);
-        const char* both = irwriter_binop(w, "and", "i1", lo_n, hi_n);
+        irwriter_icmp_imm(w, hi_n, sizeof(hi_n), "sle", "i32", "%cp", dt->cp_end);
         char both_n[32];
-        snprintf(both_n, sizeof(both_n), "%s", both);
+        irwriter_binop(w, both_n, sizeof(both_n), "and", "i1", lo_n, hi_n);
         irwriter_br_cond(w, both_n, match_label, next_label);
 
         if (next_range >= 0) {
@@ -744,8 +640,7 @@ void aut_gen_dfa(Aut* a, IrWriter* w, bool debug_mode) {
       }
     }
 
-    // Emit match blocks for all transitions from this state
-    for (int t = 0; t < a->dfa_ntrans; t++) {
+    for (int t = 0; t < dfa_ntrans; t++) {
       if (a->dfa_trans[t].from != s) {
         continue;
       }
@@ -759,38 +654,30 @@ void aut_gen_dfa(Aut* a, IrWriter* w, bool debug_mode) {
         irwriter_dbg(w, dt->line, dt->col);
       }
 
-      const char* v0 = irwriter_insertvalue_imm(w, ret_ty, "undef", "i32", dt->to, 0);
       char v0n[32];
-      snprintf(v0n, sizeof(v0n), "%s", v0);
-      const char* v1 = irwriter_insertvalue_imm(w, ret_ty, v0n, "i32", dt->action_id, 1);
+      irwriter_insertvalue_imm(w, v0n, sizeof(v0n), ret_ty, "undef", "i32", dt->to, 0);
       char v1n[32];
-      snprintf(v1n, sizeof(v1n), "%s", v1);
+      irwriter_insertvalue_imm(w, v1n, sizeof(v1n), ret_ty, v0n, "i32", dt->action_id, 1);
       irwriter_ret(w, ret_ty, v1n);
     }
 
-    // Nomatch block
     irwriter_bb(w, nomatch_label);
-    const char* v0 = irwriter_insertvalue(w, ret_ty, "undef", "i32", "%state", 0);
     char v0n[32];
-    snprintf(v0n, sizeof(v0n), "%s", v0);
-    const char* v1 = irwriter_insertvalue_imm(w, ret_ty, v0n, "i32", -2, 1);
+    irwriter_insertvalue(w, v0n, sizeof(v0n), ret_ty, "undef", "i32", "%state", 0);
     char v1n[32];
-    snprintf(v1n, sizeof(v1n), "%s", v1);
+    irwriter_insertvalue_imm(w, v1n, sizeof(v1n), ret_ty, v0n, "i32", -2, 1);
     irwriter_ret(w, ret_ty, v1n);
   }
 
-  // Dead state block
   irwriter_bb(w, "dead");
   {
     if (debug_mode) {
       irwriter_call_void(w, "llvm.debugtrap");
     }
-    const char* v0 = irwriter_insertvalue(w, ret_ty, "undef", "i32", "%state", 0);
     char v0n[32];
-    snprintf(v0n, sizeof(v0n), "%s", v0);
-    const char* v1 = irwriter_insertvalue_imm(w, ret_ty, v0n, "i32", -2, 1);
+    irwriter_insertvalue(w, v0n, sizeof(v0n), ret_ty, "undef", "i32", "%state", 0);
     char v1n[32];
-    snprintf(v1n, sizeof(v1n), "%s", v1);
+    irwriter_insertvalue_imm(w, v1n, sizeof(v1n), ret_ty, v0n, "i32", -2, 1);
     irwriter_ret(w, ret_ty, v1n);
   }
 

@@ -3,14 +3,6 @@
 #include <stddef.h>
 #include <stdint.h>
 
-// Fat-pointer UTF-8 string.
-//
-// Heap layout:
-//   [int32_t size][char data[size]]['\0'][char marks[(size+7)/8]]
-//
-// The user-visible pointer points to &data[0].
-// marks bitset: bit i of marks[i/8] (LSB-first) = 1 if byte i starts a codepoint.
-
 char* ustr_new(size_t sz, const char* data);
 void ustr_del(char* s);
 
@@ -38,3 +30,5 @@ typedef struct {
 
 void ustr_iter_init(UstrIter* it, const char* s, int32_t char_offset);
 int32_t ustr_iter_next(UstrIter* it);
+
+int32_t ustr_decode_cp(const uint8_t* p, int32_t* adv);
