@@ -4,6 +4,9 @@
 #include <stdbool.h>
 #include <stdint.h>
 
+#define LEX_CP_BOF (-1)
+#define LEX_CP_EOF (-2)
+
 typedef struct Re Re;
 
 typedef struct {
@@ -31,3 +34,4 @@ void re_lparen(Re* re);
 void re_fork(Re* re);
 void re_rparen(Re* re);
 void re_action(Re* re, int32_t action_id);
+int32_t re_cur_state(Re* re);

@@ -19,4 +19,4 @@ build lexer on top of re API
     - paren not match
     - char group not closed
   - when parsing good, return action id
-- `lex_gen(FILE*)` create the lexer function
+- `lex_gen(FILE*)` create the lexer function in LLVM IR

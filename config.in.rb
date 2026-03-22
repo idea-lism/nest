@@ -13,6 +13,9 @@ lib "aut",
 lib "re",
   srcs: %w[src/re.c]
 
+lib "lex",
+  srcs: %w[src/lex.c]
+
 exe "test_ustr",
   srcs: %w[test/test_ustr.c src/ustr_naive.c],
   deps: %w[ustr]
@@ -36,6 +39,10 @@ exe "test_aut",
 exe "test_re",
   srcs: %w[test/test_re.c],
   deps: %w[re aut irwriter bitset]
+
+exe "test_lex",
+  srcs: %w[test/test_lex.c],
+  deps: %w[lex re aut irwriter bitset ustr]
 
 debug   cflags: "-O0 -g -fsanitize=address -fsanitize=undefined"
 release cflags: "-O2"
