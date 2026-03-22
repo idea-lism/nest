@@ -83,6 +83,18 @@ Bitset* bitset_and(Bitset* s1, Bitset* s2) {
   return result;
 }
 
+bool bitset_equal(Bitset* a, Bitset* b) {
+  uint32_t max_n = a->n_chunks > b->n_chunks ? a->n_chunks : b->n_chunks;
+  for (uint32_t i = 0; i < max_n; i++) {
+    uint64_t ca = i < a->n_chunks ? a->chunks[i] : 0;
+    uint64_t cb = i < b->n_chunks ? b->chunks[i] : 0;
+    if (ca != cb) {
+      return false;
+    }
+  }
+  return true;
+}
+
 uint32_t bitset_size(Bitset* bs) {
   uint32_t count = 0;
   for (uint32_t i = 0; i < bs->n_chunks; i++) {

@@ -176,17 +176,6 @@ static Bitset* _epsilon_closure(Bitset* states, EpsTrans* eps, int neps, int nst
   return result;
 }
 
-// --- Bitset equality ---
-
-static int _bitset_equal(Bitset* a, Bitset* b, int nstates) {
-  for (int i = 0; i < nstates; i++) {
-    if (bitset_contains(a, (uint32_t)i) != bitset_contains(b, (uint32_t)i)) {
-      return 0;
-    }
-  }
-  return 1;
-}
-
 // --- Interval splitting for subset construction ---
 
 static int _cmp_int32(const void* a, const void* b) {
@@ -279,7 +268,7 @@ static void _determinize(Aut* a, Bitset* initial, NfaTrans* nfa, int nnfa, EpsTr
       // Find or create DFA state for closed
       int found = -1;
       for (int d = 0; d < a->dfa_nstates; d++) {
-        if (_bitset_equal(a->dfa_states[d].nfa_states, closed, nstates)) {
+        if (bitset_equal(a->dfa_states[d].nfa_states, closed)) {
           found = d;
           break;
         }
