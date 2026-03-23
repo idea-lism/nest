@@ -1,5 +1,5 @@
-#include "../src/lex.h"
 #include "compat.h"
+#include "../src/lex.h"
 #include <assert.h>
 #include <stdint.h>
 #include <stdio.h>

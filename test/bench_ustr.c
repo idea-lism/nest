@@ -4,11 +4,24 @@
 #include <stdlib.h>
 #include <string.h>
 #include <time.h>
+#ifdef _WIN32
+#include <windows.h>
+#endif
 
 static double _now_sec(void) {
+#ifdef _WIN32
+  static LARGE_INTEGER freq;
+  LARGE_INTEGER now;
+  if (freq.QuadPart == 0) {
+    QueryPerformanceFrequency(&freq);
+  }
+  QueryPerformanceCounter(&now);
+  return (double)now.QuadPart / (double)freq.QuadPart;
+#else
   struct timespec ts;
   clock_gettime(CLOCK_MONOTONIC, &ts);
   return ts.tv_sec + ts.tv_nsec * 1e-9;
+#endif
 }
 
 static void _fill_ascii(char* buf, size_t sz) {

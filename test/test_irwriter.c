@@ -1,5 +1,5 @@
-#include "../src/irwriter.h"
 #include "compat.h"
+#include "../src/irwriter.h"
 #include <assert.h>
 #include <stdio.h>
 #include <stdlib.h>

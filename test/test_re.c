@@ -1,5 +1,5 @@
-#include "../src/re.h"
 #include "compat.h"
+#include "../src/re.h"
 #include <assert.h>
 #include <stdio.h>
 #include <stdlib.h>

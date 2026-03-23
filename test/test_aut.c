@@ -1,5 +1,5 @@
-#include "../src/aut.h"
 #include "compat.h"
+#include "../src/aut.h"
 #include <assert.h>
 #include <stdio.h>
 #include <stdlib.h>
