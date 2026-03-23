@@ -1,6 +1,8 @@
 build
 build.ninja
+compile_commands.json
 out
 lex.o
 lex_wrap.o
 *.dSYM
+.cache

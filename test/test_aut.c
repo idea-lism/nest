@@ -358,6 +358,9 @@ static void _write_and_compile(void (*fn)(Aut*, IrWriter*), const char* test_nam
   snprintf(obj_path, sizeof(obj_path), "%s/build/test_aut_%s.o", PROJECT_ROOT, test_name);
 
   FILE* f = fopen(ll_path, "w");
+  if (!f) {
+    fprintf(stderr, "fopen failed: %s\n", ll_path);
+  }
   assert(f);
   IrWriter* w = irwriter_new(f, TARGET);
   irwriter_start(w, "test.rules", ".");

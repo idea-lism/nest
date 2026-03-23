@@ -216,3 +216,22 @@ File.open("build.ninja", "w") do |f|
 end
 
 puts "Generated build.ninja (mode=#{MODE}, cc=#{CC})"
+
+# --- Generate compile_commands.json ---
+require 'json'
+
+project_root = File.expand_path(__dir__)
+all_srcs = ($libs.flat_map { |l| l[:srcs] } + $exes.flat_map { |e| e[:srcs] } + $combined_libs.flat_map { |cl| cl[:srcs] }).uniq
+test_define = "-DPROJECT_ROOT=\\\"#{project_root.gsub('\\', '/')}\\\""
+
+entries = all_srcs.map do |src|
+  extra = src.start_with?("test/") ? " #{test_define}" : ""
+  {
+    directory: project_root,
+    file: src,
+    command: "#{CC} #{CFLAGS}#{extra} -c #{src} -o #{BUILDDIR}/#{src.sub(/\.c$/, '.o')}"
+  }
+end
+
+File.write("compile_commands.json", JSON.pretty_generate(entries) + "\n")
+puts "Generated compile_commands.json"

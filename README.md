@@ -1,5 +1,7 @@
 # re
 
+[![CI](https://github.com/idea-lism/re/actions/workflows/ci.yml/badge.svg)](https://github.com/idea-lism/re/actions/workflows/ci.yml)
+
 Regex-to-LLVM-IR compiler. Define patterns, generate a DFA as LLVM IR, link it into your program.
 
 ## Build
