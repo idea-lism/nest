@@ -353,9 +353,9 @@ TEST(test_optimize_preserves_action) {
 // --- Clang compilation ---
 
 static void _write_and_compile(void (*fn)(Aut*, IrWriter*), const char* test_name) {
-  char ll_path[512], obj_path[512];
-  snprintf(ll_path, sizeof(ll_path), "%s/build/test_aut_%s.ll", PROJECT_ROOT, test_name);
-  snprintf(obj_path, sizeof(obj_path), "%s/build/test_aut_%s.o", PROJECT_ROOT, test_name);
+  char ll_path[128], obj_path[128];
+  snprintf(ll_path, sizeof(ll_path), "%s/test_aut_%s.ll", BUILD_DIR, test_name);
+  snprintf(obj_path, sizeof(obj_path), "%s/test_aut_%s.o", BUILD_DIR, test_name);
 
   FILE* f = fopen(ll_path, "w");
   if (!f) {
