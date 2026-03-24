@@ -3,11 +3,14 @@ name: CI
 on:
   push:
     branches: [main, master]
+    tags: ['v*']
   pull_request:
 
 jobs:
   macos:
     runs-on: macos-latest
+    env:
+      IS_TAG: ${{ startsWith(github.ref, 'refs/tags/') }}
     steps:
       - uses: actions/checkout@v4
       - uses: ruby/setup-ruby@v1
@@ -15,18 +18,47 @@ jobs:
           ruby-version: "3.3"
       - name: Install ninja
         run: brew install ninja
-      - name: Build (debug)
-        run: ruby config.rb debug && ninja
+      - name: Build
+        run: |
+          mode=debug
+          if [ "$IS_TAG" = "true" ]; then
+            mode=release
+          fi
+          ruby config.rb "$mode"
+          ninja
       - name: Test
         run: |
-          for t in build/debug/test_*; do
+          mode=debug
+          if [ "$IS_TAG" = "true" ]; then
+            mode=release
+          fi
+          for t in build/"$mode"/test_*; do
             [ -x "$t" ] || continue
             echo "--- $t ---"
             "$t"
           done
+      - name: Package release
+        if: startsWith(github.ref, 'refs/tags/')
+        run: |
+          pkg="re-${GITHUB_REF_NAME}-macos"
+          bin="build/release/ulex"
+          mkdir -p dist/"$pkg"/bin dist/"$pkg"/lib dist/"$pkg"/include
+          cp LICENSE README.md dist/"$pkg"/
+          cp out/libre.a dist/"$pkg"/lib/
+          cp out/re_rt.h out/lex.h dist/"$pkg"/include/
+          cp "$bin" dist/"$pkg"/bin/
+          tar -czf dist/"$pkg".tar.gz -C dist "$pkg"
+      - name: Upload release artifact
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-macos
+          path: dist/*.tar.gz
 
   linux:
     runs-on: ubuntu-latest
+    env:
+      IS_TAG: ${{ startsWith(github.ref, 'refs/tags/') }}
     steps:
       - uses: actions/checkout@v4
       - uses: ruby/setup-ruby@v1
@@ -38,21 +70,50 @@ jobs:
           chmod +x llvm.sh
           sudo ./llvm.sh 18
           sudo apt-get install -y ninja-build unzip
-      - name: Build (debug)
-        run: CC=clang-18 ruby config.rb debug && ninja
+      - name: Build
+        run: |
+          mode=debug
+          if [ "$IS_TAG" = "true" ]; then
+            mode=release
+          fi
+          CC=clang-18 ruby config.rb "$mode"
+          ninja
         env:
           CC: clang-18
       - name: Test
         run: |
           export LLVM_CC=clang-18
-          for t in build/debug/test_*; do
+          mode=debug
+          if [ "$IS_TAG" = "true" ]; then
+            mode=release
+          fi
+          for t in build/"$mode"/test_*; do
             [ -x "$t" ] || continue
             echo "--- $t ---"
             "$t"
           done
+      - name: Package release
+        if: startsWith(github.ref, 'refs/tags/')
+        run: |
+          pkg="re-${GITHUB_REF_NAME}-linux"
+          bin="build/release/ulex"
+          mkdir -p dist/"$pkg"/bin dist/"$pkg"/lib dist/"$pkg"/include
+          cp LICENSE README.md dist/"$pkg"/
+          cp out/libre.a dist/"$pkg"/lib/
+          cp out/re_rt.h out/lex.h dist/"$pkg"/include/
+          cp "$bin" dist/"$pkg"/bin/
+          tar -czf dist/"$pkg".tar.gz -C dist "$pkg"
+      - name: Upload release artifact
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-linux
+          path: dist/*.tar.gz
 
   windows:
     runs-on: windows-latest
+    env:
+      IS_TAG: ${{ startsWith(github.ref, 'refs/tags/') }}
     defaults:
       run:
         shell: msys2 {0}
@@ -68,15 +129,64 @@ jobs:
           update: true
       - name: Install Ruby
         run: pacman -S --noconfirm ruby
-      - name: Build (debug)
-        run: CC=clang ruby config.rb debug && ninja
+      - name: Build
+        run: |
+          mode=debug
+          if [ "$IS_TAG" = "true" ]; then
+            mode=release
+          fi
+          CC=clang ruby config.rb "$mode"
+          ninja
         env:
           CC: clang
       - name: Test
         run: |
           export LLVM_CC=clang
-          for t in build/debug/test_*; do
+          mode=debug
+          if [ "$IS_TAG" = "true" ]; then
+            mode=release
+          fi
+          for t in build/"$mode"/test_*; do
             [ -x "$t" ] || continue
             echo "--- $t ---"
             "$t"
           done
+      - name: Package release
+        if: startsWith(github.ref, 'refs/tags/')
+        run: |
+          pkg="re-${GITHUB_REF_NAME}-windows"
+          bin="build/release/ulex"
+          if [ ! -e "$bin" ]; then
+            bin="${bin}.exe"
+          fi
+          mkdir -p dist/"$pkg"/bin dist/"$pkg"/lib dist/"$pkg"/include
+          cp LICENSE README.md dist/"$pkg"/
+          cp out/libre.a dist/"$pkg"/lib/
+          cp out/re_rt.h out/lex.h dist/"$pkg"/include/
+          cp "$bin" dist/"$pkg"/bin/
+          tar -czf dist/"$pkg".tar.gz -C dist "$pkg"
+      - name: Upload release artifact
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-windows
+          path: dist/*.tar.gz
+
+  release:
+    if: startsWith(github.ref, 'refs/tags/')
+    needs: [macos, linux, windows]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Download release artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: dist
+          pattern: release-*
+          merge-multiple: true
+      - name: Publish GitHub release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/*.tar.gz
+          generate_release_notes: true
