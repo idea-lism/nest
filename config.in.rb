@@ -61,6 +61,16 @@ build #{bd}/nest_lex.ll: gen_nest_lex #{bd}/parse_gen
 build #{bd}/nest_lex.o: ll_cc #{bd}/nest_lex.ll
 NINJA
 
+ninja_raw "build #{bd}/test/test_coloring.o: cc_test test/test_coloring.c\n"
+ninja_raw "build #{bd}/src/coloring.o: cc src/coloring.c\n"
+ninja_raw "build #{bd}/src/graph.o: cc src/graph.c\n"
+
+ninja_raw <<~NINJA
+build #{bd}/test_coloring: link #{bd}/test/test_coloring.o #{bd}/src/coloring.o #{bd}/src/graph.o build/kissat/build/libkissat.a
+NINJA
+
+$extra_defaults << "#{bd}/test_coloring"
+
 test_parse_new_srcs = %w[test/test_parse.c src/parse.c src/token_chunk.c src/vpa.c src/peg.c src/header_writer.c]
 test_parse_new_srcs.each do |src|
   obj = "#{bd}/#{src.sub(/\.c$/, '.o')}"

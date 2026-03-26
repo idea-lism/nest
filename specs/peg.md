@@ -4,7 +4,9 @@ src/peg.c is a packrat parsing generator.
 
 It iterates parsed PEG structure, utilize src/re.h to generate code.
 
-# Naive
+It provides 2 generating options: naive & row_shared, so we can benchmark.
+
+# `naive`
 
 ### Analyze
 
@@ -34,11 +36,16 @@ struct ScopedTable {
 };
 
 struct Col {
-  int32_t tok_size[rule_size];
+  int32_t slots[slots_size];
 };
 ```
 
-# Optimized
+Each slot:
+- if rule is sequence rule, stores match length of the rule (some rule can be 0-sized so 0 is a value).
+- if rule is branch rule, store the chosen branch id.
+- if rule is chainable (a+), store the offset to next token.
+
+# `row_shared`
 
 Rule IDs can share a slot storage when 2 rules do not co-exist at one matching position.
 
@@ -65,7 +72,7 @@ After graph coloring, we have shared-groups (sets of peg rule ids).
 
 Then we use reverse-bitset representation to denote what each slot means:
 - the bit map co-lives with cache slots in one single struct:
-  - `struct Col { int32_t bits[floor(rule_size / 32)]; int32_t slots; }`
+  - `struct Col { int32_t bits[nseg_groups]; int32_t slots[slot_size]; }`
 - init state: set all bits & slots to 1 `memset(peg_table, table_bytes, -1)`
 - for a rule, we know:
   - the segment it belongs to: `segment_bits = bits[segment_index] & segment_mask`
@@ -77,19 +84,7 @@ Then we use reverse-bitset representation to denote what each slot means:
         - else deny the rule bit, set it to `0`.
     - if rule bit is `0`, it means previous tries cached the failure, rule does not match.
 
-For performance of generated code, same-group bitset should be segmented by 31 (with an extra `segment_decided_bit` it fills 32).
-
-Each slot:
-- if rule is sequence rule, stores match length of the rule (some rule can be 0-sized so 0 is a value).
-- if rule is branch rule, store the chosen branch id.
-
-### Optimized table layout
-
-```c
-struct OptimizedCol {
-  int64_t slot[nslots]; // nslots = number of colors from graph coloring
-};
-```
+For performance of generated code, same-group bitset should be segmented by 32. see coloring.md for more details.
 
 # Code gen
 

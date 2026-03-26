@@ -52,6 +52,13 @@ def ninja_raw(text)
   $extra_ninja += text + "\n"
 end
 
+# --- Ensure kissat is built ---
+KISSAT_LIB = "build/kissat/build/libkissat.a"
+unless File.exist?(KISSAT_LIB)
+  puts "Building kissat..."
+  system("ruby", "scripts/build_kissat.rb") || abort("kissat build failed")
+end
+
 # --- Load project config ---
 load File.join(__dir__, "config.in.rb")
 

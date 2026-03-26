@@ -18,6 +18,7 @@ ninja
 scripts/test # in release mode
 scripts/test debug
 scripts/benchmark
+scripts/coverage # generate coverage report at build/coverage/html/index.html
 ```
 
 ## Clang-format
@@ -48,8 +49,10 @@ scripts/benchmark
 | lex | lex.c, lex.h | Regex syntax parser, used internally by vpa.c (not distributed) |
 | parse_gen | parse_gen.c | Build-time tool: generates DFA lexers for .nest syntax (inlines lex helpers) |
 | ulex | ulex.c | CLI tool wrapping lex: reads pattern file, emits .ll |
+| coloring | coloring.c, coloring.h | SAT-based graph coloring for PEG parser optimization (uses kissat) |
 
 Dependency chain: ustr → bitset → irwriter → aut → re → lex → ulex
+PEG parser: coloring (kissat) → peg
 
 ## Key design points
 
@@ -58,6 +61,27 @@ Dependency chain: ustr → bitset → irwriter → aut → re → lex → ulex
 - Special codepoints: BOF = -1, EOF = -2
 - Regex syntax: `[a-z]` `[^...]` `.` `\s \w \d \h` `\n \t` `\u{XXXX}` `| () ? + *` `\a` (BOF) `\z` (EOF)
 - Error codes from lex_add: LEX_ERR_PAREN = -1, LEX_ERR_BRACKET = -2
+
+## Graph coloring (PEG optimization)
+
+The `coloring` module uses kissat (SAT solver) to optimize PEG parser memory layout via graph coloring.
+
+### Build dependency
+
+kissat is built automatically by `config.rb` via `scripts/build_kissat.rb` (downloads rel-4.0.4, builds to `build/kissat/build/libkissat.a`).
+
+### SAT encoding
+
+Given interference graph G (vertices = PEG rules, edges = non-exclusive rules) and k colors:
+- Variables: `x[v,c]` = vertex v has color c (1 ≤ v ≤ n, 0 ≤ c < k)
+- Each vertex gets exactly one color: `∨c x[v,c]` and `¬x[v,c1] ∨ ¬x[v,c2]` for c1 ≠ c2
+- Adjacent vertices get different colors: `¬x[u,c] ∨ ¬x[v,c]` for edge (u,v)
+- Symmetry breaking: fix vertex 0 to color 0
+
+### Segment layout
+
+After coloring, vertices with same color form groups. Groups >32 elements split into 32-element segments.
+Each vertex gets `(sg_id, seg_mask)` for bitset-based cache lookup in generated parser (see specs/peg.md).
 
 ## Specs
 
