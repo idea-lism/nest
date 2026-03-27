@@ -329,6 +329,134 @@ TEST(test_per_scope_col) {
   darray_del(input.rules);
 }
 
+TEST(test_row_shared_per_scope_compact) {
+  PegGenInput input = {0};
+  input.rules = darray_new(sizeof(PegRule), 0);
+  input.mode = PEG_MODE_ROW_SHARED;
+
+  PegRule r1 = {0};
+  r1.name = strdup("a");
+  r1.scope = strdup("s1");
+  r1.seq.kind = PEG_SEQ;
+  r1.seq.children = darray_new(sizeof(PegUnit), 0);
+  darray_push(r1.seq.children, ((PegUnit){.kind = PEG_TOK, .name = strdup("X")}));
+  darray_push(input.rules, r1);
+
+  PegRule r2 = {0};
+  r2.name = strdup("b");
+  r2.scope = strdup("s1");
+  r2.seq.kind = PEG_SEQ;
+  r2.seq.children = darray_new(sizeof(PegUnit), 0);
+  darray_push(r2.seq.children, ((PegUnit){.kind = PEG_TOK, .name = strdup("X")}));
+  darray_push(input.rules, r2);
+
+  PegRule r3 = {0};
+  r3.name = strdup("c");
+  r3.scope = strdup("s2");
+  r3.seq.kind = PEG_SEQ;
+  r3.seq.children = darray_new(sizeof(PegUnit), 0);
+  darray_push(r3.seq.children, ((PegUnit){.kind = PEG_TOK, .name = strdup("Y")}));
+  darray_push(input.rules, r3);
+
+  char* hdr_buf = NULL;
+  size_t hdr_sz = 0;
+  FILE* hf = compat_open_memstream(&hdr_buf, &hdr_sz);
+  FILE* irf = fopen("build/debug/test_peg_shared_scope_compact.ll", "w");
+  HeaderWriter* hw = hw_new(hf);
+  IrWriter* w = irwriter_new(irf, "x86_64-unknown-linux-gnu");
+
+  irwriter_start(w, "test.c", ".");
+  peg_gen(&input, hw, w);
+  irwriter_end(w);
+
+  hw_del(hw);
+  irwriter_del(w);
+  fclose(irf);
+  compat_close_memstream(hf, &hdr_buf, &hdr_sz);
+
+  assert(strstr(hdr_buf, "Col_s1"));
+  assert(strstr(hdr_buf, "Col_s2"));
+  assert(strstr(hdr_buf, "int32_t slots[2];"));
+  assert(strstr(hdr_buf, "int32_t slots[1];"));
+
+  free(hdr_buf);
+
+  free(r1.seq.children[0].name);
+  darray_del(r1.seq.children);
+  free(r1.name);
+  free(r1.scope);
+  free(r2.seq.children[0].name);
+  darray_del(r2.seq.children);
+  free(r2.name);
+  free(r2.scope);
+  free(r3.seq.children[0].name);
+  darray_del(r3.seq.children);
+  free(r3.name);
+  free(r3.scope);
+  darray_del(input.rules);
+}
+
+TEST(test_scope_refs_not_expanded_in_sets) {
+  PegGenInput input = {0};
+  input.rules = darray_new(sizeof(PegRule), 0);
+  input.mode = PEG_MODE_ROW_SHARED;
+
+  PegRule start = {0};
+  start.name = strdup("start");
+  start.seq.kind = PEG_SEQ;
+  start.seq.children = darray_new(sizeof(PegUnit), 0);
+  darray_push(start.seq.children, ((PegUnit){.kind = PEG_ID, .name = strdup("inner")}));
+  darray_push(input.rules, start);
+
+  PegRule tok = {0};
+  tok.name = strdup("tok_rule");
+  tok.seq.kind = PEG_SEQ;
+  tok.seq.children = darray_new(sizeof(PegUnit), 0);
+  darray_push(tok.seq.children, ((PegUnit){.kind = PEG_TOK, .name = strdup("A")}));
+  darray_push(input.rules, tok);
+
+  PegRule inner = {0};
+  inner.name = strdup("inner");
+  inner.scope = strdup("inner");
+  inner.seq.kind = PEG_SEQ;
+  inner.seq.children = darray_new(sizeof(PegUnit), 0);
+  darray_push(inner.seq.children, ((PegUnit){.kind = PEG_TOK, .name = strdup("A")}));
+  darray_push(input.rules, inner);
+
+  char* hdr_buf = NULL;
+  size_t hdr_sz = 0;
+  FILE* hf = compat_open_memstream(&hdr_buf, &hdr_sz);
+  FILE* irf = fopen("build/debug/test_peg_scope_ref_sets.ll", "w");
+  HeaderWriter* hw = hw_new(hf);
+  IrWriter* w = irwriter_new(irf, "x86_64-unknown-linux-gnu");
+
+  irwriter_start(w, "test.c", ".");
+  peg_gen(&input, hw, w);
+  irwriter_end(w);
+
+  hw_del(hw);
+  irwriter_del(w);
+  fclose(irf);
+  compat_close_memstream(hf, &hdr_buf, &hdr_sz);
+
+  assert(strstr(hdr_buf, "Col_main"));
+  assert(strstr(hdr_buf, "int32_t slots[1];"));
+
+  free(hdr_buf);
+
+  free(start.seq.children[0].name);
+  darray_del(start.seq.children);
+  free(start.name);
+  free(tok.seq.children[0].name);
+  darray_del(tok.seq.children);
+  free(tok.name);
+  free(inner.seq.children[0].name);
+  darray_del(inner.seq.children);
+  free(inner.name);
+  free(inner.scope);
+  darray_del(input.rules);
+}
+
 int main(void) {
   printf("test_peg:\n");
   RUN(test_empty_input);
@@ -336,6 +464,8 @@ int main(void) {
   RUN(test_row_shared_mode);
   RUN(test_branch_rule);
   RUN(test_per_scope_col);
+  RUN(test_row_shared_per_scope_compact);
+  RUN(test_scope_refs_not_expanded_in_sets);
   printf("All tests passed.\n");
   return 0;
 }
