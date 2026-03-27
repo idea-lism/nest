@@ -23,13 +23,15 @@ All values are `i32`. Convention: negative return = failure.
 
 ### Backtrack stack (ordered choice only)
 
-| Opcode | LLVM IR expansion | Semantics |
-|---|---|---|
-| `save(col)` | `call void @bt_push(ptr %stack, i32 %col)` | Push parser state (column position) onto backtrack stack. |
-| `restore()` | `%col = call i32 @bt_peek(ptr %stack)` | Read saved column without popping. Returns the saved `col`. |
-| `discard()` | `call void @bt_pop(ptr %stack)` | Drop top of backtrack stack (after successful alternative or after restore). |
+| Opcode | Semantics |
+|---|---|
+| `save(col)` | Push parser state (column position) onto backtrack stack. |
+| `restore()` | Read saved column without popping. Returns the saved `col`. |
+| `discard()` | Drop top of backtrack stack (after successful alternative or after restore). |
 
 The backtrack stack stores the column position. `save`/`restore`/`discard` replace the old `push`/`peek`/`pop` names to clarify intent.
+
+The generator emit opcode definitions in LLVM-IR first (local procedures that can be inlined), then emit PEG rule implementations that utilize the functions.
 
 ### Memo helpers (row_shared mode)
 

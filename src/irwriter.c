@@ -344,3 +344,77 @@ void irwriter_call_void(IrWriter* w, const char* name) {
   _emit_dbg_suffix(w, dbg);
   fprintf(w->out, "\n");
 }
+
+void irwriter_call_void_fmt(IrWriter* w, const char* name, const char* args) {
+  int dbg = _reserve_dbg(w);
+  fprintf(w->out, "  call void @%s(%s)", name, args);
+  _emit_dbg_suffix(w, dbg);
+  fprintf(w->out, "\n");
+}
+
+int32_t irwriter_call_ret(IrWriter* w, char* buf, int32_t buf_size, const char* ret_ty, const char* name,
+                          const char* args) {
+  int32_t n = _next_reg(w, buf, buf_size);
+  int dbg = _reserve_dbg(w);
+  fprintf(w->out, "  %s = call %s @%s(%s)", buf, ret_ty, name, args);
+  _emit_dbg_suffix(w, dbg);
+  fprintf(w->out, "\n");
+  return n;
+}
+
+int32_t irwriter_alloca(IrWriter* w, char* buf, int32_t buf_size, const char* ty) {
+  int32_t n = _next_reg(w, buf, buf_size);
+  fprintf(w->out, "  %s = alloca %s\n", buf, ty);
+  return n;
+}
+
+int32_t irwriter_load(IrWriter* w, char* buf, int32_t buf_size, const char* ty, const char* ptr) {
+  int32_t n = _next_reg(w, buf, buf_size);
+  int dbg = _reserve_dbg(w);
+  fprintf(w->out, "  %s = load %s, ptr %s", buf, ty, ptr);
+  _emit_dbg_suffix(w, dbg);
+  fprintf(w->out, "\n");
+  return n;
+}
+
+void irwriter_store(IrWriter* w, const char* ty, const char* val, const char* ptr) {
+  int dbg = _reserve_dbg(w);
+  fprintf(w->out, "  store %s %s, ptr %s", ty, val, ptr);
+  _emit_dbg_suffix(w, dbg);
+  fprintf(w->out, "\n");
+}
+
+int32_t irwriter_gep(IrWriter* w, char* buf, int32_t buf_size, const char* base_ty, const char* ptr,
+                     const char* indices) {
+  int32_t n = _next_reg(w, buf, buf_size);
+  fprintf(w->out, "  %s = getelementptr %s, ptr %s, %s\n", buf, base_ty, ptr, indices);
+  return n;
+}
+
+int32_t irwriter_phi2(IrWriter* w, char* buf, int32_t buf_size, const char* ty, const char* v1, const char* bb1,
+                      const char* v2, const char* bb2) {
+  int32_t n = _next_reg(w, buf, buf_size);
+  fprintf(w->out, "  %s = phi %s [ %s, %%%s ], [ %s, %%%s ]\n", buf, ty, v1, bb1, v2, bb2);
+  return n;
+}
+
+int32_t irwriter_select(IrWriter* w, char* buf, int32_t buf_size, const char* cond, const char* ty,
+                        const char* true_val, const char* false_val) {
+  int32_t n = _next_reg(w, buf, buf_size);
+  int dbg = _reserve_dbg(w);
+  fprintf(w->out, "  %s = select i1 %s, %s %s, %s %s", buf, cond, ty, true_val, ty, false_val);
+  _emit_dbg_suffix(w, dbg);
+  fprintf(w->out, "\n");
+  return n;
+}
+
+int32_t irwriter_sext(IrWriter* w, char* buf, int32_t buf_size, const char* from_ty, const char* val,
+                      const char* to_ty) {
+  int32_t n = _next_reg(w, buf, buf_size);
+  fprintf(w->out, "  %s = sext %s %s to %s\n", buf, from_ty, val, to_ty);
+  return n;
+}
+
+void irwriter_type_def(IrWriter* w, const char* name, const char* body) {
+  fprintf(w->out, "%%%s = type %s\n", name, body);
+}

@@ -1,7 +1,7 @@
 // VPA (Visibly Pushdown Automata) code generation.
 // Generates DFA lexer functions in LLVM IR for each scope,
-// and emits token ID definitions to the C header.
-// Receives pre-analyzed regexp ASTs from parse.c.
+// emits runtime data structures and token ID definitions to the C header,
+// and produces a VPA dispatch function for scope-aware lexing.
 
 #include "vpa.h"
 #include "aut.h"
@@ -12,11 +12,10 @@
 #include <stdlib.h>
 #include <string.h>
 
-// Collect all scope names and their rules, then generate one DFA per scope.
-
 typedef struct {
-  char* name; // owned
-  VpaRule** rules; // darray
+  char* name;
+  VpaRule** rules;
+  int32_t scope_id;
 } ScopeInfo;
 
 static void _add_scope_rule(ScopeInfo* scope, VpaRule* rule) {
@@ -26,10 +25,9 @@ static void _add_scope_rule(ScopeInfo* scope, VpaRule* rule) {
   darray_push(scope->rules, rule);
 }
 
-// Collect unique token names for header generation
 typedef struct {
-  char** names; // darray of strdup'd strings
-  int32_t* ids; // darray
+  char** names;
+  int32_t* ids;
 } TokenRegistry;
 
 static int32_t _register_token(TokenRegistry* reg, const char* name) {
@@ -74,7 +72,145 @@ static void _free_token_registry(TokenRegistry* reg) {
   darray_del(reg->ids);
 }
 
-// Walk ReAstNode and build NFA via re.h API
+// --- Runtime data structures for the generated header ---
+
+static void _gen_runtime_types(HeaderWriter* hw) {
+  hw_blank(hw);
+  hw_raw(hw, "#include <stdint.h>\n");
+  hw_raw(hw, "#include <stdlib.h>\n");
+  hw_raw(hw, "#include <string.h>\n");
+  hw_blank(hw);
+
+  hw_comment(hw, "Token (16 bytes)");
+  hw_struct_begin(hw, "VpaToken");
+  hw_field(hw, "int32_t", "tok_id");
+  hw_field(hw, "int32_t", "cp_start");
+  hw_field(hw, "int32_t", "cp_size");
+  hw_field(hw, "int32_t", "chunk_id");
+  hw_struct_end(hw);
+  hw_raw(hw, " VpaToken;\n\n");
+
+  hw_comment(hw, "TokenChunk — matches a scope");
+  hw_struct_begin(hw, "TokenChunk");
+  hw_field(hw, "int32_t", "chunk_id");
+  hw_field(hw, "int32_t", "scope_id");
+  hw_field(hw, "int32_t", "count");
+  hw_field(hw, "int32_t", "capacity");
+  hw_field(hw, "VpaToken*", "tokens");
+  hw_struct_end(hw);
+  hw_raw(hw, " TokenChunk;\n\n");
+
+  hw_comment(hw, "ChunkTable");
+  hw_struct_begin(hw, "ChunkTable");
+  hw_field(hw, "int32_t", "count");
+  hw_field(hw, "int32_t", "capacity");
+  hw_field(hw, "TokenChunk*", "chunks");
+  hw_struct_end(hw);
+  hw_raw(hw, " ChunkTable;\n\n");
+
+  hw_comment(hw, "TokenTree");
+  hw_struct_begin(hw, "TokenTree");
+  hw_field(hw, "uint64_t*", "newline_map");
+  hw_field(hw, "uint64_t*", "token_end_map");
+  hw_field(hw, "int32_t", "newline_map_size");
+  hw_field(hw, "int32_t", "token_end_map_size");
+  hw_field(hw, "ChunkTable", "chunk_table");
+  hw_field(hw, "TokenChunk*", "root");
+  hw_field(hw, "TokenChunk*", "current");
+  hw_struct_end(hw);
+  hw_raw(hw, " TokenTree;\n\n");
+}
+
+static void _gen_runtime_helpers(HeaderWriter* hw) {
+  hw_blank(hw);
+  hw_comment(hw, "TokenTree helpers");
+
+  hw_raw(hw, "static inline TokenChunk* tt_alloc_chunk(TokenTree* tt, int32_t scope_id) {\n");
+  hw_raw(hw, "  ChunkTable* ct = &tt->chunk_table;\n");
+  hw_raw(hw, "  if (ct->count >= ct->capacity) {\n");
+  hw_raw(hw, "    ct->capacity = ct->capacity ? ct->capacity * 2 : 16;\n");
+  hw_raw(hw, "    ct->chunks = (TokenChunk*)realloc(ct->chunks, sizeof(TokenChunk) * ct->capacity);\n");
+  hw_raw(hw, "  }\n");
+  hw_raw(hw, "  TokenChunk* c = &ct->chunks[ct->count];\n");
+  hw_raw(hw, "  c->chunk_id = ct->count++;\n");
+  hw_raw(hw, "  c->scope_id = scope_id;\n");
+  hw_raw(hw, "  c->count = 0;\n");
+  hw_raw(hw, "  c->capacity = 32;\n");
+  hw_raw(hw, "  c->tokens = (VpaToken*)malloc(sizeof(VpaToken) * 32);\n");
+  hw_raw(hw, "  return c;\n");
+  hw_raw(hw, "}\n\n");
+
+  hw_raw(hw, "static inline void tt_add_token(TokenChunk* chunk, int32_t tok_id,\n");
+  hw_raw(hw, "                                int32_t cp_start, int32_t cp_size) {\n");
+  hw_raw(hw, "  if (chunk->count >= chunk->capacity) {\n");
+  hw_raw(hw, "    chunk->capacity *= 2;\n");
+  hw_raw(hw, "    chunk->tokens = (VpaToken*)realloc(chunk->tokens, sizeof(VpaToken) * chunk->capacity);\n");
+  hw_raw(hw, "  }\n");
+  hw_raw(hw, "  chunk->tokens[chunk->count++] = (VpaToken){tok_id, cp_start, cp_size, -1};\n");
+  hw_raw(hw, "}\n\n");
+
+  hw_raw(hw, "static inline TokenTree* tt_new(int32_t cp_count) {\n");
+  hw_raw(hw, "  TokenTree* tt = (TokenTree*)calloc(1, sizeof(TokenTree));\n");
+  hw_raw(hw, "  int32_t map_words = (cp_count + 63) / 64;\n");
+  hw_raw(hw, "  tt->newline_map_size = map_words;\n");
+  hw_raw(hw, "  tt->token_end_map_size = map_words;\n");
+  hw_raw(hw, "  tt->newline_map = (uint64_t*)calloc(map_words, sizeof(uint64_t));\n");
+  hw_raw(hw, "  tt->token_end_map = (uint64_t*)calloc(map_words, sizeof(uint64_t));\n");
+  hw_raw(hw, "  tt->root = tt_alloc_chunk(tt, 0);\n");
+  hw_raw(hw, "  tt->current = tt->root;\n");
+  hw_raw(hw, "  return tt;\n");
+  hw_raw(hw, "}\n\n");
+
+  hw_raw(hw, "static inline void tt_del(TokenTree* tt) {\n");
+  hw_raw(hw, "  if (!tt) return;\n");
+  hw_raw(hw, "  for (int32_t i = 0; i < tt->chunk_table.count; i++) {\n");
+  hw_raw(hw, "    free(tt->chunk_table.chunks[i].tokens);\n");
+  hw_raw(hw, "  }\n");
+  hw_raw(hw, "  free(tt->chunk_table.chunks);\n");
+  hw_raw(hw, "  free(tt->newline_map);\n");
+  hw_raw(hw, "  free(tt->token_end_map);\n");
+  hw_raw(hw, "  free(tt);\n");
+  hw_raw(hw, "}\n\n");
+
+  hw_raw(hw, "static inline void tt_mark_newline(TokenTree* tt, int32_t cp_off) {\n");
+  hw_raw(hw, "  tt->newline_map[cp_off / 64] |= (uint64_t)1 << (cp_off % 64);\n");
+  hw_raw(hw, "}\n\n");
+
+  hw_raw(hw, "static inline void tt_mark_token_end(TokenTree* tt, int32_t cp_off) {\n");
+  hw_raw(hw, "  tt->token_end_map[cp_off / 64] |= (uint64_t)1 << (cp_off % 64);\n");
+  hw_raw(hw, "}\n\n");
+}
+
+// --- Scope ID definitions ---
+
+static void _gen_scope_ids(ScopeInfo* scopes, HeaderWriter* hw) {
+  hw_blank(hw);
+  hw_comment(hw, "Scope IDs");
+  for (int32_t i = 0; i < (int32_t)darray_size(scopes); i++) {
+    int32_t dn_len = snprintf(NULL, 0, "SCOPE_%s", scopes[i].name) + 1;
+    char define_name[dn_len];
+    snprintf(define_name, (size_t)dn_len, "SCOPE_%s", scopes[i].name);
+    for (char* p = define_name + 6; *p; p++) {
+      if (*p >= 'a' && *p <= 'z') {
+        *p -= 32;
+      }
+    }
+    hw_define(hw, define_name, scopes[i].scope_id);
+  }
+}
+
+// --- DFA function declarations in header ---
+
+static void _gen_lex_declarations(ScopeInfo* scopes, HeaderWriter* hw) {
+  hw_blank(hw);
+  hw_comment(hw, "DFA lexer function declarations");
+  hw_raw(hw, "typedef struct { int64_t state; int64_t action; } LexResult;\n");
+  for (int32_t i = 0; i < (int32_t)darray_size(scopes); i++) {
+    hw_fmt(hw, "extern LexResult lex_%s(int64_t state, int64_t cp);\n", scopes[i].name);
+  }
+}
+
+// --- Walk ReAstNode and build NFA via re.h API ---
 
 static void _emit_re_ast(Re* re, Aut* aut, ReAstNode* node, DebugInfo di) {
   switch (node->kind) {
@@ -228,6 +364,31 @@ static void _gen_scope_dfa(ScopeInfo* scope, TokenRegistry* reg, IrWriter* w) {
   aut_del(aut);
 }
 
+// --- VPA dispatch: C-based scope routing via function pointers ---
+
+static void _gen_dispatch_header(ScopeInfo* scopes, HeaderWriter* hw) {
+  hw_blank(hw);
+  hw_comment(hw, "VPA scope dispatch");
+  hw_raw(hw, "typedef LexResult (*VpaLexFunc)(int64_t, int64_t);\n");
+
+  hw_raw(hw, "static const VpaLexFunc vpa_lex_funcs[] = {\n");
+  for (int32_t i = 0; i < (int32_t)darray_size(scopes); i++) {
+    hw_fmt(hw, "  lex_%s,\n", scopes[i].name);
+  }
+  hw_raw(hw, "};\n\n");
+
+  hw_fmt(hw, "#define VPA_N_SCOPES %d\n\n", (int32_t)darray_size(scopes));
+
+  hw_raw(hw, "static inline LexResult vpa_dispatch(int32_t scope_id, int64_t state, int64_t cp) {\n");
+  hw_raw(hw, "  if (scope_id >= 0 && scope_id < VPA_N_SCOPES) {\n");
+  hw_raw(hw, "    return vpa_lex_funcs[scope_id](state, cp);\n");
+  hw_raw(hw, "  }\n");
+  hw_raw(hw, "  return (LexResult){-1, -2};\n");
+  hw_raw(hw, "}\n");
+}
+
+// --- Public API ---
+
 void vpa_gen(VpaGenInput* input, HeaderWriter* hw, IrWriter* w) {
   VpaRule* rules = input->rules;
   KeywordEntry* keywords = input->keywords;
@@ -249,15 +410,16 @@ void vpa_gen(VpaGenInput* input, HeaderWriter* hw, IrWriter* w) {
 
   ScopeInfo* scopes = darray_new(sizeof(ScopeInfo), 0);
 
-  ScopeInfo main_s = {.name = strdup("main"), .rules = NULL};
+  ScopeInfo main_s = {.name = strdup("main"), .rules = NULL, .scope_id = 0};
   darray_push(scopes, main_s);
 
+  int32_t next_scope_id = 1;
   for (int32_t i = 0; i < (int32_t)darray_size(rules); i++) {
     if (rules[i].is_macro) {
       continue;
     }
     if (rules[i].is_scope) {
-      ScopeInfo s = {.name = strdup(rules[i].name), .rules = NULL};
+      ScopeInfo s = {.name = strdup(rules[i].name), .rules = NULL, .scope_id = next_scope_id++};
       darray_push(scopes, s);
       _add_scope_rule(&scopes[darray_size(scopes) - 1], &rules[i]);
     } else {
@@ -265,11 +427,18 @@ void vpa_gen(VpaGenInput* input, HeaderWriter* hw, IrWriter* w) {
     }
   }
 
+  _gen_runtime_types(hw);
+  _gen_runtime_helpers(hw);
+  _gen_scope_ids(scopes, hw);
+  _gen_lex_declarations(scopes, hw);
+
   for (int32_t i = 0; i < (int32_t)darray_size(scopes); i++) {
     if (darray_size(scopes[i].rules) > 0) {
       _gen_scope_dfa(&scopes[i], &reg, w);
     }
   }
+
+  _gen_dispatch_header(scopes, hw);
 
   _gen_token_header(&reg, hw);
 

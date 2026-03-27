@@ -8,6 +8,34 @@ It assigns rule ids for each scope.
 
 It provides 2 generating options: naive & row_shared, so we can benchmark.
 
+### Breakdown rules
+
+For example, this composite rule:
+
+```
+foo = a [
+  b
+  c
+] [
+  e
+  f
+]
+```
+
+should be separated to:
+
+```
+foo = a foo$1 foo$2 # seq
+foo$1 = [ # ordered choice
+  b
+  c
+]
+foo$2 = [ # ordered choice
+  e
+  f
+]
+```
+
 ### Rule id analysis
 
 We gather rule closures by scopes first.
@@ -54,6 +82,8 @@ Rule IDs can share a slot storage when 2 rules do not co-exist at one matching p
 ### Exclusiveness analysis
 
 Compute `first_set(R)` and `last_set(R)` for each rule R, expanding references to leaf token id sets.
+
+Note that if a rule being called is also a scope, we should not expand it in first_set/last_set computation, just add the scope_id to the set.
 
 Two rules A, B are **exclusive** when `first_set(A) ∩ first_set(B) = ∅` or `last_set(A) ∩ last_set(B) = ∅`.
 

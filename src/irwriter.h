@@ -46,3 +46,21 @@ int32_t irwriter_insertvalue_imm(IrWriter* w, char* buf, int32_t buf_size, const
 void irwriter_declare(IrWriter* w, const char* ret_type, const char* name, const char* arg_types);
 
 void irwriter_call_void(IrWriter* w, const char* name);
+void irwriter_call_void_fmt(IrWriter* w, const char* name, const char* args);
+int32_t irwriter_call_ret(IrWriter* w, char* buf, int32_t buf_size, const char* ret_ty, const char* name,
+                          const char* args);
+
+int32_t irwriter_alloca(IrWriter* w, char* buf, int32_t buf_size, const char* ty);
+int32_t irwriter_load(IrWriter* w, char* buf, int32_t buf_size, const char* ty, const char* ptr);
+void irwriter_store(IrWriter* w, const char* ty, const char* val, const char* ptr);
+int32_t irwriter_gep(IrWriter* w, char* buf, int32_t buf_size, const char* base_ty, const char* ptr,
+                     const char* indices);
+
+int32_t irwriter_phi2(IrWriter* w, char* buf, int32_t buf_size, const char* ty, const char* v1, const char* bb1,
+                      const char* v2, const char* bb2);
+int32_t irwriter_select(IrWriter* w, char* buf, int32_t buf_size, const char* cond, const char* ty,
+                        const char* true_val, const char* false_val);
+int32_t irwriter_sext(IrWriter* w, char* buf, int32_t buf_size, const char* from_ty, const char* val,
+                      const char* to_ty);
+
+void irwriter_type_def(IrWriter* w, const char* name, const char* body);
