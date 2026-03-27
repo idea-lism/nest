@@ -1219,7 +1219,6 @@ void vpa_gen(VpaGenInput* input, HeaderWriter* hw, IrWriter* w) {
   reg.entries = darray_new(sizeof(ActionEntry), 0);
   reg.tok_names = darray_new(sizeof(char*), 0);
 
-  // Pre-register keywords as tokens
   for (int32_t i = 0; i < (int32_t)darray_size(keywords); i++) {
     int32_t len = keywords[i].lit_len;
     char lit[len + 1];
@@ -1231,17 +1230,14 @@ void vpa_gen(VpaGenInput* input, HeaderWriter* hw, IrWriter* w) {
     _register_token(&reg, tok_name);
   }
 
-  // Collect scopes
   ScopeInfo* scopes = _collect_scopes(rules);
   _gen_state_matcher_ir_decls(states, w);
 
-  // Emit header: types + helpers
   _gen_runtime_types(hw);
   _gen_runtime_helpers(hw);
   _gen_state_matcher_header(states, hw);
   _gen_scope_ids(scopes, hw);
 
-  // Resolve and build DFA per scope
   for (int32_t i = 0; i < (int32_t)darray_size(scopes); i++) {
     if (!scopes[i].body) {
       continue;

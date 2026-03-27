@@ -1,23 +1,15 @@
-# re
+# nest
 
-[![CI](https://github.com/idea-lism/re/actions/workflows/ci.yml/badge.svg)](https://github.com/idea-lism/re/actions/workflows/ci.yml)
-
-Regex-to-LLVM-IR compiler. Define patterns, generate a DFA as LLVM IR, link it into your program.
+Regex-to-LLVM-IR compiler and PEG parser generator.
 
 ## Build
 
-Requires Ruby, [Ninja](https://ninja-build.org/), and `unzip`. On Windows, build under [MSYS2](https://www.msys2.org/) (CLANG64).
+Requires Ruby, [Ninja](https://ninja-build.org/), and `unzip`.
 
 ```
 ruby config.rb debug    # or: ruby config.rb release
 ninja
 ```
-
-This produces:
-
-- `out/libre.a` -- static library (all modules)
-- `out/re_rt.h` -- single-header runtime (ustr + bitset), use with `#define RE_RT_IMPLEMENTATION`
-- `out/lex.h` -- lex API header
 
 ## Test
 
@@ -25,11 +17,49 @@ This produces:
 scripts/test
 ```
 
+## Usage
+
+### Lexer generation
+
+Given a file with one regex per line (`tokens.txt`):
+
+```
+if
+else
+while
+[a-zA-Z_]\w*
+\d+
+\s+
+```
+
+Generate LLVM IR:
+
+```
+nest l tokens.txt -o lex.ll
+```
+
+Each line is assigned an `action_id` starting from 1. The generated function has the signature `(i32 state, i32 codepoint) -> {i32 new_state, i32 action_id}`.
+
+Options:
+
+- `-f <name>` -- function name (default: `lex`)
+- `-m <mode>` -- `i` for case-insensitive, `b` for binary
+- `-t <triple>` -- target triple (default: probe clang)
+
+### Parser generation
+
+Compile a `.nest` syntax file into LLVM IR and a C header:
+
+```
+nest c grammar.nest -o parser.ll
+```
+
+This produces `parser.ll` and `parser.h`.
+
 ## Example
 
 ```
 cd example
-export CFLAGS='-fsanitize=address -fsanitize=undefined'
 ./build.sh
-lldb -- ./main "while (x + 1) { y = 42; }"
+./main "while (x + 1) { y = 42; }"
 ```
