@@ -83,15 +83,15 @@ typedef struct {
   TokenChunk main_chunk;
   int32_t tpos;
 
-  ReAstNode** re_asts;     // darray
-  StrSpan* str_spans;      // darray
+  ReAstNode** re_asts; // darray
+  StrSpan* str_spans;  // darray
 
-  VpaRule* vpa_rules;      // darray
-  KeywordEntry* keywords;  // darray
+  VpaRule* vpa_rules;     // darray
+  KeywordEntry* keywords; // darray
   IgnoreSet ignores;
-  StateDecl* states;       // darray
-  EffectDecl* effects;     // darray
-  PegRule* peg_rules;      // darray
+  StateDecl* states;   // darray
+  EffectDecl* effects; // darray
+  PegRule* peg_rules;  // darray
 
   char error[512];
 } ParseState;
@@ -145,8 +145,7 @@ static char* _tok_strdup_skip(ParseState* ps, Token* t, int32_t skip) {
   return s;
 }
 
-__attribute__((format(printf, 1, 2)))
-static char* _sfmt(const char* fmt, ...) {
+__attribute__((format(printf, 1, 2))) static char* _sfmt(const char* fmt, ...) {
   va_list ap;
   va_start(ap, fmt);
   int32_t len = vsnprintf(NULL, 0, fmt, ap);
@@ -340,8 +339,8 @@ static bool _lex_with_dfa(ParseState* ps) {
               CcAstBuf* buf = &re_ctx_stack[re_ctx_depth - 1].cc_buf;
               _cc_buf_add(buf, cc_ast);
               tc_add(&scope_stack[scope_depth - 1].chunk,
-                         (Token){RE_AST_TOK_CHARCLASS_BASE + (int32_t)darray_size(buf->asts) - 1, tok_start_byte,
-                                 cp_byte, tok_start_line, tok_start_col});
+                     (Token){RE_AST_TOK_CHARCLASS_BASE + (int32_t)darray_size(buf->asts) - 1, tok_start_byte, cp_byte,
+                             tok_start_line, tok_start_col});
             }
           }
         } else if (emitted == TOK_RE_END) {
@@ -352,8 +351,7 @@ static bool _lex_with_dfa(ParseState* ps) {
             CcAstBuf* cc_buf = (re_ctx_depth > 0) ? &re_ctx_stack[re_ctx_depth - 1].cc_buf : NULL;
             int32_t re_ntok = tc_size(re_chunk) - 1;
             ReToken* re_rtoks = _to_re_tokens(re_chunk + 1, re_ntok);
-            ReAstNode* ast = re_ast_build_re(ps->src, re_rtoks, re_ntok,
-                                             cc_buf ? cc_buf->asts : NULL,
+            ReAstNode* ast = re_ast_build_re(ps->src, re_rtoks, re_ntok, cc_buf ? cc_buf->asts : NULL,
                                              cc_buf ? (int32_t)darray_size(cc_buf->asts) : 0);
             free(re_rtoks);
 
@@ -372,8 +370,8 @@ static bool _lex_with_dfa(ParseState* ps) {
             cur_lex = scope_stack[scope_depth - 1].func;
 
             tc_add(&scope_stack[scope_depth - 1].chunk,
-                       (Token){TOK_RE_AST_BASE + (int32_t)darray_size(ps->re_asts) - 1, tok_start_byte, cp_byte,
-                              tok_start_line, tok_start_col});
+                   (Token){TOK_RE_AST_BASE + (int32_t)darray_size(ps->re_asts) - 1, tok_start_byte, cp_byte,
+                           tok_start_line, tok_start_col});
           }
         } else if (emitted == TOK_STR_END) {
           if (scope_depth > 1) {
@@ -389,8 +387,8 @@ static bool _lex_with_dfa(ParseState* ps) {
             cur_lex = scope_stack[scope_depth - 1].func;
 
             tc_add(&scope_stack[scope_depth - 1].chunk,
-                       (Token){TOK_STR_SPAN_BASE + (int32_t)darray_size(ps->str_spans) - 1, tok_start_byte, cp_byte,
-                              tok_start_line, tok_start_col});
+                   (Token){TOK_STR_SPAN_BASE + (int32_t)darray_size(ps->str_spans) - 1, tok_start_byte, cp_byte,
+                           tok_start_line, tok_start_col});
           }
         } else if (emitted == TOK_COMMENT || emitted == TOK_SPACE) {
           // skip
@@ -432,7 +430,7 @@ static bool _lex_with_dfa(ParseState* ps) {
     if (!_is_scope_transition(last_action) && last_action != TOK_COMMENT && last_action != TOK_SPACE &&
         last_action != TOK_SECTION_VPA && last_action != TOK_SECTION_PEG) {
       tc_add(&scope_stack[scope_depth - 1].chunk,
-                 (Token){last_action, tok_start_byte, pos, tok_start_line, tok_start_col});
+             (Token){last_action, tok_start_byte, pos, tok_start_line, tok_start_col});
     }
   }
 
@@ -1162,8 +1160,8 @@ static void _auto_tag_unit(ParseState* ps, PegRule* rule, PegUnit* unit) {
 
     for (int32_t i = 0; i < (int32_t)darray_size(unit->children); i++) {
       for (int32_t j = i + 1; j < (int32_t)darray_size(unit->children); j++) {
-        if (unit->children[i].tag && unit->children[i].tag[0] && unit->children[j].tag &&
-            unit->children[j].tag[0] && strcmp(unit->children[i].tag, unit->children[j].tag) == 0) {
+        if (unit->children[i].tag && unit->children[i].tag[0] && unit->children[j].tag && unit->children[j].tag[0] &&
+            strcmp(unit->children[i].tag, unit->children[j].tag) == 0) {
           _error(ps, "duplicate tag '%s' in rule '%s'", unit->children[i].tag, rule->name);
         }
       }
@@ -1291,31 +1289,70 @@ static VpaRule* _find_vpa_rule(ParseState* ps, const char* name) {
 static void _collect_emit_set(ParseState* ps, VpaUnit* units, char*** set, char*** visited) {
   for (int32_t i = 0; i < (int32_t)darray_size(units); i++) {
     VpaUnit* u = &units[i];
-    if (u->name && u->name[0]) {
-      _str_set_add(set, u->name);
+
+    if (u->kind == VPA_REGEXP) {
+      if (u->name && u->name[0]) {
+        _str_set_add(set, u->name);
+      }
+    } else if (u->kind == VPA_REF) {
+      VpaRule* ref = u->name ? _find_vpa_rule(ps, u->name) : NULL;
+      if (ref) {
+        // Bare ref to another rule. If it's a scope, it's a scope transition — not a token.
+        // If it's a plain rule, recurse into its units.
+        if (!_is_vpa_scope_rule(ref)) {
+          if (!_str_set_has(*visited, u->name)) {
+            char* dup = strdup(u->name);
+            darray_push(*visited, dup);
+            _collect_emit_set(ps, ref->units, set, visited);
+            // If the ref rule has regexp units without names, they emit the rule name as token
+            for (int32_t j = 0; j < (int32_t)darray_size(ref->units); j++) {
+              VpaUnit* ru = &ref->units[j];
+              if (ru->kind == VPA_REGEXP && ru->re_ast && (!ru->name || !ru->name[0])) {
+                _str_set_add(set, ref->name);
+              }
+            }
+          }
+        }
+      } else if (u->name && u->name[0]) {
+        // Name doesn't match any rule — it was overwritten by @tok_id followup
+        _str_set_add(set, u->name);
+      }
     }
-    if (u->kind == VPA_REF && u->name) {
-      if (!_str_set_has(*visited, u->name)) {
-        char* dup = strdup(u->name);
-        darray_push(*visited, dup);
-        VpaRule* ref = _find_vpa_rule(ps, u->name);
-        if (ref && !_is_vpa_scope_rule(ref)) {
-          _collect_emit_set(ps, ref->units, set, visited);
+    // VPA_SCOPE children are sub-scopes, not tokens in this scope
+  }
+}
+
+static PegRule* _find_peg_rule(ParseState* ps, const char* name) {
+  for (int32_t i = 0; i < (int32_t)darray_size(ps->peg_rules); i++) {
+    if (strcmp(ps->peg_rules[i].name, name) == 0) {
+      return &ps->peg_rules[i];
+    }
+  }
+  return NULL;
+}
+
+static void _collect_peg_used_set(PegUnit* unit, char*** set, ParseState* ps, char*** visited_rules) {
+  if (unit->kind == PEG_TOK && unit->name) {
+    _str_set_add(set, unit->name);
+  }
+  if (unit->kind == PEG_ID && unit->name) {
+    if (!_str_set_has(*visited_rules, unit->name)) {
+      VpaRule* vr = _find_vpa_rule(ps, unit->name);
+      if (!vr || !_is_vpa_scope_rule(vr)) {
+        char* dup = strdup(unit->name);
+        darray_push(*visited_rules, dup);
+        PegRule* ref = _find_peg_rule(ps, unit->name);
+        if (ref) {
+          _collect_peg_used_set(&ref->seq, set, ps, visited_rules);
         }
       }
     }
   }
-}
-
-static void _collect_peg_used_set(PegUnit* unit, char*** set) {
-  if (unit->kind == PEG_TOK && unit->name) {
-    _str_set_add(set, unit->name);
-  }
   for (int32_t i = 0; i < (int32_t)darray_size(unit->children); i++) {
-    _collect_peg_used_set(&unit->children[i], set);
+    _collect_peg_used_set(&unit->children[i], set, ps, visited_rules);
   }
   if (unit->interlace) {
-    _collect_peg_used_set(unit->interlace, set);
+    _collect_peg_used_set(unit->interlace, set, ps, visited_rules);
   }
 }
 
@@ -1367,14 +1404,13 @@ static bool _validate_token_sets(ParseState* ps) {
     }
     _str_set_free(emit_set);
 
-    // Collect PEG used set for this scope (union of all PEG rules in scope)
+    // Collect PEG used set: from the entry rule, transitively follow PEG_ID refs (but not into sub-scopes)
     char** used_set = darray_new(sizeof(char*), 0);
-    for (int32_t p = 0; p < (int32_t)darray_size(ps->peg_rules); p++) {
-      PegRule* peg = &ps->peg_rules[p];
-      const char* pscope = peg->scope ? peg->scope : "main";
-      if (strcmp(pscope, vpa_rule->name) == 0) {
-        _collect_peg_used_set(&peg->seq, &used_set);
-      }
+    PegRule* entry = _find_peg_rule(ps, vpa_rule->name);
+    if (entry) {
+      char** visited_rules = darray_new(sizeof(char*), 0);
+      _collect_peg_used_set(&entry->seq, &used_set, ps, &visited_rules);
+      _str_set_free(visited_rules);
     }
 
     // Check: every PEG token must exist in VPA emit set

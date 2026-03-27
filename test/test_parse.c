@@ -21,78 +21,55 @@ void parse_nest(const char* src, HeaderWriter* header_writer, IrWriter* ir_write
 
 #define TARGET "arm64-apple-macosx14.0.0"
 
-// Test source exercising scopes, leader inlining, hooks, keywords, and macros.
-// Mirrors bootstrap.nest structure without %state (not yet parseable in scope bodies).
-static const char* TEST_SRC =
-    "[[vpa]]\n"
-    "\n"
-    "%ignore @comment @space\n"
-    "\n"
-    "%keyword directives \"%state\" \"%ignore\" \"%effect\" \"%keyword\"\n"
-    "%keyword ops \"=\" \"|\"\n"
-    "\n"
-    "main = {\n"
-    "  vpa\n"
-    "  peg\n"
-    "  *ignores\n"
-    "}\n"
-    "\n"
-    "*ignores = {\n"
-    "  /#[^\\n]*/ @comment\n"
-    "  /[ \\t\\n]+/ @space\n"
-    "  /\\n+/ @nl\n"
-    "}\n"
-    "\n"
-    "vpa = /\\s*\\[\\[vpa\\]\\]\\n/ .begin {\n"
-    "  /\\[\\[peg\\]\\]/ .unparse .end\n"
-    "  re\n"
-    "  id @vpa_id\n"
-    "  /\\.begin/ @hook_begin\n"
-    "  /\\.end/ @hook_end\n"
-    "  /=/ @assign\n"
-    "  directives\n"
-    "  ops\n"
-    "  /{/ @scope_begin\n"
-    "  /}/ @scope_end\n"
-    "  *ignores\n"
-    "}\n"
-    "\n"
-    "re = /(b|i|ib|bi)?\\//"
-    " .begin {\n"
-    "  /\\// .end\n"
-    "  charclass\n"
-    "  /\\./ @re_dot\n"
-    "  /\\\\s/ @re_space_class\n"
-    "  /\\\\w/ @re_word_class\n"
-    "  /./ @char\n"
-    "}\n"
-    "\n"
-    "charclass = /\\[\\^?/ .begin {\n"
-    "  /\\]/ @class_end .end\n"
-    "  /.-/ @range_start\n"
-    "  /./ @char\n"
-    "}\n"
-    "\n"
-    "id = /[a-z_]\\w*/\n"
-    "\n"
-    "peg = /\\s*\\[\\[peg\\]\\]\\n/ .begin {\n"
-    "  /[a-z_]\\w*/ @id\n"
-    "  /=/ @assign\n"
-    "  *ignores\n"
-    "}\n"
-    "\n"
-    "[[peg]]\n"
-    "\n"
-    "main = vpa peg\n"
-    "\n"
-    "vpa = @nl* rule+<@nl> @nl*\n"
-    "\n"
-    "rule = [\n"
-    "  vpa_rule\n"
-    "]\n"
-    "\n"
-    "vpa_rule = @vpa_id \"=\" @vpa_id\n"
-    "\n";
+// Minimal valid test source: one scope with tokens that match PEG usage.
+// main scope emits @id and @assign (ignoring @comment and @space).
+// PEG main rule uses exactly @id and @assign.
+static const char* TEST_SRC = "[[vpa]]\n"
+                              "\n"
+                              "%ignore @comment @space\n"
+                              "\n"
+                              "%keyword ops \"=\" \"|\"\n"
+                              "\n"
+                              "main = {\n"
+                              "  /[a-z_]\\w*/ @id\n"
+                              "  /=/ @assign\n"
+                              "  /#[^\\n]*/ @comment\n"
+                              "  /[ \\t\\n]+/ @space\n"
+                              "}\n"
+                              "\n"
+                              "[[peg]]\n"
+                              "\n"
+                              "main = @id @assign @id\n"
+                              "\n";
+
+// Extended test source with scopes, leader inlining, hooks, keywords, and macros.
+static const char* TEST_SRC_SCOPED = "[[vpa]]\n"
+                                     "\n"
+                                     "%ignore @comment @space\n"
+                                     "\n"
+                                     "%keyword ops \"=\" \"|\"\n"
+                                     "\n"
+                                     "main = {\n"
+                                     "  inner\n"
+                                     "  /\\n+/ @nl\n"
+                                     "  /#[^\\n]*/ @comment\n"
+                                     "  /[ \\t\\n]+/ @space\n"
+                                     "}\n"
+                                     "\n"
+                                     "inner = /\\{/ .begin {\n"
+                                     "  /\\}/ .end\n"
+                                     "  /[a-z_]\\w*/ @id\n"
+                                     "  /=/ @assign\n"
+                                     "  /#[^\\n]*/ @comment\n"
+                                     "  /[ \\t\\n]+/ @space\n"
+                                     "}\n"
+                                     "\n"
+                                     "[[peg]]\n"
+                                     "\n"
+                                     "main = @nl* inner+<@nl> @nl*\n"
+                                     "\n"
+                                     "inner = @id @assign @id\n"
+                                     "\n";
 
 static void _gen_output(const char* src, char** hdr_out, size_t* hdr_sz_out, char** ir_out, size_t* ir_sz_out) {
   char* hdr_buf = NULL;
@@ -124,6 +101,18 @@ static void _gen_output(const char* src, char** hdr_out, size_t* hdr_sz_out, cha
   *ir_sz_out = ir_sz;
 }
 
+static bool _gen_succeeds(const char* src) {
+  char* hdr_buf = NULL;
+  size_t hdr_sz = 0;
+  char* ir_buf = NULL;
+  size_t ir_sz = 0;
+  _gen_output(src, &hdr_buf, &hdr_sz, &ir_buf, &ir_sz);
+  bool ok = hdr_sz > 0 && ir_sz > 0;
+  free(hdr_buf);
+  free(ir_buf);
+  return ok;
+}
+
 TEST(test_parse_basic) {
   char* hdr_buf = NULL;
   size_t hdr_sz = 0;
@@ -140,74 +129,37 @@ TEST(test_parse_basic) {
   free(ir_buf);
 }
 
-TEST(test_vpa_scopes) {
+TEST(test_scoped) {
   char* hdr_buf = NULL;
   size_t hdr_sz = 0;
   char* ir_buf = NULL;
   size_t ir_sz = 0;
-  _gen_output(TEST_SRC, &hdr_buf, &hdr_sz, &ir_buf, &ir_sz);
+  _gen_output(TEST_SRC_SCOPED, &hdr_buf, &hdr_sz, &ir_buf, &ir_sz);
 
-  // DFA functions for all scopes
+  assert(hdr_buf != NULL);
+  assert(hdr_sz > 0);
+  assert(ir_buf != NULL);
+  assert(ir_sz > 0);
+
+  // DFA functions for scopes
   assert(strstr(ir_buf, "@lex_main("));
-  assert(strstr(ir_buf, "@lex_vpa("));
-  assert(strstr(ir_buf, "@lex_re("));
-  assert(strstr(ir_buf, "@lex_charclass("));
-  assert(strstr(ir_buf, "@lex_peg("));
+  assert(strstr(ir_buf, "@lex_inner("));
 
-  // Action dispatch and lex loop
+  // Scope IDs
+  assert(strstr(hdr_buf, "SCOPE_MAIN"));
+  assert(strstr(hdr_buf, "SCOPE_INNER"));
+
+  // Dispatch and lex loop
   assert(strstr(ir_buf, "@vpa_dispatch("));
   assert(strstr(ir_buf, "@vpa_lex("));
-
-  // Scope IDs in header
-  assert(strstr(hdr_buf, "SCOPE_MAIN"));
-  assert(strstr(hdr_buf, "SCOPE_VPA"));
-  assert(strstr(hdr_buf, "SCOPE_RE"));
-  assert(strstr(hdr_buf, "SCOPE_CHARCLASS"));
-  assert(strstr(hdr_buf, "SCOPE_PEG"));
-
-  free(hdr_buf);
-  free(ir_buf);
-}
-
-TEST(test_vpa_leader_inlining) {
-  char* hdr_buf = NULL;
-  size_t hdr_sz = 0;
-  char* ir_buf = NULL;
-  size_t ir_sz = 0;
-  _gen_output(TEST_SRC, &hdr_buf, &hdr_sz, &ir_buf, &ir_sz);
-
-  // vpa_dispatch should push scopes (leader inlining creates SCOPE_ENTER actions)
   assert(strstr(ir_buf, "call void @vpa_rt_push_scope"));
-
-  // vpa_dispatch should pop scopes (.end hooks create SCOPE_EXIT actions)
   assert(strstr(ir_buf, "call void @vpa_rt_pop_scope"));
-
-  // Token emission
   assert(strstr(ir_buf, "call void @vpa_rt_emit_token"));
 
-  free(hdr_buf);
-  free(ir_buf);
-}
-
-TEST(test_vpa_tokens) {
-  char* hdr_buf = NULL;
-  size_t hdr_sz = 0;
-  char* ir_buf = NULL;
-  size_t ir_sz = 0;
-  _gen_output(TEST_SRC, &hdr_buf, &hdr_sz, &ir_buf, &ir_sz);
-
-  // Token IDs from the test source
-  assert(strstr(hdr_buf, "TOK_COMMENT"));
-  assert(strstr(hdr_buf, "TOK_SPACE"));
-  assert(strstr(hdr_buf, "TOK_VPA_ID"));
+  // Token IDs
+  assert(strstr(hdr_buf, "TOK_ID"));
   assert(strstr(hdr_buf, "TOK_ASSIGN"));
-  assert(strstr(hdr_buf, "TOK_RE_DOT"));
-  assert(strstr(hdr_buf, "TOK_CLASS_END"));
-  assert(strstr(hdr_buf, "TOK_CHAR"));
-
-  // Keyword tokens
-  assert(strstr(hdr_buf, "TOK_DIRECTIVES_"));
-  assert(strstr(hdr_buf, "TOK_OPS_"));
+  assert(strstr(hdr_buf, "TOK_NL"));
 
   free(hdr_buf);
   free(ir_buf);
@@ -218,7 +170,7 @@ TEST(test_vpa_ir_compiles) {
   size_t hdr_sz = 0;
   char* ir_buf = NULL;
   size_t ir_sz = 0;
-  _gen_output(TEST_SRC, &hdr_buf, &hdr_sz, &ir_buf, &ir_sz);
+  _gen_output(TEST_SRC_SCOPED, &hdr_buf, &hdr_sz, &ir_buf, &ir_sz);
 
   // Truncate before PEG functions (PEG may have forward refs that fail standalone)
   char* peg_start = strstr(ir_buf, "define i32 @parse_");
@@ -249,14 +201,98 @@ TEST(test_vpa_ir_compiles) {
   free(ir_buf);
 }
 
+// --- Token set validation tests ---
+
+TEST(test_validate_peg_uses_missing_token) {
+  // PEG uses @missing which VPA doesn't emit
+  const char* src = "[[vpa]]\n"
+                    "main = {\n"
+                    "  /x/ @tok_a\n"
+                    "}\n"
+                    "[[peg]]\n"
+                    "main = @tok_a @tok_b\n";
+  assert(!_gen_succeeds(src));
+}
+
+TEST(test_validate_vpa_emits_unused_token) {
+  // VPA emits @tok_b which PEG doesn't use
+  const char* src = "[[vpa]]\n"
+                    "main = {\n"
+                    "  /x/ @tok_a\n"
+                    "  /y/ @tok_b\n"
+                    "}\n"
+                    "[[peg]]\n"
+                    "main = @tok_a\n";
+  assert(!_gen_succeeds(src));
+}
+
+TEST(test_validate_matching_sets) {
+  // VPA emit set == PEG used set
+  const char* src = "[[vpa]]\n"
+                    "main = {\n"
+                    "  /x/ @tok_a\n"
+                    "  /y/ @tok_b\n"
+                    "}\n"
+                    "[[peg]]\n"
+                    "main = @tok_a @tok_b\n";
+  assert(_gen_succeeds(src));
+}
+
+TEST(test_validate_ignored_tokens_excluded) {
+  // @space is ignored so not required in PEG
+  const char* src = "[[vpa]]\n"
+                    "%ignore @space\n"
+                    "main = {\n"
+                    "  /x/ @tok_a\n"
+                    "  / +/ @space\n"
+                    "}\n"
+                    "[[peg]]\n"
+                    "main = @tok_a\n";
+  assert(_gen_succeeds(src));
+}
+
+TEST(test_validate_peg_subrule_tokens) {
+  // PEG sub-rule uses @tok_b — still counts in main scope's used set
+  const char* src = "[[vpa]]\n"
+                    "main = {\n"
+                    "  /x/ @tok_a\n"
+                    "  /y/ @tok_b\n"
+                    "}\n"
+                    "[[peg]]\n"
+                    "main = @tok_a sub\n"
+                    "sub = @tok_b\n";
+  assert(_gen_succeeds(src));
+}
+
+TEST(test_validate_scope_tokens_not_mixed) {
+  // @inner_tok is emitted in inner scope, not in main
+  const char* src = "[[vpa]]\n"
+                    "main = {\n"
+                    "  inner\n"
+                    "  /x/ @tok_a\n"
+                    "}\n"
+                    "inner = /\\{/ .begin {\n"
+                    "  /\\}/ .end\n"
+                    "  /y/ @inner_tok\n"
+                    "}\n"
+                    "[[peg]]\n"
+                    "main = @tok_a inner\n"
+                    "inner = @inner_tok\n";
+  assert(_gen_succeeds(src));
+}
+
 int main(void) {
   printf("test_parse:\n");
 
   RUN(test_parse_basic);
-  RUN(test_vpa_scopes);
-  RUN(test_vpa_leader_inlining);
-  RUN(test_vpa_tokens);
+  RUN(test_scoped);
   RUN(test_vpa_ir_compiles);
+  RUN(test_validate_peg_uses_missing_token);
+  RUN(test_validate_vpa_emits_unused_token);
+  RUN(test_validate_matching_sets);
+  RUN(test_validate_ignored_tokens_excluded);
+  RUN(test_validate_peg_subrule_tokens);
+  RUN(test_validate_scope_tokens_not_mixed);
 
   printf("all ok\n");
   return 0;

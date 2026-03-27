@@ -23,6 +23,8 @@ typedef struct {
   int32_t sg_id;
   int32_t seg_mask;
   int32_t seg_full_mask;
+  int32_t has_branches;
+  int32_t scope_idx;
   char* scope;
   PegRule* rule;
 } RuleInfo;
@@ -35,7 +37,8 @@ typedef struct {
   int32_t n_rules;
   int32_t n_slots;
   int32_t n_bits;
-  char col_type[64];
+  char col_type[64];     // LLVM IR type name (e.g. "Col.main")
+  char hdr_col_type[64]; // C header type name (e.g. "Col_main")
 } ScopeCtx;
 
 // --- Token name registry ---
@@ -231,18 +234,22 @@ static void _gen_node_type(HeaderWriter* hw, PegRule* rule) {
 // --- Per-scope Col type in header ---
 
 static void _gen_col_type_naive(HeaderWriter* hw, ScopeCtx* scope) {
-  hw_struct_begin(hw, "Col");
+  char name[128];
+  snprintf(name, sizeof(name), "Col_%s", scope->scope_name);
+  hw_struct_begin(hw, name);
   hw_fmt(hw, "  int32_t slots[%d];\n", scope->n_slots > 0 ? scope->n_slots : 1);
   hw_struct_end(hw);
-  hw_raw(hw, " Col;\n\n");
+  hw_fmt(hw, " %s;\n\n", name);
 }
 
 static void _gen_col_type_shared(HeaderWriter* hw, ScopeCtx* scope) {
-  hw_struct_begin(hw, "Col");
+  char name[128];
+  snprintf(name, sizeof(name), "Col_%s", scope->scope_name);
+  hw_struct_begin(hw, name);
   hw_fmt(hw, "  int32_t bits[%d];\n", scope->n_bits);
   hw_fmt(hw, "  int32_t slots[%d];\n", scope->n_slots > 0 ? scope->n_slots : 1);
   hw_struct_end(hw);
-  hw_raw(hw, " Col;\n\n");
+  hw_fmt(hw, " %s;\n\n", name);
 }
 
 // --- LLVM IR Col type definition ---
@@ -259,9 +266,10 @@ static void _define_col_type_ir(IrWriter* w, ScopeCtx* scope) {
 
 // --- Load function generation ---
 
-static void _gen_load_impl(HeaderWriter* hw, PegRule* rule) {
+static void _gen_load_impl(HeaderWriter* hw, PegRule* rule, RuleInfo* ri, ScopeCtx* scopes) {
   char struct_name[128];
   _make_struct_name(rule, struct_name, sizeof(struct_name));
+  const char* col_type = scopes[ri->scope_idx].hdr_col_type;
 
   int32_t fn_len = snprintf(NULL, 0, "load_%s", rule->name) + 1;
   char func_name[fn_len];
@@ -270,7 +278,7 @@ static void _gen_load_impl(HeaderWriter* hw, PegRule* rule) {
   hw_blank(hw);
   hw_fmt(hw, "static inline %s %s(PegRef ref) {\n", struct_name, func_name);
   hw_fmt(hw, "  %s node = {0};\n", struct_name);
-  hw_fmt(hw, "  Col* table = (Col*)ref.table;\n");
+  hw_fmt(hw, "  %s* table = (%s*)ref.table;\n", col_type, col_type);
   hw_fmt(hw, "  int32_t col = ref.col;\n");
   hw_fmt(hw, "  int32_t cur = col;\n");
 
@@ -278,8 +286,64 @@ static void _gen_load_impl(HeaderWriter* hw, PegRule* rule) {
   int32_t nbranches = (int32_t)darray_size(all_branches);
 
   if (nbranches > 0) {
-    hw_raw(hw, "  (void)table;\n");
-    hw_raw(hw, "  (void)cur;\n");
+    hw_fmt(hw, "  int32_t packed = table[col].slots[%d];\n", ri->slot_idx);
+    hw_fmt(hw, "  int32_t branch_id = packed >> 16;\n");
+
+    // Walk seq children: for non-BRANCHES children advance cur, for BRANCHES decode
+    int32_t branch_idx = 0;
+    for (int32_t i = 0; i < (int32_t)darray_size(rule->seq.children); i++) {
+      PegUnit* child = &rule->seq.children[i];
+
+      if (child->kind == PEG_BRANCHES) {
+        int32_t bn = (int32_t)darray_size(child->children);
+        for (int32_t b = 0; b < bn; b++) {
+          int32_t bid = branch_idx + b + 1;
+          PegUnit* branch = &child->children[b];
+          const char* tag = (branch->tag && branch->tag[0]) ? branch->tag : NULL;
+          if (tag) {
+            hw_fmt(hw, "  node.is.%s = (branch_id == %d);\n", tag, bid);
+          } else {
+            hw_fmt(hw, "  node.is.branch%d = (branch_id == %d);\n", branch_idx + b, bid);
+          }
+
+          hw_fmt(hw, "  if (branch_id == %d) {\n", bid);
+          hw_fmt(hw, "    int32_t bcur = cur;\n");
+          for (int32_t j = 0; j < (int32_t)darray_size(branch->children); j++) {
+            PegUnit* bc = &branch->children[j];
+            if (bc->name && bc->name[0]) {
+              hw_fmt(hw, "    node.%s = (PegRef){table, bcur, -1};\n", bc->name);
+            }
+            if (bc->kind == PEG_ID && bc->name) {
+              hw_fmt(hw, "    { int32_t l = parse_%s((void*)table, bcur);\n", bc->name);
+              hw_fmt(hw, "      if (l < 0) l = 0;\n");
+              if (bc->name && bc->name[0] && (bc->multiplier == '+' || bc->multiplier == '*')) {
+                hw_fmt(hw, "      node.%s.next_col = bcur + l;\n", bc->name);
+              }
+              hw_fmt(hw, "      bcur += l; }\n");
+            } else if (bc->kind == PEG_TOK) {
+              hw_fmt(hw, "    bcur += 1;\n");
+            }
+          }
+          hw_fmt(hw, "  }\n");
+        }
+        branch_idx += bn;
+      } else {
+        // Non-branch child in sequence (before or between bracket groups)
+        if (child->name && child->name[0]) {
+          hw_fmt(hw, "  node.%s = (PegRef){table, cur, -1};\n", child->name);
+        }
+        if (child->kind == PEG_ID && child->name) {
+          hw_fmt(hw, "  { int32_t l = parse_%s((void*)table, cur);\n", child->name);
+          hw_fmt(hw, "    if (l < 0) l = 0;\n");
+          if (child->name && child->name[0] && (child->multiplier == '+' || child->multiplier == '*')) {
+            hw_fmt(hw, "    node.%s.next_col = cur + l;\n", child->name);
+          }
+          hw_fmt(hw, "    cur += l; }\n");
+        } else if (child->kind == PEG_TOK) {
+          hw_fmt(hw, "  cur += 1;\n");
+        }
+      }
+    }
   } else {
     for (int32_t i = 0; i < (int32_t)darray_size(rule->seq.children); i++) {
       PegUnit* child = &rule->seq.children[i];
@@ -316,6 +380,8 @@ typedef struct {
   char** tokens;
   const char* col_type;
   int32_t bt_stack;
+  int32_t branch_id_ptr; // alloca i32: tracks chosen branch (1-based) for branch rules
+  int32_t branch_offset; // offset added to branch index (for multi-bracket-group rules)
 } GenCtx;
 
 // --- Leaf call: emit call to match_tok or parse_rule, return register number ---
@@ -334,14 +400,10 @@ static int32_t _emit_leaf_call(GenCtx* ctx, PegUnit* unit, const char* col_expr)
 }
 
 // Convert a string SSA value to a register number (emits add 0, optimized away by LLVM).
-static int32_t _to_reg(GenCtx* ctx, const char* val) {
-  return irwriter_param(ctx->w, "i32", val);
-}
+static int32_t _to_reg(GenCtx* ctx, const char* val) { return irwriter_param(ctx->w, "i32", val); }
 
 // Format a register number as a string operand.
-static void _fmt_reg(char* out, int32_t out_size, int32_t reg) {
-  snprintf(out, (size_t)out_size, "%%r%d", reg);
-}
+static void _fmt_reg(char* out, int32_t out_size, int32_t reg) { snprintf(out, (size_t)out_size, "%%r%d", reg); }
 
 static int32_t _gen_ir(GenCtx* ctx, PegUnit* unit, const char* col_expr, int32_t fail_label);
 
@@ -458,8 +520,7 @@ static int32_t _gen_interlace_loop(GenCtx* ctx, PegUnit* unit, PegUnit* sep, con
   return irwriter_load(ctx->w, "i32", acc_ptr);
 }
 
-static int32_t _gen_plus_interlace(GenCtx* ctx, PegUnit* unit, PegUnit* sep, const char* col_expr,
-                                   int32_t fail_label) {
+static int32_t _gen_plus_interlace(GenCtx* ctx, PegUnit* unit, PegUnit* sep, const char* col_expr, int32_t fail_label) {
   int32_t first_ok_bb = irwriter_label(ctx->w);
   int32_t loop_bb = irwriter_label(ctx->w);
   int32_t sep_ok_bb = irwriter_label(ctx->w);
@@ -538,12 +599,19 @@ static int32_t _gen_ir(GenCtx* ctx, PegUnit* unit, const char* col_expr, int32_t
     int32_t total_ptr = irwriter_alloca(ctx->w, "i32");
     irwriter_store_imm(ctx->w, "i32", 0, total_ptr);
 
+    int32_t running_branch_offset = 0;
     for (int32_t i = 0; i < n; i++) {
       int32_t prev = irwriter_load(ctx->w, "i32", total_ptr);
       int32_t child_col = irwriter_binop(ctx->w, "add", "i32", _to_reg(ctx, col_expr), prev);
 
       char child_col_s[16];
       _fmt_reg(child_col_s, sizeof(child_col_s), child_col);
+
+      if (unit->children[i].kind == PEG_BRANCHES) {
+        ctx->branch_offset = running_branch_offset;
+        running_branch_offset += (int32_t)darray_size(unit->children[i].children);
+      }
+
       int32_t child_len = _gen_ir(ctx, &unit->children[i], child_col_s, fail_label);
 
       int32_t new_total = irwriter_load(ctx->w, "i32", total_ptr);
@@ -573,6 +641,9 @@ static int32_t _gen_ir(GenCtx* ctx, PegUnit* unit, const char* col_expr, int32_t
 
       peg_ir_backtrack_pop(ctx->w, ctx->bt_stack);
       irwriter_store(ctx->w, "i32", r, result_ptr);
+      if (ctx->branch_id_ptr >= 0) {
+        irwriter_store_imm(ctx->w, "i32", ctx->branch_offset + i + 1, ctx->branch_id_ptr);
+      }
       irwriter_br(ctx->w, done_bb);
 
       if (!is_last) {
@@ -608,14 +679,34 @@ static void _gen_rule_prologue(PegRule* rule, ScopeCtx* scope, IrWriter* w, char
   snprintf(col_type_ref, (size_t)col_type_ref_size, "%%%s", scope->col_type);
 }
 
-static int32_t _gen_rule_compute(PegRule* rule, IrWriter* w, char** tokens, const char* col_type_ref,
+static int32_t _gen_rule_compute(PegRule* rule, RuleInfo* ri, IrWriter* w, char** tokens, const char* col_type_ref,
                                  int32_t fail_label) {
   int32_t bt_stack = irwriter_alloca(w, "%BtStack");
   int32_t bt_top_ptr = irwriter_gep(w, "%BtStack", bt_stack, "i32 0, i32 1");
   irwriter_store_imm(w, "i32", -1, bt_top_ptr);
 
-  GenCtx ctx = {.w = w, .tokens = tokens, .col_type = col_type_ref, .bt_stack = bt_stack};
-  return _gen_ir(&ctx, &rule->seq, "%col", fail_label);
+  int32_t branch_id_ptr = -1;
+  if (ri->has_branches) {
+    branch_id_ptr = irwriter_alloca(w, "i32");
+    irwriter_store_imm(w, "i32", 0, branch_id_ptr);
+  }
+
+  GenCtx ctx = {.w = w,
+                .tokens = tokens,
+                .col_type = col_type_ref,
+                .bt_stack = bt_stack,
+                .branch_id_ptr = branch_id_ptr,
+                .branch_offset = 0};
+  int32_t match_len = _gen_ir(&ctx, &rule->seq, "%col", fail_label);
+
+  if (ri->has_branches) {
+    // Pack: (branch_id << 16) | match_len
+    int32_t bid = irwriter_load(w, "i32", branch_id_ptr);
+    int32_t shifted = irwriter_binop(w, "shl", "i32", bid, irwriter_imm(w, "i32", 16));
+    int32_t masked = irwriter_binop(w, "and", "i32", match_len, irwriter_imm(w, "i32", 0xFFFF));
+    return irwriter_binop(w, "or", "i32", shifted, masked);
+  }
+  return match_len;
 }
 
 static void _gen_rule_naive(PegRule* rule, RuleInfo* ri, ScopeCtx* scope, IrWriter* w, char** tokens) {
@@ -630,13 +721,23 @@ static void _gen_rule_naive(PegRule* rule, RuleInfo* ri, ScopeCtx* scope, IrWrit
   irwriter_br_cond_r(w, irwriter_icmp_imm(w, "ne", "i32", slot_reg, -1), cached_bb, compute_bb);
 
   irwriter_bb_at(w, cached_bb);
-  irwriter_ret(w, "i32", slot_reg);
+  if (ri->has_branches) {
+    int32_t cached_len = irwriter_binop(w, "and", "i32", slot_reg, irwriter_imm(w, "i32", 0xFFFF));
+    irwriter_ret(w, "i32", cached_len);
+  } else {
+    irwriter_ret(w, "i32", slot_reg);
+  }
 
   irwriter_bb_at(w, compute_bb);
-  int32_t match_len = _gen_rule_compute(rule, w, tokens, col_type_ref, fail_bb);
+  int32_t packed = _gen_rule_compute(rule, ri, w, tokens, col_type_ref, fail_bb);
 
-  peg_ir_memo_set(w, col_type_ref, "%table", "%col", 0, ri->slot_idx, match_len);
-  irwriter_ret(w, "i32", match_len);
+  peg_ir_memo_set(w, col_type_ref, "%table", "%col", 0, ri->slot_idx, packed);
+  if (ri->has_branches) {
+    int32_t match_len = irwriter_binop(w, "and", "i32", packed, irwriter_imm(w, "i32", 0xFFFF));
+    irwriter_ret(w, "i32", match_len);
+  } else {
+    irwriter_ret(w, "i32", packed);
+  }
 
   irwriter_bb_at(w, fail_bb);
   int32_t neg1 = irwriter_imm(w, "i32", -1);
@@ -664,14 +765,24 @@ static void _gen_rule_shared(PegRule* rule, RuleInfo* ri, ScopeCtx* scope, IrWri
   irwriter_br_cond_r(w, irwriter_icmp_imm(w, "ne", "i32", slot_reg, -1), cached_bb, compute_bb);
 
   irwriter_bb_at(w, cached_bb);
-  irwriter_ret(w, "i32", slot_reg);
+  if (ri->has_branches) {
+    int32_t cached_len = irwriter_binop(w, "and", "i32", slot_reg, irwriter_imm(w, "i32", 0xFFFF));
+    irwriter_ret(w, "i32", cached_len);
+  } else {
+    irwriter_ret(w, "i32", slot_reg);
+  }
 
   irwriter_bb_at(w, compute_bb);
-  int32_t match_len = _gen_rule_compute(rule, w, tokens, col_type_ref, match_fail_bb);
+  int32_t packed = _gen_rule_compute(rule, ri, w, tokens, col_type_ref, match_fail_bb);
 
   peg_ir_bit_exclude(w, col_type_ref, "%table", "%col", ri->sg_id, ri->seg_mask);
-  peg_ir_memo_set(w, col_type_ref, "%table", "%col", 1, ri->slot_idx, match_len);
-  irwriter_ret(w, "i32", match_len);
+  peg_ir_memo_set(w, col_type_ref, "%table", "%col", 1, ri->slot_idx, packed);
+  if (ri->has_branches) {
+    int32_t match_len = irwriter_binop(w, "and", "i32", packed, irwriter_imm(w, "i32", 0xFFFF));
+    irwriter_ret(w, "i32", match_len);
+  } else {
+    irwriter_ret(w, "i32", packed);
+  }
 
   irwriter_bb_at(w, match_fail_bb);
   peg_ir_bit_deny(w, col_type_ref, "%table", "%col", ri->sg_id, ri->seg_mask);
@@ -701,6 +812,9 @@ void peg_gen(PegGenInput* input, HeaderWriter* hw, IrWriter* w) {
     rule_infos[i].first_set = bitset_new();
     rule_infos[i].last_set = bitset_new();
     rule_infos[i].rule = &rules[i];
+    PegUnit** br = _collect_branches(&rules[i]);
+    rule_infos[i].has_branches = (int32_t)darray_size(br) > 0;
+    darray_del(br);
   }
 
   for (int32_t i = 0; i < n_rules; i++) {
@@ -728,23 +842,18 @@ void peg_gen(PegGenInput* input, HeaderWriter* hw, IrWriter* w) {
       scope->n_bits = 0;
       scope->n_slots = scope->n_rules;
       snprintf(scope->col_type, sizeof(scope->col_type), "Col.%s", scope->scope_name);
+      snprintf(scope->hdr_col_type, sizeof(scope->hdr_col_type), "Col_%s", scope->scope_name);
 
       for (int32_t j = 0; j < scope->n_rules; j++) {
         int32_t ri = scope->rule_indices[j];
         rule_infos[ri].slot_idx = j;
+        rule_infos[ri].scope_idx = si;
       }
     }
 
-    // Use the first scope's layout for the C Col type (all scopes may differ,
-    // but generate one Col with the max slots for the C header)
-    int32_t max_slots = 0;
     for (int32_t si = 0; si < (int32_t)darray_size(scopes); si++) {
-      if (scopes[si].n_slots > max_slots) {
-        max_slots = scopes[si].n_slots;
-      }
+      _gen_col_type_naive(hw, &scopes[si]);
     }
-    ScopeCtx hdr_scope = {.n_bits = 0, .n_slots = max_slots};
-    _gen_col_type_naive(hw, &hdr_scope);
   } else {
     // Row-shared mode: graph coloring
     Graph* g = _build_interference_graph(rule_infos, n_rules);
@@ -779,10 +888,16 @@ void peg_gen(PegGenInput* input, HeaderWriter* hw, IrWriter* w) {
       scope->n_bits = sg_size;
       scope->n_slots = max_color + 1;
       snprintf(scope->col_type, sizeof(scope->col_type), "Col.%s", scope->scope_name);
+      snprintf(scope->hdr_col_type, sizeof(scope->hdr_col_type), "Col_%s", scope->scope_name);
+
+      for (int32_t j = 0; j < scope->n_rules; j++) {
+        rule_infos[scope->rule_indices[j]].scope_idx = si;
+      }
     }
 
-    ScopeCtx hdr_scope = {.n_bits = sg_size, .n_slots = max_color + 1};
-    _gen_col_type_shared(hw, &hdr_scope);
+    for (int32_t si = 0; si < (int32_t)darray_size(scopes); si++) {
+      _gen_col_type_shared(hw, &scopes[si]);
+    }
 
     coloring_result_del(cr);
     graph_del(g);
@@ -796,16 +911,21 @@ void peg_gen(PegGenInput* input, HeaderWriter* hw, IrWriter* w) {
   hw_raw(hw, "#include <stdlib.h>\n");
   hw_raw(hw, "#include <string.h>\n");
   hw_blank(hw);
-  hw_fmt(hw, "static inline Col* peg_alloc_table(int32_t n_cols) {\n");
-  hw_fmt(hw, "  Col* table = (Col*)malloc(sizeof(Col) * n_cols);\n");
-  hw_fmt(hw, "  if (table) memset(table, 0xFF, sizeof(Col) * n_cols);\n");
-  hw_fmt(hw, "  return table;\n");
-  hw_fmt(hw, "}\n");
-  hw_blank(hw);
-  hw_raw(hw, "static inline void peg_free_table(Col* table) { free(table); }\n");
+
+  for (int32_t si = 0; si < (int32_t)darray_size(scopes); si++) {
+    ScopeCtx* scope = &scopes[si];
+    hw_fmt(hw, "static inline %s* peg_alloc_%s(int32_t n_cols) {\n", scope->hdr_col_type, scope->scope_name);
+    hw_fmt(hw, "  %s* table = (%s*)malloc(sizeof(%s) * n_cols);\n", scope->hdr_col_type, scope->hdr_col_type,
+           scope->hdr_col_type);
+    hw_fmt(hw, "  if (table) memset(table, 0xFF, sizeof(%s) * n_cols);\n", scope->hdr_col_type);
+    hw_fmt(hw, "  return table;\n");
+    hw_fmt(hw, "}\n\n");
+    hw_fmt(hw, "static inline void peg_free_%s(%s* table) { free(table); }\n\n", scope->scope_name,
+           scope->hdr_col_type);
+  }
 
   for (int32_t i = 0; i < n_rules; i++) {
-    _gen_load_impl(hw, &rules[i]);
+    _gen_load_impl(hw, &rules[i], &rule_infos[i], scopes);
   }
 
   // --- Header: parse function declarations ---
