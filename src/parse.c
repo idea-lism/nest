@@ -578,6 +578,18 @@ static bool _parse_vpa_ref(ParseState* ps, VpaRule* rule) {
   return true;
 }
 
+static bool _parse_vpa_state_ref(ParseState* ps, VpaRule* rule) {
+  Token* t = _peek(ps);
+  if (!t || t->id != TOK_STATE_ID) {
+    return false;
+  }
+  _next(ps);
+  VpaUnit unit = {.kind = VPA_STATE, .state_name = _tok_strdup_skip(ps, t, 1)};
+  _parse_unit_followups(ps, &unit, rule);
+  _add_vpa_unit(rule, unit);
+  return true;
+}
+
 static bool _parse_vpa_macro_ref(ParseState* ps, VpaRule* rule) {
   Token* t = _peek(ps);
   if (!t || t->id != TOK_MACRO_ID) {
@@ -608,7 +620,8 @@ static bool _parse_vpa_nl(ParseState* ps) {
 }
 
 static bool _parse_vpa_rule_body(ParseState* ps, VpaRule* rule) {
-  if (_parse_vpa_regexp(ps, rule) || _parse_vpa_str_span(ps, rule) || _parse_vpa_ref(ps, rule) ||
+  if (_parse_vpa_regexp(ps, rule) || _parse_vpa_str_span(ps, rule) || _parse_vpa_state_ref(ps, rule) ||
+      _parse_vpa_ref(ps, rule) ||
       _parse_vpa_macro_ref(ps, rule) || _parse_vpa_pipe(ps) || _parse_vpa_nl(ps)) {
     return true;
   }
@@ -1089,6 +1102,7 @@ static VpaRule* _find_macro(ParseState* ps, const char* name) {
 static VpaUnit _clone_vpa_unit(VpaUnit* src) {
   VpaUnit dst = *src;
   dst.name = src->name ? strdup(src->name) : NULL;
+  dst.state_name = src->state_name ? strdup(src->state_name) : NULL;
   dst.user_hook = src->user_hook ? strdup(src->user_hook) : NULL;
   dst.re_ast = re_ast_clone(src->re_ast);
   if ((int32_t)darray_size(src->children) > 0) {
@@ -1290,7 +1304,7 @@ static void _collect_emit_set(ParseState* ps, VpaUnit* units, char*** set, char*
   for (int32_t i = 0; i < (int32_t)darray_size(units); i++) {
     VpaUnit* u = &units[i];
 
-    if (u->kind == VPA_REGEXP) {
+    if (u->kind == VPA_REGEXP || u->kind == VPA_STATE) {
       if (u->name && u->name[0]) {
         _str_set_add(set, u->name);
       }
@@ -1304,10 +1318,10 @@ static void _collect_emit_set(ParseState* ps, VpaUnit* units, char*** set, char*
             char* dup = strdup(u->name);
             darray_push(*visited, dup);
             _collect_emit_set(ps, ref->units, set, visited);
-            // If the ref rule has regexp units without names, they emit the rule name as token
+            // If the ref rule has match units without names, they emit the rule name as token.
             for (int32_t j = 0; j < (int32_t)darray_size(ref->units); j++) {
               VpaUnit* ru = &ref->units[j];
-              if (ru->kind == VPA_REGEXP && ru->re_ast && (!ru->name || !ru->name[0])) {
+              if ((ru->kind == VPA_REGEXP || ru->kind == VPA_STATE) && (!ru->name || !ru->name[0])) {
                 _str_set_add(set, ref->name);
               }
             }
@@ -1456,6 +1470,27 @@ static bool _validate(ParseState* ps) {
 
   for (int32_t i = 0; i < (int32_t)darray_size(ps->vpa_rules); i++) {
     VpaRule* rule = &ps->vpa_rules[i];
+    for (int32_t j = 0; j < (int32_t)darray_size(rule->units); j++) {
+      VpaUnit* u = &rule->units[j];
+      if (u->kind != VPA_STATE || !u->state_name || !u->state_name[0]) {
+        continue;
+      }
+      bool found = false;
+      for (int32_t s = 0; s < (int32_t)darray_size(ps->states); s++) {
+        if (strcmp(ps->states[s].name, u->state_name) == 0) {
+          found = true;
+          break;
+        }
+      }
+      if (!found) {
+        _error(ps, "state '$%s' used in rule '%s' is not declared", u->state_name, rule->name);
+        return false;
+      }
+    }
+  }
+
+  for (int32_t i = 0; i < (int32_t)darray_size(ps->vpa_rules); i++) {
+    VpaRule* rule = &ps->vpa_rules[i];
     if (!rule->is_scope || rule->is_macro || strcmp(rule->name, "main") == 0) {
       continue;
     }
@@ -1505,6 +1540,7 @@ static void _free_vpa_unit(VpaUnit* unit) {
     free(unit->re_ast);
   }
   free(unit->name);
+  free(unit->state_name);
   free(unit->user_hook);
   for (int32_t i = 0; i < (int32_t)darray_size(unit->children); i++) {
     _free_vpa_unit(&unit->children[i]);
@@ -1607,6 +1643,9 @@ void parse_nest(const char* src, HeaderWriter* header_writer, IrWriter* ir_write
       &(VpaGenInput){
           .rules = ps.vpa_rules,
           .keywords = ps.keywords,
+          .states = ps.states,
+          .effects = ps.effects,
+          .peg_rules = ps.peg_rules,
           .src = ps.src,
       },
       header_writer, ir_writer);

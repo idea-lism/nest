@@ -5,6 +5,7 @@
 #include "../src/darray.h"
 #include "../src/header_writer.h"
 #include "../src/irwriter.h"
+#include "../src/parse.h"
 #include "../src/re_ast.h"
 #include "../src/vpa.h"
 #include "compat.h"
@@ -71,6 +72,7 @@ static void _free_vpa_unit(VpaUnit* u) {
     free(u->re_ast);
   }
   free(u->name);
+  free(u->state_name);
   free(u->user_hook);
   for (int32_t i = 0; i < (int32_t)darray_size(u->children); i++) {
     _free_vpa_unit(&u->children[i]);
@@ -155,7 +157,7 @@ TEST(test_multi_scope) {
   // Build inner scope body: /}/ .end, /a/ @tok_a
   VpaUnit* inner_body = darray_new(sizeof(VpaUnit), 0);
   VpaUnit end_unit = _make_regexp_unit("}", NULL);
-  end_unit.hook = 1; // TOK_HOOK_END placeholder — any nonzero triggers SCOPE_EXIT
+  end_unit.hook = TOK_HOOK_END;
   darray_push(inner_body, end_unit);
   darray_push(inner_body, _make_regexp_unit("a", "tok_a"));
 
@@ -165,7 +167,7 @@ TEST(test_multi_scope) {
   VpaUnit scope_unit = {0};
   scope_unit.kind = VPA_SCOPE;
   scope_unit.re_ast = re_ast_build_literal("{", 0, 1);
-  scope_unit.hook = 2; // .begin placeholder
+  scope_unit.hook = TOK_HOOK_BEGIN;
   scope_unit.children = inner_body;
   darray_push(inner_rule.units, scope_unit);
   darray_push(rules, inner_rule);
@@ -301,7 +303,7 @@ TEST(test_ir_compiles) {
   // inner scope
   VpaUnit* inner_body = darray_new(sizeof(VpaUnit), 0);
   VpaUnit end_u = _make_regexp_unit("}", NULL);
-  end_u.hook = 1;
+  end_u.hook = TOK_HOOK_END;
   darray_push(inner_body, end_u);
   darray_push(inner_body, _make_regexp_unit("a", "tok_a"));
 
@@ -309,7 +311,7 @@ TEST(test_ir_compiles) {
   VpaUnit su = {0};
   su.kind = VPA_SCOPE;
   su.re_ast = re_ast_build_literal("{", 0, 1);
-  su.hook = 2;
+  su.hook = TOK_HOOK_BEGIN;
   su.children = inner_body;
   darray_push(inner_rule.units, su);
   darray_push(rules, inner_rule);
@@ -421,6 +423,111 @@ TEST(test_ref_inlining) {
   _free_rules(rules);
 }
 
+TEST(test_user_hook_callback) {
+  VpaRule* rules = darray_new(sizeof(VpaRule), 0);
+
+  VpaRule main_rule = {.name = strdup("main"), .units = darray_new(sizeof(VpaUnit), 0), .is_scope = true};
+  VpaUnit hook_unit = _make_regexp_unit("x", "tok_x");
+  hook_unit.user_hook = strdup(".mark");
+  darray_push(main_rule.units, hook_unit);
+  darray_push(rules, main_rule);
+
+  VpaGenInput input = {.rules = rules, .keywords = NULL, .src = ""};
+
+  char* hdr = NULL;
+  size_t hsz = 0;
+  char* ir = NULL;
+  size_t isz = 0;
+  _gen(&input, &hdr, &hsz, &ir, &isz);
+
+  assert(strstr(hdr, "void vpa_hook_mark(void* tt, int32_t cp_start, int32_t cp_size);"));
+  assert(strstr(ir, "declare void @vpa_hook_mark(ptr, i32, i32)"));
+  assert(strstr(ir, "call void @vpa_hook_mark(ptr %tt, i32 %cp_start, i32 %cp_size)"));
+
+  free(hdr);
+  free(ir);
+  _free_rules(rules);
+}
+
+TEST(test_state_matcher_codegen) {
+  VpaRule* rules = darray_new(sizeof(VpaRule), 0);
+  StateDecl* states = darray_new(sizeof(StateDecl), 0);
+  darray_push(states, ((StateDecl){.name = strdup("ident")}));
+
+  VpaRule main_rule = {.name = strdup("main"), .units = darray_new(sizeof(VpaUnit), 0), .is_scope = true};
+  VpaUnit state_unit = {.kind = VPA_STATE, .state_name = strdup("ident"), .name = strdup("tok_ident")};
+  darray_push(main_rule.units, state_unit);
+  darray_push(main_rule.units, _make_regexp_unit("x", "tok_x"));
+  darray_push(rules, main_rule);
+
+  VpaGenInput input = {.rules = rules, .keywords = NULL, .states = states, .src = ""};
+
+  char* hdr = NULL;
+  size_t hsz = 0;
+  char* ir = NULL;
+  size_t isz = 0;
+  _gen(&input, &hdr, &hsz, &ir, &isz);
+
+  assert(strstr(hdr, "int32_t match_ident(void* src, int32_t cp_off, void* tt);"));
+  assert(strstr(ir, "declare i32 @match_ident(ptr, i32, ptr)"));
+  assert(strstr(ir, "define {i32, i32} @state_main(ptr %src, i32 %cp_off, ptr %tt)"));
+  assert(strstr(ir, "call {i32, i32} @state_main(ptr %src, i32 %sm_off_in, ptr %tt)"));
+  assert(strstr(ir, "call i32 @match_ident(ptr %src, i32 %cp_off, ptr %tt)"));
+
+  free(hdr);
+  free(ir);
+  free(states[0].name);
+  darray_del(states);
+  _free_rules(rules);
+}
+
+TEST(test_parse_scope_callback) {
+  VpaRule* rules = darray_new(sizeof(VpaRule), 0);
+  PegRule* peg_rules = darray_new(sizeof(PegRule), 0);
+
+  VpaUnit* inner_body = darray_new(sizeof(VpaUnit), 0);
+  VpaUnit end_unit = _make_regexp_unit("}", NULL);
+  end_unit.hook = TOK_HOOK_END;
+  darray_push(inner_body, end_unit);
+
+  VpaRule inner_rule = {.name = strdup("inner"), .units = darray_new(sizeof(VpaUnit), 0)};
+  VpaUnit scope_unit = {0};
+  scope_unit.kind = VPA_SCOPE;
+  scope_unit.re_ast = re_ast_build_literal("{", 0, 1);
+  scope_unit.hook = TOK_HOOK_BEGIN;
+  scope_unit.children = inner_body;
+  darray_push(inner_rule.units, scope_unit);
+  darray_push(rules, inner_rule);
+
+  VpaRule main_rule = {.name = strdup("main"), .units = darray_new(sizeof(VpaUnit), 0), .is_scope = true};
+  darray_push(main_rule.units, ((VpaUnit){.kind = VPA_REF, .name = strdup("inner")}));
+  darray_push(rules, main_rule);
+
+  PegRule peg_rule = {.name = strdup("inner"), .seq = {.kind = PEG_SEQ}, .scope = strdup("inner")};
+  darray_push(peg_rules, peg_rule);
+
+  VpaGenInput input = {.rules = rules, .keywords = NULL, .peg_rules = peg_rules, .src = ""};
+
+  char* hdr = NULL;
+  size_t hsz = 0;
+  char* ir = NULL;
+  size_t isz = 0;
+  _gen(&input, &hdr, &hsz, &ir, &isz);
+
+  assert(strstr(hdr, "void vpa_parse_inner(void* tt);"));
+  assert(strstr(ir, "declare void @vpa_parse_inner(ptr)"));
+  assert(strstr(ir, "call void @vpa_parse_inner(ptr %tt)"));
+  assert(strstr(ir, "call void @vpa_rt_pop_scope(ptr %tt)"));
+
+  free(hdr);
+  free(ir);
+  free(peg_rules[0].name);
+  free(peg_rules[0].scope);
+  darray_del(peg_rules[0].seq.children);
+  darray_del(peg_rules);
+  _free_rules(rules);
+}
+
 int main(void) {
   printf("test_vpa:\n");
 
@@ -432,6 +539,9 @@ int main(void) {
   RUN(test_ir_compiles);
   RUN(test_macro_skip);
   RUN(test_ref_inlining);
+  RUN(test_user_hook_callback);
+  RUN(test_state_matcher_codegen);
+  RUN(test_parse_scope_callback);
 
   printf("all ok\n");
   return 0;

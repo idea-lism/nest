@@ -2,6 +2,7 @@
 
 #include "header_writer.h"
 #include "irwriter.h"
+#include "peg.h"
 #include "re_ast.h"
 
 #include <stdbool.h>
@@ -12,6 +13,7 @@ typedef enum {
   VPA_REGEXP,
   VPA_REF,
   VPA_SCOPE,
+  VPA_STATE,
 } VpaUnitKind;
 
 typedef struct VpaUnit VpaUnit;
@@ -21,6 +23,7 @@ struct VpaUnit {
   ReAstNode* re_ast; // VPA_REGEXP: structured AST (owned)
   char mode[4];      // VPA_REGEXP: "b","i","bi","ib",""
   char* name;        // tok_id name (without @) or ref name (owned)
+  char* state_name;  // VPA_STATE: state matcher name (without $) (owned)
   int32_t hook;      // TOK_HOOK_BEGIN, _END, _FAIL, _UNPARSE, or 0
   char* user_hook;   // (owned, may be NULL)
   VpaUnit* children; // darray
@@ -62,6 +65,9 @@ typedef struct {
 typedef struct {
   VpaRule* rules;   // darray
   KeywordEntry* keywords; // darray
+  StateDecl* states; // darray
+  EffectDecl* effects; // darray
+  PegRule* peg_rules; // darray
   const char* src;
 } VpaGenInput;
 
