@@ -5,14 +5,14 @@
 #include <stdint.h>
 
 // tok(token_id, col) — match token at col, returns match length or negative
-void peg_ir_tok(IrWriter* w, char* out, int32_t out_size, const char* token_id, const char* col);
+int32_t peg_ir_tok(IrWriter* w, const char* token_id, const char* col);
 
 // call(rule_name, table, col) — call rule function, returns match length or negative
-void peg_ir_call(IrWriter* w, char* out, int32_t out_size, const char* rule_name, const char* table, const char* col);
+int32_t peg_ir_call(IrWriter* w, const char* rule_name, const char* table, const char* col);
 
 // memo_get — read memo slot via GEP+load
-void peg_ir_memo_get(IrWriter* w, char* out, int32_t out_size, const char* col_type, const char* table, const char* col,
-                     int32_t field_idx, int32_t slot_idx);
+int32_t peg_ir_memo_get(IrWriter* w, const char* col_type, const char* table, const char* col, int32_t field_idx,
+                        int32_t slot_idx);
 
 // memo_set — write memo slot via GEP+store
 void peg_ir_memo_set(IrWriter* w, const char* col_type, const char* table, const char* col, int32_t field_idx,
@@ -25,14 +25,14 @@ void peg_ir_emit_bt_defs(IrWriter* w);
 void peg_ir_backtrack_push(IrWriter* w, const char* stack, const char* col);
 
 // backtrack_restore() — peek saved col from backtrack stack
-void peg_ir_backtrack_restore(IrWriter* w, char* out, int32_t out_size, const char* stack);
+int32_t peg_ir_backtrack_restore(IrWriter* w, const char* stack);
 
 // backtrack_pop() — pop backtrack stack
 void peg_ir_backtrack_pop(IrWriter* w, const char* stack);
 
 // Row-shared bit operations
-void peg_ir_bit_test(IrWriter* w, char* out, int32_t out_size, const char* col_type, const char* table, const char* col,
-                     int32_t seg_idx, int32_t rule_bit);
+int32_t peg_ir_bit_test(IrWriter* w, const char* col_type, const char* table, const char* col, int32_t seg_idx,
+                        int32_t rule_bit);
 void peg_ir_bit_deny(IrWriter* w, const char* col_type, const char* table, const char* col, int32_t seg_idx,
                      int32_t rule_bit);
 void peg_ir_bit_exclude(IrWriter* w, const char* col_type, const char* table, const char* col, int32_t seg_idx,

@@ -5,38 +5,43 @@
 #include <stdio.h>
 #include <string.h>
 
-void peg_ir_tok(IrWriter* w, char* out, int32_t out_size, const char* token_id, const char* col) {
+int32_t peg_ir_tok(IrWriter* w, const char* token_id, const char* col) {
   char args[128];
   snprintf(args, sizeof(args), "i32 %s, i32 %s", token_id, col);
-  irwriter_call_ret(w, out, out_size, "i32", "match_tok", args);
+  return irwriter_call_ret(w, "i32", "match_tok", args);
 }
 
-void peg_ir_call(IrWriter* w, char* out, int32_t out_size, const char* rule_name, const char* table, const char* col) {
+int32_t peg_ir_call(IrWriter* w, const char* rule_name, const char* table, const char* col) {
   char func_name[128];
   snprintf(func_name, sizeof(func_name), "parse_%s", rule_name);
 
-  char col_ext[32];
-  irwriter_sext(w, col_ext, sizeof(col_ext), "i32", col, "i64");
+  char col_ext[16];
+  int32_t r = irwriter_sext(w, "i32", col, "i64");
+  snprintf(col_ext, sizeof(col_ext), "%%r%d", r);
 
   char args[256];
   snprintf(args, sizeof(args), "ptr %s, i64 %s", table, col_ext);
-  irwriter_call_ret(w, out, out_size, "i32", func_name, args);
+  return irwriter_call_ret(w, "i32", func_name, args);
 }
 
-void peg_ir_memo_get(IrWriter* w, char* out, int32_t out_size, const char* col_type, const char* table, const char* col,
-                     int32_t field_idx, int32_t slot_idx) {
-  char gep_buf[32], indices[128];
+int32_t peg_ir_memo_get(IrWriter* w, const char* col_type, const char* table, const char* col, int32_t field_idx,
+                        int32_t slot_idx) {
+  char indices[128];
   snprintf(indices, sizeof(indices), "i32 %s, i32 %d, i32 %d", col, field_idx, slot_idx);
-  irwriter_gep(w, gep_buf, sizeof(gep_buf), col_type, table, indices);
-  irwriter_load(w, out, out_size, "i32", gep_buf);
+  char gep[16];
+  int32_t g = irwriter_gep(w, col_type, table, indices);
+  snprintf(gep, sizeof(gep), "%%r%d", g);
+  return irwriter_load(w, "i32", gep);
 }
 
 void peg_ir_memo_set(IrWriter* w, const char* col_type, const char* table, const char* col, int32_t field_idx,
                      int32_t slot_idx, const char* val) {
-  char gep_buf[32], indices[128];
+  char indices[128];
   snprintf(indices, sizeof(indices), "i32 %s, i32 %d, i32 %d", col, field_idx, slot_idx);
-  irwriter_gep(w, gep_buf, sizeof(gep_buf), col_type, table, indices);
-  irwriter_store(w, "i32", val, gep_buf);
+  char gep[16];
+  int32_t g = irwriter_gep(w, col_type, table, indices);
+  snprintf(gep, sizeof(gep), "%%r%d", g);
+  irwriter_store(w, "i32", val, gep);
 }
 
 // Backtrack stack: { [16 x i32], i32 } = { data, top }
@@ -82,10 +87,10 @@ void peg_ir_backtrack_push(IrWriter* w, const char* stack, const char* col) {
   irwriter_call_void_fmt(w, "backtrack_push", args);
 }
 
-void peg_ir_backtrack_restore(IrWriter* w, char* out, int32_t out_size, const char* stack) {
+int32_t peg_ir_backtrack_restore(IrWriter* w, const char* stack) {
   char args[64];
   snprintf(args, sizeof(args), "ptr %s", stack);
-  irwriter_call_ret(w, out, out_size, "i32", "backtrack_restore", args);
+  return irwriter_call_ret(w, "i32", "backtrack_restore", args);
 }
 
 void peg_ir_backtrack_pop(IrWriter* w, const char* stack) {
@@ -94,46 +99,58 @@ void peg_ir_backtrack_pop(IrWriter* w, const char* stack) {
   irwriter_call_void_fmt(w, "backtrack_pop", args);
 }
 
-void peg_ir_bit_test(IrWriter* w, char* out, int32_t out_size, const char* col_type, const char* table, const char* col,
-                     int32_t seg_idx, int32_t rule_bit) {
-  char gep_buf[32], indices[128];
+int32_t peg_ir_bit_test(IrWriter* w, const char* col_type, const char* table, const char* col, int32_t seg_idx,
+                        int32_t rule_bit) {
+  char indices[128];
   snprintf(indices, sizeof(indices), "i32 %s, i32 0, i32 %d", col, seg_idx);
-  irwriter_gep(w, gep_buf, sizeof(gep_buf), col_type, table, indices);
+  char gep[16];
+  int32_t g = irwriter_gep(w, col_type, table, indices);
+  snprintf(gep, sizeof(gep), "%%r%d", g);
 
-  char bits[32];
-  irwriter_load(w, bits, sizeof(bits), "i32", gep_buf);
+  char bits[16];
+  int32_t b = irwriter_load(w, "i32", gep);
+  snprintf(bits, sizeof(bits), "%%r%d", b);
 
-  char masked[32];
-  irwriter_binop_imm(w, masked, sizeof(masked), "and", "i32", bits, rule_bit);
-  irwriter_icmp_imm(w, out, out_size, "ne", "i32", masked, 0);
+  char masked[16];
+  int32_t m = irwriter_binop_imm(w, "and", "i32", bits, rule_bit);
+  snprintf(masked, sizeof(masked), "%%r%d", m);
+  return irwriter_icmp_imm(w, "ne", "i32", masked, 0);
 }
 
 void peg_ir_bit_deny(IrWriter* w, const char* col_type, const char* table, const char* col, int32_t seg_idx,
                      int32_t rule_bit) {
-  char gep_buf[32], indices[128];
+  char indices[128];
   snprintf(indices, sizeof(indices), "i32 %s, i32 0, i32 %d", col, seg_idx);
-  irwriter_gep(w, gep_buf, sizeof(gep_buf), col_type, table, indices);
+  char gep[16];
+  int32_t g = irwriter_gep(w, col_type, table, indices);
+  snprintf(gep, sizeof(gep), "%%r%d", g);
 
-  char bits[32];
-  irwriter_load(w, bits, sizeof(bits), "i32", gep_buf);
+  char bits[16];
+  int32_t b = irwriter_load(w, "i32", gep);
+  snprintf(bits, sizeof(bits), "%%r%d", b);
 
-  char cleared[32];
-  irwriter_binop_imm(w, cleared, sizeof(cleared), "and", "i32", bits, ~rule_bit);
-  irwriter_store(w, "i32", cleared, gep_buf);
+  char cleared[16];
+  int32_t c = irwriter_binop_imm(w, "and", "i32", bits, ~rule_bit);
+  snprintf(cleared, sizeof(cleared), "%%r%d", c);
+  irwriter_store(w, "i32", cleared, gep);
 }
 
 void peg_ir_bit_exclude(IrWriter* w, const char* col_type, const char* table, const char* col, int32_t seg_idx,
                         int32_t rule_bit) {
-  char gep_buf[32], indices[128];
+  char indices[128];
   snprintf(indices, sizeof(indices), "i32 %s, i32 0, i32 %d", col, seg_idx);
-  irwriter_gep(w, gep_buf, sizeof(gep_buf), col_type, table, indices);
+  char gep[16];
+  int32_t g = irwriter_gep(w, col_type, table, indices);
+  snprintf(gep, sizeof(gep), "%%r%d", g);
 
-  char bits[32];
-  irwriter_load(w, bits, sizeof(bits), "i32", gep_buf);
+  char bits[16];
+  int32_t b = irwriter_load(w, "i32", gep);
+  snprintf(bits, sizeof(bits), "%%r%d", b);
 
-  char kept[32];
-  irwriter_binop_imm(w, kept, sizeof(kept), "and", "i32", bits, rule_bit);
-  irwriter_store(w, "i32", kept, gep_buf);
+  char kept[16];
+  int32_t k = irwriter_binop_imm(w, "and", "i32", bits, rule_bit);
+  snprintf(kept, sizeof(kept), "%%r%d", k);
+  irwriter_store(w, "i32", kept, gep);
 }
 
 void peg_ir_declare_externs(IrWriter* w) { irwriter_declare(w, "i32", "match_tok", "i32, i32"); }

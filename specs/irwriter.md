@@ -36,3 +36,7 @@ Security
 - check target_triple: must be non-empty, only `[a-zA-Z0-9._-]`
 - check directory should not contain `"` or `\\`
 - abort on violation
+
+Register management
+
+Writer keeps track of register number in integer.

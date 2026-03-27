@@ -544,10 +544,10 @@ void aut_gen_dfa(Aut* a, IrWriter* w, bool debug_mode) {
       irwriter_br(w, nomatch_label);
       irwriter_bb(w, nomatch_label);
 
-      char v0n[32];
-      irwriter_insertvalue(w, v0n, sizeof(v0n), ret_ty, "undef", "i32", "%state", 0);
-      char v1n[32];
-      irwriter_insertvalue_imm(w, v1n, sizeof(v1n), ret_ty, v0n, "i32", -2, 1);
+      char v0n[16];
+      snprintf(v0n, sizeof(v0n), "%%r%d", irwriter_insertvalue(w, ret_ty, "undef", "i32", "%state", 0));
+      char v1n[16];
+      snprintf(v1n, sizeof(v1n), "%%r%d", irwriter_insertvalue_imm(w, ret_ty, v0n, "i32", -2, 1));
       irwriter_ret(w, ret_ty, v1n);
       continue;
     }
@@ -624,12 +624,12 @@ void aut_gen_dfa(Aut* a, IrWriter* w, bool debug_mode) {
           snprintf(next_label, sizeof(next_label), "%s", nomatch_label);
         }
 
-        char lo_n[32];
-        irwriter_icmp_imm(w, lo_n, sizeof(lo_n), "sge", "i32", "%cp", dt->cp_start);
-        char hi_n[32];
-        irwriter_icmp_imm(w, hi_n, sizeof(hi_n), "sle", "i32", "%cp", dt->cp_end);
-        char both_n[32];
-        irwriter_binop(w, both_n, sizeof(both_n), "and", "i1", lo_n, hi_n);
+        char lo_n[16];
+        snprintf(lo_n, sizeof(lo_n), "%%r%d", irwriter_icmp_imm(w, "sge", "i32", "%cp", dt->cp_start));
+        char hi_n[16];
+        snprintf(hi_n, sizeof(hi_n), "%%r%d", irwriter_icmp_imm(w, "sle", "i32", "%cp", dt->cp_end));
+        char both_n[16];
+        snprintf(both_n, sizeof(both_n), "%%r%d", irwriter_binop(w, "and", "i1", lo_n, hi_n));
         irwriter_br_cond(w, both_n, match_label, next_label);
 
         if (next_range >= 0) {
@@ -654,18 +654,18 @@ void aut_gen_dfa(Aut* a, IrWriter* w, bool debug_mode) {
         irwriter_dbg(w, dt->line, dt->col);
       }
 
-      char v0n[32];
-      irwriter_insertvalue_imm(w, v0n, sizeof(v0n), ret_ty, "undef", "i32", dt->to, 0);
-      char v1n[32];
-      irwriter_insertvalue_imm(w, v1n, sizeof(v1n), ret_ty, v0n, "i32", dt->action_id, 1);
+      char v0n[16];
+      snprintf(v0n, sizeof(v0n), "%%r%d", irwriter_insertvalue_imm(w, ret_ty, "undef", "i32", dt->to, 0));
+      char v1n[16];
+      snprintf(v1n, sizeof(v1n), "%%r%d", irwriter_insertvalue_imm(w, ret_ty, v0n, "i32", dt->action_id, 1));
       irwriter_ret(w, ret_ty, v1n);
     }
 
     irwriter_bb(w, nomatch_label);
-    char v0n[32];
-    irwriter_insertvalue(w, v0n, sizeof(v0n), ret_ty, "undef", "i32", "%state", 0);
-    char v1n[32];
-    irwriter_insertvalue_imm(w, v1n, sizeof(v1n), ret_ty, v0n, "i32", -2, 1);
+    char v0n[16];
+    snprintf(v0n, sizeof(v0n), "%%r%d", irwriter_insertvalue(w, ret_ty, "undef", "i32", "%state", 0));
+    char v1n[16];
+    snprintf(v1n, sizeof(v1n), "%%r%d", irwriter_insertvalue_imm(w, ret_ty, v0n, "i32", -2, 1));
     irwriter_ret(w, ret_ty, v1n);
   }
 
@@ -674,10 +674,10 @@ void aut_gen_dfa(Aut* a, IrWriter* w, bool debug_mode) {
     if (debug_mode) {
       irwriter_call_void(w, "llvm.debugtrap");
     }
-    char v0n[32];
-    irwriter_insertvalue(w, v0n, sizeof(v0n), ret_ty, "undef", "i32", "%state", 0);
-    char v1n[32];
-    irwriter_insertvalue_imm(w, v1n, sizeof(v1n), ret_ty, v0n, "i32", -2, 1);
+    char v0n[16];
+    snprintf(v0n, sizeof(v0n), "%%r%d", irwriter_insertvalue(w, ret_ty, "undef", "i32", "%state", 0));
+    char v1n[16];
+    snprintf(v1n, sizeof(v1n), "%%r%d", irwriter_insertvalue_imm(w, ret_ty, v0n, "i32", -2, 1));
     irwriter_ret(w, ret_ty, v1n);
   }
 

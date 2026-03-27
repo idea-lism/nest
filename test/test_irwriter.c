@@ -71,13 +71,13 @@ static void _emit_binop(IrWriter* w) {
   irwriter_define_start(w, "f", "i32", 1, arg_types, arg_names);
   irwriter_bb(w, "entry");
 
-  char r1[32];
-  irwriter_binop_imm(w, r1, sizeof(r1), "add", "i32", "%x", 1);
-  assert(strcmp(r1, "%r0") == 0);
+  int32_t r1 = irwriter_binop_imm(w, "add", "i32", "%x", 1);
+  assert(r1 == 0);
 
-  char r2[32];
-  irwriter_binop(w, r2, sizeof(r2), "mul", "i32", "%x", r1);
-  assert(strcmp(r2, "%r1") == 0);
+  char r1s[16];
+  snprintf(r1s, sizeof(r1s), "%%r%d", r1);
+  int32_t r2 = irwriter_binop(w, "mul", "i32", "%x", r1s);
+  assert(r2 == 1);
 
   irwriter_ret(w, "i32", "%r1");
   irwriter_define_end(w);
@@ -99,17 +99,15 @@ static void _emit_icmp_branch(IrWriter* w) {
   irwriter_define_start(w, "f", "i32", 1, arg_types, arg_names);
 
   irwriter_bb(w, "entry");
-  char cmp_name[32];
-  irwriter_icmp_imm(w, cmp_name, sizeof(cmp_name), "sge", "i32", "%x", 0);
+  char cmp_name[16];
+  snprintf(cmp_name, sizeof(cmp_name), "%%r%d", irwriter_icmp_imm(w, "sge", "i32", "%x", 0));
   irwriter_br_cond(w, cmp_name, "positive", "negative");
 
   irwriter_bb(w, "positive");
   irwriter_ret(w, "i32", "%x");
 
   irwriter_bb(w, "negative");
-  char neg[32];
-  irwriter_binop_imm(w, neg, sizeof(neg), "sub", "i32", "0", 0);
-  (void)neg;
+  irwriter_binop_imm(w, "sub", "i32", "0", 0);
   irwriter_ret(w, "i32", "%r1");
 
   irwriter_define_end(w);
@@ -169,10 +167,10 @@ static void _emit_insertvalue(IrWriter* w) {
   irwriter_define_start(w, "match", "{i32, i32}", 2, arg_types, arg_names);
 
   irwriter_bb(w, "entry");
-  char r0_name[32];
-  irwriter_insertvalue_imm(w, r0_name, sizeof(r0_name), "{i32, i32}", "undef", "i32", 1, 0);
-  char r1_name[32];
-  irwriter_insertvalue_imm(w, r1_name, sizeof(r1_name), "{i32, i32}", r0_name, "i32", 0, 1);
+  char r0_name[16];
+  snprintf(r0_name, sizeof(r0_name), "%%r%d", irwriter_insertvalue_imm(w, "{i32, i32}", "undef", "i32", 1, 0));
+  char r1_name[16];
+  snprintf(r1_name, sizeof(r1_name), "%%r%d", irwriter_insertvalue_imm(w, "{i32, i32}", r0_name, "i32", 0, 1));
   irwriter_ret(w, "{i32, i32}", r1_name);
 
   irwriter_define_end(w);
@@ -195,8 +193,7 @@ static void _emit_debug_locations(IrWriter* w) {
 
   irwriter_bb(w, "entry");
   irwriter_dbg(w, 10, 5);
-  char r0[32];
-  irwriter_binop_imm(w, r0, sizeof(r0), "add", "i32", "%x", 1);
+  irwriter_binop_imm(w, "add", "i32", "%x", 1);
   irwriter_dbg(w, 11, 3);
   irwriter_ret(w, "i32", "%r0");
 
@@ -206,12 +203,9 @@ static void _emit_debug_locations(IrWriter* w) {
 
 TEST(test_debug_locations) {
   char* out = _capture(_emit_debug_locations);
-  // Instructions should have !dbg references
   assert(strstr(out, "!dbg !"));
-  // Metadata should contain DILocation
   assert(strstr(out, "DILocation(line: 10, column: 5"));
   assert(strstr(out, "DILocation(line: 11, column: 3"));
-  // Module-level debug metadata
   assert(strstr(out, "DICompileUnit"));
   assert(strstr(out, "DISubprogram"));
   assert(strstr(out, "!llvm.dbg.cu"));
@@ -237,39 +231,39 @@ static void _emit_dfa_function(IrWriter* w) {
   // state0: check if cp in [0x41, 0x5A]
   irwriter_bb(w, "state0");
   irwriter_dbg(w, 2, 1);
-  char lo_name[32];
-  irwriter_icmp_imm(w, lo_name, sizeof(lo_name), "sge", "i32", "%cp", 0x41);
-  char hi_name[32];
-  irwriter_icmp_imm(w, hi_name, sizeof(hi_name), "sle", "i32", "%cp", 0x5A);
-  char in_range_name[32];
-  irwriter_binop(w, in_range_name, sizeof(in_range_name), "and", "i1", lo_name, hi_name);
+  char lo_name[16];
+  snprintf(lo_name, sizeof(lo_name), "%%r%d", irwriter_icmp_imm(w, "sge", "i32", "%cp", 0x41));
+  char hi_name[16];
+  snprintf(hi_name, sizeof(hi_name), "%%r%d", irwriter_icmp_imm(w, "sle", "i32", "%cp", 0x5A));
+  char in_range_name[16];
+  snprintf(in_range_name, sizeof(in_range_name), "%%r%d", irwriter_binop(w, "and", "i1", lo_name, hi_name));
   irwriter_br_cond(w, in_range_name, "s0_match", "s0_fail");
 
   // s0_match: return {1, 0}
   irwriter_bb(w, "s0_match");
   irwriter_dbg(w, 2, 5);
-  char v0_name[32];
-  irwriter_insertvalue_imm(w, v0_name, sizeof(v0_name), "{i32, i32}", "undef", "i32", 1, 0);
-  char v1_name[32];
-  irwriter_insertvalue_imm(w, v1_name, sizeof(v1_name), "{i32, i32}", v0_name, "i32", 0, 1);
+  char v0_name[16];
+  snprintf(v0_name, sizeof(v0_name), "%%r%d", irwriter_insertvalue_imm(w, "{i32, i32}", "undef", "i32", 1, 0));
+  char v1_name[16];
+  snprintf(v1_name, sizeof(v1_name), "%%r%d", irwriter_insertvalue_imm(w, "{i32, i32}", v0_name, "i32", 0, 1));
   irwriter_ret(w, "{i32, i32}", v1_name);
 
   // s0_fail: return {0, -2}
   irwriter_bb(w, "s0_fail");
   irwriter_dbg(w, 2, 10);
-  char v2_name[32];
-  irwriter_insertvalue_imm(w, v2_name, sizeof(v2_name), "{i32, i32}", "undef", "i32", 0, 0);
-  char v3_name[32];
-  irwriter_insertvalue_imm(w, v3_name, sizeof(v3_name), "{i32, i32}", v2_name, "i32", -2, 1);
+  char v2_name[16];
+  snprintf(v2_name, sizeof(v2_name), "%%r%d", irwriter_insertvalue_imm(w, "{i32, i32}", "undef", "i32", 0, 0));
+  char v3_name[16];
+  snprintf(v3_name, sizeof(v3_name), "%%r%d", irwriter_insertvalue_imm(w, "{i32, i32}", v2_name, "i32", -2, 1));
   irwriter_ret(w, "{i32, i32}", v3_name);
 
   // dead: return {0, -2}
   irwriter_bb(w, "dead");
   irwriter_dbg(w, 1, 1);
-  char v4_name[32];
-  irwriter_insertvalue_imm(w, v4_name, sizeof(v4_name), "{i32, i32}", "undef", "i32", 0, 0);
-  char v5_name[32];
-  irwriter_insertvalue_imm(w, v5_name, sizeof(v5_name), "{i32, i32}", v4_name, "i32", -2, 1);
+  char v4_name[16];
+  snprintf(v4_name, sizeof(v4_name), "%%r%d", irwriter_insertvalue_imm(w, "{i32, i32}", "undef", "i32", 0, 0));
+  char v5_name[16];
+  snprintf(v5_name, sizeof(v5_name), "%%r%d", irwriter_insertvalue_imm(w, "{i32, i32}", v4_name, "i32", -2, 1));
   irwriter_ret(w, "{i32, i32}", v5_name);
 
   irwriter_define_end(w);
@@ -278,7 +272,6 @@ static void _emit_dfa_function(IrWriter* w) {
 
 TEST(test_dfa_function) {
   char* out = _capture(_emit_dfa_function);
-  // Structural checks
   assert(strstr(out, "define {i64, i64} @match(i64 %state_i64, i64 %cp_i64)"));
   assert(strstr(out, "switch i32 %state, label %dead"));
   assert(strstr(out, "state0:"));
@@ -287,7 +280,6 @@ TEST(test_dfa_function) {
   assert(strstr(out, "dead:"));
   assert(strstr(out, "insertvalue {i32, i32}"));
   assert(strstr(out, "ret {i64, i64}"));
-  // Debug
   assert(strstr(out, "DISubprogram(name: \"match\""));
   assert(strstr(out, "DILocation"));
   free(out);
@@ -334,36 +326,36 @@ TEST(test_clang_compile) {
 
   irwriter_bb(w, "state0");
   irwriter_dbg(w, 2, 1);
-  char lo_n[32];
-  irwriter_icmp_imm(w, lo_n, 32, "sge", "i32", "%cp", 0x41);
-  char hi_n[32];
-  irwriter_icmp_imm(w, hi_n, 32, "sle", "i32", "%cp", 0x5A);
-  char inr_n[32];
-  irwriter_binop(w, inr_n, 32, "and", "i1", lo_n, hi_n);
+  char lo_n[16];
+  snprintf(lo_n, sizeof(lo_n), "%%r%d", irwriter_icmp_imm(w, "sge", "i32", "%cp", 0x41));
+  char hi_n[16];
+  snprintf(hi_n, sizeof(hi_n), "%%r%d", irwriter_icmp_imm(w, "sle", "i32", "%cp", 0x5A));
+  char inr_n[16];
+  snprintf(inr_n, sizeof(inr_n), "%%r%d", irwriter_binop(w, "and", "i1", lo_n, hi_n));
   irwriter_br_cond(w, inr_n, "s0_match", "s0_fail");
 
   irwriter_bb(w, "s0_match");
   irwriter_dbg(w, 2, 5);
-  char v0n[32];
-  irwriter_insertvalue_imm(w, v0n, 32, "{i32, i32}", "undef", "i32", 1, 0);
-  char v1n[32];
-  irwriter_insertvalue_imm(w, v1n, 32, "{i32, i32}", v0n, "i32", 0, 1);
+  char v0n[16];
+  snprintf(v0n, sizeof(v0n), "%%r%d", irwriter_insertvalue_imm(w, "{i32, i32}", "undef", "i32", 1, 0));
+  char v1n[16];
+  snprintf(v1n, sizeof(v1n), "%%r%d", irwriter_insertvalue_imm(w, "{i32, i32}", v0n, "i32", 0, 1));
   irwriter_ret(w, "{i32, i32}", v1n);
 
   irwriter_bb(w, "s0_fail");
   irwriter_dbg(w, 2, 10);
-  char v2n[32];
-  irwriter_insertvalue_imm(w, v2n, 32, "{i32, i32}", "undef", "i32", 0, 0);
-  char v3n[32];
-  irwriter_insertvalue_imm(w, v3n, 32, "{i32, i32}", v2n, "i32", -2, 1);
+  char v2n[16];
+  snprintf(v2n, sizeof(v2n), "%%r%d", irwriter_insertvalue_imm(w, "{i32, i32}", "undef", "i32", 0, 0));
+  char v3n[16];
+  snprintf(v3n, sizeof(v3n), "%%r%d", irwriter_insertvalue_imm(w, "{i32, i32}", v2n, "i32", -2, 1));
   irwriter_ret(w, "{i32, i32}", v3n);
 
   irwriter_bb(w, "dead");
   irwriter_dbg(w, 1, 1);
-  char v4n[32];
-  irwriter_insertvalue_imm(w, v4n, 32, "{i32, i32}", "undef", "i32", 0, 0);
-  char v5n[32];
-  irwriter_insertvalue_imm(w, v5n, 32, "{i32, i32}", v4n, "i32", -2, 1);
+  char v4n[16];
+  snprintf(v4n, sizeof(v4n), "%%r%d", irwriter_insertvalue_imm(w, "{i32, i32}", "undef", "i32", 0, 0));
+  char v5n[16];
+  snprintf(v5n, sizeof(v5n), "%%r%d", irwriter_insertvalue_imm(w, "{i32, i32}", v4n, "i32", -2, 1));
   irwriter_ret(w, "{i32, i32}", v5n);
 
   irwriter_define_end(w);
@@ -381,7 +373,6 @@ TEST(test_clang_compile) {
   int status = compat_pclose(p);
   if (status != 0) {
     fprintf(stderr, "\nclang failed:\n%s\n", output);
-    // dump the .ll for debugging
     FILE* ll = fopen(ll_path, "r");
     if (ll) {
       char line[512];
