@@ -40,3 +40,8 @@ Security
 Register management
 
 Writer keeps track of register number in integer.
+
+Some functions have a register / imm variant:
+
+`irwriter_br_cond_r()` uses integer register number instead, saving an snprintf.
+`irwriter_ret_i()` returns integer value, saving an snprintf.

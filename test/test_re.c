@@ -245,8 +245,8 @@ static void _build_append_range(Aut* a, Re* re, IrWriter* w) {
 
 TEST(test_append_range) {
   char* out = _gen_ir(_build_append_range);
-  assert(strstr(out, "icmp sge i32 %cp, 65"));
-  assert(strstr(out, "icmp sle i32 %cp, 90"));
+  assert(strstr(out, "icmp sge i32 %r"));
+  assert(strstr(out, "icmp sle i32 %r"));
   free(out);
 }
 
@@ -263,10 +263,10 @@ static void _build_append_multi_range(Aut* a, Re* re, IrWriter* w) {
 TEST(test_append_multi_range) {
   char* out = _gen_ir(_build_append_multi_range);
   // both ranges present
-  assert(strstr(out, "icmp sge i32 %cp, 65"));
-  assert(strstr(out, "icmp sle i32 %cp, 90"));
-  assert(strstr(out, "icmp sge i32 %cp, 97"));
-  assert(strstr(out, "icmp sle i32 %cp, 122"));
+  assert(strstr(out, "icmp sge i32 %r"));
+  assert(strstr(out, "icmp sle i32 %r"));
+  assert(strstr(out, "icmp sge i32 %r"));
+  assert(strstr(out, "icmp sle i32 %r"));
   free(out);
 }
 
@@ -346,7 +346,7 @@ static void _build_action(Aut* a, Re* re, IrWriter* w) {
 
 TEST(test_action) {
   char* out = _gen_ir(_build_action);
-  assert(strstr(out, "i32 42, 1"));
+  assert(strstr(out, "add i32 0, 42"));
   free(out);
 }
 

@@ -513,20 +513,21 @@ void aut_gen_dfa(Aut* a, IrWriter* w, bool debug_mode) {
   const char* arg_names[] = {"state", "cp"};
   irwriter_define_start(w, a->function_name, ret_ty, 2, arg_types, arg_names);
 
-  irwriter_bb(w, "entry");
-  irwriter_switch_start(w, "i32", "%state", "dead");
+  // entry BB must be emitted first
+  irwriter_bb(w);
+  int32_t dead_bb = irwriter_label(w);
+  int32_t* state_bbs = malloc((size_t)dfa_nstates * sizeof(int32_t));
   for (int s = 0; s < dfa_nstates; s++) {
-    char label[32];
-    snprintf(label, sizeof(label), "s%d", s);
-    irwriter_switch_case(w, "i32", s, label);
+    state_bbs[s] = irwriter_label(w);
+  }
+
+  irwriter_switch_start(w, "i32", "%state", dead_bb);
+  for (int s = 0; s < dfa_nstates; s++) {
+    irwriter_switch_case(w, "i32", s, state_bbs[s]);
   }
   irwriter_switch_end(w);
 
   for (int s = 0; s < dfa_nstates; s++) {
-    char state_label[32];
-    snprintf(state_label, sizeof(state_label), "s%d", s);
-    irwriter_bb(w, state_label);
-
     int first_trans = -1;
     int ntrans_from = 0;
     for (int t = 0; t < dfa_ntrans; t++) {
@@ -536,25 +537,6 @@ void aut_gen_dfa(Aut* a, IrWriter* w, bool debug_mode) {
         }
         ntrans_from++;
       }
-    }
-
-    if (ntrans_from == 0) {
-      char nomatch_label[32];
-      snprintf(nomatch_label, sizeof(nomatch_label), "s%d_nomatch", s);
-      irwriter_br(w, nomatch_label);
-      irwriter_bb(w, nomatch_label);
-
-      char v0n[16];
-      snprintf(v0n, sizeof(v0n), "%%r%d", irwriter_insertvalue(w, ret_ty, "undef", "i32", "%state", 0));
-      char v1n[16];
-      snprintf(v1n, sizeof(v1n), "%%r%d", irwriter_insertvalue_imm(w, ret_ty, v0n, "i32", -2, 1));
-      irwriter_ret(w, ret_ty, v1n);
-      continue;
-    }
-
-    DfaTrans* ft = &a->dfa_trans[first_trans];
-    if (ft->line > 0) {
-      irwriter_dbg(w, ft->line, ft->col);
     }
 
     int has_switch = 0;
@@ -570,31 +552,73 @@ void aut_gen_dfa(Aut* a, IrWriter* w, bool debug_mode) {
       }
     }
 
-    char nomatch_label[32];
-    snprintf(nomatch_label, sizeof(nomatch_label), "s%d_nomatch", s);
+    // Reserve per-state labels
+    int32_t nomatch_bb = irwriter_label(w);
+    int32_t ranges_bb = has_range > 0 ? irwriter_label(w) : -1;
 
-    char after_switch_label[32];
-    snprintf(after_switch_label, sizeof(after_switch_label), "s%d_ranges", s);
+    int32_t* trans_bbs = malloc((size_t)dfa_ntrans * sizeof(int32_t));
+    for (int t = 0; t < dfa_ntrans; t++) {
+      if (a->dfa_trans[t].from == s) {
+        trans_bbs[t] = irwriter_label(w);
+      } else {
+        trans_bbs[t] = -1;
+      }
+    }
+
+    int nranges = 0;
+    for (int t = 0; t < dfa_ntrans; t++) {
+      if (a->dfa_trans[t].from == s && a->dfa_trans[t].cp_start != a->dfa_trans[t].cp_end) {
+        nranges++;
+      }
+    }
+    int32_t* rck_bbs = NULL;
+    if (nranges > 1) {
+      rck_bbs = malloc((size_t)nranges * sizeof(int32_t));
+      for (int i = 0; i < nranges; i++) {
+        rck_bbs[i] = irwriter_label(w);
+      }
+    }
+
+    // Emit state BB
+    irwriter_bb_at(w, state_bbs[s]);
+
+    if (ntrans_from == 0) {
+      irwriter_br(w, nomatch_bb);
+      irwriter_bb_at(w, nomatch_bb);
+
+      int32_t state_reg = irwriter_param(w, "i32", "%state");
+      int32_t v0 = irwriter_insertvalue(w, ret_ty, -1, "i32", state_reg, 0);
+      int32_t neg2 = irwriter_imm(w, "i32", -2);
+      int32_t v1 = irwriter_insertvalue(w, ret_ty, v0, "i32", neg2, 1);
+      irwriter_ret(w, ret_ty, v1);
+      free(trans_bbs);
+      free(rck_bbs);
+      continue;
+    }
+
+    DfaTrans* ft = &a->dfa_trans[first_trans];
+    if (ft->line > 0) {
+      irwriter_dbg(w, ft->line, ft->col);
+    }
 
     if (has_switch > 0) {
-      const char* sw_default = has_range > 0 ? after_switch_label : nomatch_label;
+      int32_t sw_default = has_range > 0 ? ranges_bb : nomatch_bb;
       irwriter_switch_start(w, "i32", "%cp", sw_default);
 
       for (int t = 0; t < dfa_ntrans; t++) {
         if (a->dfa_trans[t].from != s || a->dfa_trans[t].cp_start != a->dfa_trans[t].cp_end) {
           continue;
         }
-        char match_label[32];
-        snprintf(match_label, sizeof(match_label), "s%d_t%d", s, t);
-        irwriter_switch_case(w, "i32", a->dfa_trans[t].cp_start, match_label);
+        irwriter_switch_case(w, "i32", a->dfa_trans[t].cp_start, trans_bbs[t]);
       }
       irwriter_switch_end(w);
     } else if (has_range > 0) {
-      irwriter_br(w, after_switch_label);
+      irwriter_br(w, ranges_bb);
     }
 
     if (has_range > 0) {
-      irwriter_bb(w, after_switch_label);
+      irwriter_bb_at(w, ranges_bb);
+      int32_t cp_reg = irwriter_param(w, "i32", "%cp");
 
       int range_idx = 0;
       for (int t = 0; t < dfa_ntrans; t++) {
@@ -607,33 +631,15 @@ void aut_gen_dfa(Aut* a, IrWriter* w, bool debug_mode) {
           irwriter_dbg(w, dt->line, dt->col);
         }
 
-        char match_label[32];
-        snprintf(match_label, sizeof(match_label), "s%d_t%d", s, t);
+        int has_next_range = (range_idx + 1 < nranges);
 
-        char next_label[32];
-        int next_range = -1;
-        for (int t2 = t + 1; t2 < dfa_ntrans; t2++) {
-          if (a->dfa_trans[t2].from == s && a->dfa_trans[t2].cp_start != a->dfa_trans[t2].cp_end) {
-            next_range = t2;
-            break;
-          }
-        }
-        if (next_range >= 0) {
-          snprintf(next_label, sizeof(next_label), "s%d_rck%d", s, range_idx + 1);
+        int32_t lo_n = irwriter_icmp_imm(w, "sge", "i32", cp_reg, dt->cp_start);
+        int32_t hi_n = irwriter_icmp_imm(w, "sle", "i32", cp_reg, dt->cp_end);
+        if (has_next_range) {
+          irwriter_br_cond_r(w, irwriter_binop(w, "and", "i1", lo_n, hi_n), trans_bbs[t], rck_bbs[range_idx + 1]);
+          irwriter_bb_at(w, rck_bbs[range_idx + 1]);
         } else {
-          snprintf(next_label, sizeof(next_label), "%s", nomatch_label);
-        }
-
-        char lo_n[16];
-        snprintf(lo_n, sizeof(lo_n), "%%r%d", irwriter_icmp_imm(w, "sge", "i32", "%cp", dt->cp_start));
-        char hi_n[16];
-        snprintf(hi_n, sizeof(hi_n), "%%r%d", irwriter_icmp_imm(w, "sle", "i32", "%cp", dt->cp_end));
-        char both_n[16];
-        snprintf(both_n, sizeof(both_n), "%%r%d", irwriter_binop(w, "and", "i1", lo_n, hi_n));
-        irwriter_br_cond(w, both_n, match_label, next_label);
-
-        if (next_range >= 0) {
-          irwriter_bb(w, next_label);
+          irwriter_br_cond_r(w, irwriter_binop(w, "and", "i1", lo_n, hi_n), trans_bbs[t], nomatch_bb);
         }
 
         range_idx++;
@@ -646,40 +652,44 @@ void aut_gen_dfa(Aut* a, IrWriter* w, bool debug_mode) {
       }
       DfaTrans* dt = &a->dfa_trans[t];
 
-      char match_label[32];
-      snprintf(match_label, sizeof(match_label), "s%d_t%d", s, t);
-      irwriter_bb(w, match_label);
+      irwriter_bb_at(w, trans_bbs[t]);
 
       if (dt->line > 0) {
         irwriter_dbg(w, dt->line, dt->col);
       }
 
-      char v0n[16];
-      snprintf(v0n, sizeof(v0n), "%%r%d", irwriter_insertvalue_imm(w, ret_ty, "undef", "i32", dt->to, 0));
-      char v1n[16];
-      snprintf(v1n, sizeof(v1n), "%%r%d", irwriter_insertvalue_imm(w, ret_ty, v0n, "i32", dt->action_id, 1));
-      irwriter_ret(w, ret_ty, v1n);
+      int32_t to_reg = irwriter_imm(w, "i32", dt->to);
+      int32_t v0 = irwriter_insertvalue(w, ret_ty, -1, "i32", to_reg, 0);
+      int32_t act_reg = irwriter_imm(w, "i32", dt->action_id);
+      int32_t v1 = irwriter_insertvalue(w, ret_ty, v0, "i32", act_reg, 1);
+      irwriter_ret(w, ret_ty, v1);
     }
 
-    irwriter_bb(w, nomatch_label);
-    char v0n[16];
-    snprintf(v0n, sizeof(v0n), "%%r%d", irwriter_insertvalue(w, ret_ty, "undef", "i32", "%state", 0));
-    char v1n[16];
-    snprintf(v1n, sizeof(v1n), "%%r%d", irwriter_insertvalue_imm(w, ret_ty, v0n, "i32", -2, 1));
-    irwriter_ret(w, ret_ty, v1n);
+    // nomatch BB
+    irwriter_bb_at(w, nomatch_bb);
+    int32_t state_reg = irwriter_param(w, "i32", "%state");
+    int32_t v0 = irwriter_insertvalue(w, ret_ty, -1, "i32", state_reg, 0);
+    int32_t neg2 = irwriter_imm(w, "i32", -2);
+    int32_t v1 = irwriter_insertvalue(w, ret_ty, v0, "i32", neg2, 1);
+    irwriter_ret(w, ret_ty, v1);
+
+    free(trans_bbs);
+    free(rck_bbs);
   }
 
-  irwriter_bb(w, "dead");
+  // dead BB
+  irwriter_bb_at(w, dead_bb);
   {
     if (debug_mode) {
       irwriter_call_void(w, "llvm.debugtrap");
     }
-    char v0n[16];
-    snprintf(v0n, sizeof(v0n), "%%r%d", irwriter_insertvalue(w, ret_ty, "undef", "i32", "%state", 0));
-    char v1n[16];
-    snprintf(v1n, sizeof(v1n), "%%r%d", irwriter_insertvalue_imm(w, ret_ty, v0n, "i32", -2, 1));
-    irwriter_ret(w, ret_ty, v1n);
+    int32_t state_reg = irwriter_param(w, "i32", "%state");
+    int32_t v0 = irwriter_insertvalue(w, ret_ty, -1, "i32", state_reg, 0);
+    int32_t neg2 = irwriter_imm(w, "i32", -2);
+    int32_t v1 = irwriter_insertvalue(w, ret_ty, v0, "i32", neg2, 1);
+    irwriter_ret(w, ret_ty, v1);
   }
 
+  free(state_bbs);
   irwriter_define_end(w);
 }

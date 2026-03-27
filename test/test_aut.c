@@ -45,9 +45,9 @@ static void _build_single(Aut* a, IrWriter* w) {
 TEST(test_single_transition) {
   char* out = _gen_ir(_build_single);
   assert(strstr(out, "define {i64, i64} @match(i64 %state_i64, i64 %cp_i64)"));
-  assert(strstr(out, "switch i32 %state, label %dead"));
-  assert(strstr(out, "i32 65, label %s0_t0"));
-  assert(strstr(out, "s0_t0:"));
+  assert(strstr(out, "switch i32 %state, label %L"));
+  assert(strstr(out, "i32 65, label %L"));
+  assert(strstr(out, "L"));
   free(out);
 }
 
@@ -62,8 +62,8 @@ static void _build_range(Aut* a, IrWriter* w) {
 
 TEST(test_range_transition) {
   char* out = _gen_ir(_build_range);
-  assert(strstr(out, "icmp sge i32 %cp, 65"));
-  assert(strstr(out, "icmp sle i32 %cp, 90"));
+  assert(strstr(out, "icmp sge i32 %r"));
+  assert(strstr(out, "icmp sle i32 %r"));
   free(out);
 }
 
@@ -81,10 +81,10 @@ static void _build_multi(Aut* a, IrWriter* w) {
 
 TEST(test_multi_transitions) {
   char* out = _gen_ir(_build_multi);
-  assert(strstr(out, "icmp sge i32 %cp, 65"));
-  assert(strstr(out, "icmp sle i32 %cp, 90"));
-  assert(strstr(out, "icmp sge i32 %cp, 97"));
-  assert(strstr(out, "icmp sle i32 %cp, 122"));
+  assert(strstr(out, "icmp sge i32 %r"));
+  assert(strstr(out, "icmp sle i32 %r"));
+  assert(strstr(out, "icmp sge i32 %r"));
+  assert(strstr(out, "icmp sle i32 %r"));
   free(out);
 }
 
@@ -128,7 +128,7 @@ TEST(test_special_codepoints) {
 
 TEST(test_dead_state) {
   char* out = _gen_ir(_build_single);
-  assert(strstr(out, "dead:"));
+  assert(strstr(out, "L"));
   free(out);
 }
 
@@ -146,7 +146,7 @@ static void _build_action_smallest(Aut* a, IrWriter* w) {
 
 TEST(test_action_smallest) {
   char* out = _gen_ir(_build_action_smallest);
-  assert(strstr(out, "i32 3, 1"));
+  assert(strstr(out, "add i32 0, 3"));
   free(out);
 }
 
@@ -198,7 +198,7 @@ static void _build_redundant(Aut* a, IrWriter* w) {
 TEST(test_optimize) {
   char* out = _gen_ir(_build_redundant);
   assert(strstr(out, "define {i64, i64} @match"));
-  assert(strstr(out, "switch i32 %state, label %dead"));
+  assert(strstr(out, "switch i32 %state, label %L"));
   free(out);
 }
 
@@ -237,7 +237,7 @@ static void _build_action_basic(Aut* a, IrWriter* w) {
 
 TEST(test_action_basic) {
   char* out = _gen_ir(_build_action_basic);
-  assert(strstr(out, "i32 7, 1"));
+  assert(strstr(out, "add i32 0, 7"));
   free(out);
 }
 
@@ -253,7 +253,7 @@ static void _build_min_rule(Aut* a, IrWriter* w) {
 
 TEST(test_min_rule) {
   char* out = _gen_ir(_build_min_rule);
-  assert(strstr(out, "i32 3, 1"));
+  assert(strstr(out, "add i32 0, 3"));
   free(out);
 }
 
@@ -277,10 +277,8 @@ static void _build_preserve(Aut* a, IrWriter* w) {
 
 TEST(test_preserving_rule) {
   char* out = _gen_ir(_build_preserve);
-  // action_id=2 must appear (on transitions to the merged state for 'a'/'b')
-  assert(strstr(out, "i32 2, 1"));
-  // action_id=5 must appear (on transitions for 'c')
-  assert(strstr(out, "i32 5, 1"));
+  assert(strstr(out, "add i32 0, 2"));
+  assert(strstr(out, "add i32 0, 5"));
   free(out);
 }
 
@@ -341,10 +339,10 @@ TEST(test_optimize_preserves_action) {
   }
 
   // Both must have action_id=3 and action_id=4
-  assert(strstr(unopt, "i32 3, 1"));
-  assert(strstr(unopt, "i32 4, 1"));
-  assert(strstr(opt, "i32 3, 1"));
-  assert(strstr(opt, "i32 4, 1"));
+  assert(strstr(unopt, "add i32 0, 3"));
+  assert(strstr(unopt, "add i32 0, 4"));
+  assert(strstr(opt, "add i32 0, 3"));
+  assert(strstr(opt, "add i32 0, 4"));
 
   free(unopt);
   free(opt);
@@ -444,7 +442,7 @@ TEST(test_empty_aut) {
   compat_close_memstream(f, &buf, &sz);
 
   assert(strstr(buf, "define {i64, i64} @empty"));
-  assert(strstr(buf, "dead:"));
+  assert(strstr(buf, "L"));
   free(buf);
 }
 

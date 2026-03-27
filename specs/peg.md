@@ -36,6 +36,18 @@ foo$2 = [ # ordered choice
 ]
 ```
 
+Then for each scope, define a function. For labels inside each rule, prefix the label with rule name so they won't 
+
+```
+foo_rule$start:
+...
+foo_rule$loop_bb:
+...
+foo_rule$empty_bb:
+...
+foo_rule$end:
+```
+
 ### Rule id analysis
 
 We gather rule closures by scopes first.

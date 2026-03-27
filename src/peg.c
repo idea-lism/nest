@@ -315,379 +315,285 @@ typedef struct {
   IrWriter* w;
   char** tokens;
   const char* col_type;
-  const char* bt_stack;
-  int32_t label_counter;
+  int32_t bt_stack;
 } GenCtx;
 
-// --- Leaf call: emit call to match_tok or parse_rule ---
+// --- Leaf call: emit call to match_tok or parse_rule, return register number ---
 
-static void _emit_leaf_call(GenCtx* ctx, PegUnit* unit, const char* col_expr, char* out, int32_t out_size) {
+static int32_t _emit_leaf_call(GenCtx* ctx, PegUnit* unit, const char* col_expr) {
   if (unit->kind == PEG_ID) {
-    snprintf(out, (size_t)out_size, "%%r%d", peg_ir_call(ctx->w, unit->name, "%table", col_expr));
-    return;
+    return peg_ir_call(ctx->w, unit->name, "%table", col_expr);
   }
   if (unit->kind == PEG_TOK) {
     int32_t tok_id = _token_id(ctx->tokens, unit->name);
     char tok_buf[16];
     snprintf(tok_buf, sizeof(tok_buf), "%d", tok_id);
-    snprintf(out, (size_t)out_size, "%%r%d", peg_ir_tok(ctx->w, tok_buf, col_expr));
-    return;
+    return peg_ir_tok(ctx->w, tok_buf, col_expr);
   }
-  snprintf(out, (size_t)out_size, "-1");
+  return irwriter_imm(ctx->w, "i32", -1);
 }
 
-// gen(pattern, col, on_fail): generates IR for matching pattern at col.
-// On failure, branches to on_fail. On success, falls through with match length in len_out.
-// The caller must ensure the current BB has no terminator before calling.
-// After return, the current BB is the success continuation (caller must emit further code or a terminator).
-
-static void _gen_ir(GenCtx* ctx, PegUnit* unit, const char* col_expr, const char* on_fail, char* len_out,
-                    int32_t len_out_size);
-
-// gen(empty, col, fail) -> const(0)
-static void _gen_empty(GenCtx* ctx, char* len_out, int32_t len_out_size) {
-  (void)ctx;
-  snprintf(len_out, (size_t)len_out_size, "0");
+// Convert a string SSA value to a register number (emits add 0, optimized away by LLVM).
+static int32_t _to_reg(GenCtx* ctx, const char* val) {
+  return irwriter_param(ctx->w, "i32", val);
 }
 
-// gen(token, col, fail): r = tok(token, col); fail_if_neg(r, fail); return r
-// gen(Rule, col, fail): r = call(Rule, col); fail_if_neg(r, fail); return r
-static void _gen_leaf(GenCtx* ctx, PegUnit* unit, const char* col_expr, const char* on_fail, char* len_out,
-                      int32_t len_out_size) {
-  char call_result[16];
-  _emit_leaf_call(ctx, unit, col_expr, call_result, sizeof(call_result));
-
-  char cont[32];
-  snprintf(cont, sizeof(cont), "leaf_ok_%d", ctx->label_counter++);
-  char cmp[16];
-  snprintf(cmp, sizeof(cmp), "%%r%d", irwriter_icmp_imm(ctx->w, "slt", "i32", call_result, 0));
-  irwriter_br_cond(ctx->w, cmp, on_fail, cont);
-  irwriter_bb(ctx->w, cont);
-
-  snprintf(len_out, (size_t)len_out_size, "%s", call_result);
+// Format a register number as a string operand.
+static void _fmt_reg(char* out, int32_t out_size, int32_t reg) {
+  snprintf(out, (size_t)out_size, "%%r%d", reg);
 }
 
-// gen(e?, col, fail): always succeeds
-static void _gen_optional(GenCtx* ctx, PegUnit* unit, const char* col_expr, char* len_out, int32_t len_out_size) {
-  char try_bb[32], miss_bb[32], done_bb[32];
-  snprintf(try_bb, sizeof(try_bb), "opt_try_%d", ctx->label_counter);
-  snprintf(miss_bb, sizeof(miss_bb), "opt_miss_%d", ctx->label_counter);
-  snprintf(done_bb, sizeof(done_bb), "opt_done_%d", ctx->label_counter);
-  ctx->label_counter++;
+static int32_t _gen_ir(GenCtx* ctx, PegUnit* unit, const char* col_expr, int32_t fail_label);
 
-  char r[16];
-  _emit_leaf_call(ctx, unit, col_expr, r, sizeof(r));
+static int32_t _gen_empty(GenCtx* ctx) { return irwriter_imm(ctx->w, "i32", 0); }
 
-  char neg[16];
-  snprintf(neg, sizeof(neg), "%%r%d", irwriter_icmp_imm(ctx->w, "slt", "i32", r, 0));
-  irwriter_br_cond(ctx->w, neg, miss_bb, try_bb);
+static int32_t _gen_leaf(GenCtx* ctx, PegUnit* unit, const char* col_expr, int32_t fail_label) {
+  int32_t r = _emit_leaf_call(ctx, unit, col_expr);
 
-  // try_bb: match succeeded
-  irwriter_bb(ctx->w, try_bb);
+  int32_t ok = irwriter_label(ctx->w);
+  irwriter_br_cond_r(ctx->w, irwriter_icmp_imm(ctx->w, "slt", "i32", r, 0), fail_label, ok);
+  irwriter_bb_at(ctx->w, ok);
+
+  return r;
+}
+
+static int32_t _gen_optional(GenCtx* ctx, PegUnit* unit, const char* col_expr) {
+  int32_t try_bb = irwriter_label(ctx->w);
+  int32_t miss_bb = irwriter_label(ctx->w);
+  int32_t done_bb = irwriter_label(ctx->w);
+
+  int32_t r = _emit_leaf_call(ctx, unit, col_expr);
+  int32_t zero = _gen_empty(ctx);
+
+  irwriter_br_cond_r(ctx->w, irwriter_icmp_imm(ctx->w, "slt", "i32", r, 0), miss_bb, try_bb);
+
+  irwriter_bb_at(ctx->w, try_bb);
   irwriter_br(ctx->w, done_bb);
 
-  // miss_bb: match failed, result is 0
-  irwriter_bb(ctx->w, miss_bb);
+  irwriter_bb_at(ctx->w, miss_bb);
   irwriter_br(ctx->w, done_bb);
 
-  irwriter_bb(ctx->w, done_bb);
-  snprintf(len_out, (size_t)len_out_size, "%%r%d", irwriter_phi2(ctx->w, "i32", r, try_bb, "0", miss_bb));
+  irwriter_bb_at(ctx->w, done_bb);
+  return irwriter_phi2(ctx->w, "i32", r, try_bb, zero, miss_bb);
 }
 
-// Shared greedy loop: load acc, try match at col+acc, accumulate or exit.
-// Caller sets up acc_ptr (alloca i32, stored initial value) and branches to loop_bb.
-static void _gen_greedy_loop(GenCtx* ctx, PegUnit* unit, const char* col_expr, const char* acc_ptr, const char* loop_bb,
-                             const char* body_bb, const char* end_bb, char* len_out, int32_t len_out_size) {
-  irwriter_bb(ctx->w, loop_bb);
-  char cur_acc[16];
-  snprintf(cur_acc, sizeof(cur_acc), "%%r%d", irwriter_load(ctx->w, "i32", acc_ptr));
-  char next_col[16];
-  snprintf(next_col, sizeof(next_col), "%%r%d", irwriter_binop(ctx->w, "add", "i32", col_expr, cur_acc));
+static int32_t _gen_greedy_loop(GenCtx* ctx, PegUnit* unit, const char* col_expr, int32_t acc_ptr, int32_t loop_bb,
+                                int32_t body_bb, int32_t end_bb) {
+  irwriter_bb_at(ctx->w, loop_bb);
+  int32_t cur_acc = irwriter_load(ctx->w, "i32", acc_ptr);
+  int32_t next_col = irwriter_binop(ctx->w, "add", "i32", _to_reg(ctx, col_expr), cur_acc);
 
-  char r[16];
-  _emit_leaf_call(ctx, unit, next_col, r, sizeof(r));
-  char neg[16];
-  snprintf(neg, sizeof(neg), "%%r%d", irwriter_icmp_imm(ctx->w, "slt", "i32", r, 0));
-  irwriter_br_cond(ctx->w, neg, end_bb, body_bb);
+  char next_col_s[16];
+  _fmt_reg(next_col_s, sizeof(next_col_s), next_col);
+  int32_t r = _emit_leaf_call(ctx, unit, next_col_s);
+  irwriter_br_cond_r(ctx->w, irwriter_icmp_imm(ctx->w, "slt", "i32", r, 0), end_bb, body_bb);
 
-  irwriter_bb(ctx->w, body_bb);
-  char prev[16];
-  snprintf(prev, sizeof(prev), "%%r%d", irwriter_load(ctx->w, "i32", acc_ptr));
-  char next[16];
-  snprintf(next, sizeof(next), "%%r%d", irwriter_binop(ctx->w, "add", "i32", prev, r));
+  irwriter_bb_at(ctx->w, body_bb);
+  int32_t prev = irwriter_load(ctx->w, "i32", acc_ptr);
+  int32_t next = irwriter_binop(ctx->w, "add", "i32", prev, r);
   irwriter_store(ctx->w, "i32", next, acc_ptr);
   irwriter_br(ctx->w, loop_bb);
 
-  irwriter_bb(ctx->w, end_bb);
-  snprintf(len_out, (size_t)len_out_size, "%%r%d", irwriter_load(ctx->w, "i32", acc_ptr));
+  irwriter_bb_at(ctx->w, end_bb);
+  return irwriter_load(ctx->w, "i32", acc_ptr);
 }
 
-// gen(e+, col, fail): first match required, then loop greedily
-static void _gen_plus(GenCtx* ctx, PegUnit* unit, const char* col_expr, const char* on_fail, char* len_out,
-                      int32_t len_out_size) {
-  int32_t id = ctx->label_counter++;
-  char loop_bb[32], body_bb[32], end_bb[32];
-  snprintf(loop_bb, sizeof(loop_bb), "plus_loop_%d", id);
-  snprintf(body_bb, sizeof(body_bb), "plus_body_%d", id);
-  snprintf(end_bb, sizeof(end_bb), "plus_end_%d", id);
+static int32_t _gen_plus(GenCtx* ctx, PegUnit* unit, const char* col_expr, int32_t fail_label) {
+  int32_t ok_bb = irwriter_label(ctx->w);
+  int32_t loop_bb = irwriter_label(ctx->w);
+  int32_t body_bb = irwriter_label(ctx->w);
+  int32_t end_bb = irwriter_label(ctx->w);
 
-  char acc_ptr[16];
-  snprintf(acc_ptr, sizeof(acc_ptr), "%%r%d", irwriter_alloca(ctx->w, "i32"));
-  irwriter_store(ctx->w, "i32", "0", acc_ptr);
+  int32_t acc_ptr = irwriter_alloca(ctx->w, "i32");
+  irwriter_store_imm(ctx->w, "i32", 0, acc_ptr);
 
-  char first[16];
-  _emit_leaf_call(ctx, unit, col_expr, first, sizeof(first));
-  char first_ok[32];
-  snprintf(first_ok, sizeof(first_ok), "plus_ok_%d", id);
-  char cmp[16];
-  snprintf(cmp, sizeof(cmp), "%%r%d", irwriter_icmp_imm(ctx->w, "slt", "i32", first, 0));
-  irwriter_br_cond(ctx->w, cmp, on_fail, first_ok);
+  int32_t first = _emit_leaf_call(ctx, unit, col_expr);
+  irwriter_br_cond_r(ctx->w, irwriter_icmp_imm(ctx->w, "slt", "i32", first, 0), fail_label, ok_bb);
 
-  irwriter_bb(ctx->w, first_ok);
+  irwriter_bb_at(ctx->w, ok_bb);
   irwriter_store(ctx->w, "i32", first, acc_ptr);
   irwriter_br(ctx->w, loop_bb);
 
-  _gen_greedy_loop(ctx, unit, col_expr, acc_ptr, loop_bb, body_bb, end_bb, len_out, len_out_size);
+  return _gen_greedy_loop(ctx, unit, col_expr, acc_ptr, loop_bb, body_bb, end_bb);
 }
 
-// gen(e*, col, fail): zero or more, always succeeds
-static void _gen_star(GenCtx* ctx, PegUnit* unit, const char* col_expr, char* len_out, int32_t len_out_size) {
-  int32_t id = ctx->label_counter++;
-  char loop_bb[32], body_bb[32], end_bb[32];
-  snprintf(loop_bb, sizeof(loop_bb), "star_loop_%d", id);
-  snprintf(body_bb, sizeof(body_bb), "star_body_%d", id);
-  snprintf(end_bb, sizeof(end_bb), "star_end_%d", id);
+static int32_t _gen_star(GenCtx* ctx, PegUnit* unit, const char* col_expr) {
+  int32_t loop_bb = irwriter_label(ctx->w);
+  int32_t body_bb = irwriter_label(ctx->w);
+  int32_t end_bb = irwriter_label(ctx->w);
 
-  char acc_ptr[16];
-  snprintf(acc_ptr, sizeof(acc_ptr), "%%r%d", irwriter_alloca(ctx->w, "i32"));
-  irwriter_store(ctx->w, "i32", "0", acc_ptr);
+  int32_t acc_ptr = irwriter_alloca(ctx->w, "i32");
+  irwriter_store_imm(ctx->w, "i32", 0, acc_ptr);
   irwriter_br(ctx->w, loop_bb);
 
-  _gen_greedy_loop(ctx, unit, col_expr, acc_ptr, loop_bb, body_bb, end_bb, len_out, len_out_size);
+  return _gen_greedy_loop(ctx, unit, col_expr, acc_ptr, loop_bb, body_bb, end_bb);
 }
 
-// gen(e+<sep>, col, fail): e (sep e)* — first element required
-// Shared interlace loop: (sep elem)* accumulation.
-// Caller sets up acc_ptr, stores first match result, and branches to loop_bb.
-static void _gen_interlace_loop(GenCtx* ctx, PegUnit* unit, PegUnit* sep, const char* col_expr, const char* acc_ptr,
-                                const char* loop_bb, const char* sep_ok_bb, const char* body_bb, const char* end_bb,
-                                char* len_out, int32_t len_out_size) {
-  irwriter_bb(ctx->w, loop_bb);
-  char cur_acc[16];
-  snprintf(cur_acc, sizeof(cur_acc), "%%r%d", irwriter_load(ctx->w, "i32", acc_ptr));
-  char cur_col[16];
-  snprintf(cur_col, sizeof(cur_col), "%%r%d", irwriter_binop(ctx->w, "add", "i32", col_expr, cur_acc));
+static int32_t _gen_interlace_loop(GenCtx* ctx, PegUnit* unit, PegUnit* sep, const char* col_expr, int32_t acc_ptr,
+                                   int32_t loop_bb, int32_t sep_ok_bb, int32_t body_bb, int32_t end_bb) {
+  irwriter_bb_at(ctx->w, loop_bb);
+  int32_t cur_acc = irwriter_load(ctx->w, "i32", acc_ptr);
+  int32_t cur_col = irwriter_binop(ctx->w, "add", "i32", _to_reg(ctx, col_expr), cur_acc);
 
-  char sr[16];
-  _emit_leaf_call(ctx, sep, cur_col, sr, sizeof(sr));
-  char sr_neg[16];
-  snprintf(sr_neg, sizeof(sr_neg), "%%r%d", irwriter_icmp_imm(ctx->w, "slt", "i32", sr, 0));
-  irwriter_br_cond(ctx->w, sr_neg, end_bb, sep_ok_bb);
+  char cur_col_s[16];
+  _fmt_reg(cur_col_s, sizeof(cur_col_s), cur_col);
+  int32_t sr = _emit_leaf_call(ctx, sep, cur_col_s);
+  irwriter_br_cond_r(ctx->w, irwriter_icmp_imm(ctx->w, "slt", "i32", sr, 0), end_bb, sep_ok_bb);
 
-  irwriter_bb(ctx->w, sep_ok_bb);
-  char after_sep[16];
-  snprintf(after_sep, sizeof(after_sep), "%%r%d", irwriter_binop(ctx->w, "add", "i32", cur_col, sr));
-  char er[16];
-  _emit_leaf_call(ctx, unit, after_sep, er, sizeof(er));
-  char er_neg[16];
-  snprintf(er_neg, sizeof(er_neg), "%%r%d", irwriter_icmp_imm(ctx->w, "slt", "i32", er, 0));
-  irwriter_br_cond(ctx->w, er_neg, end_bb, body_bb);
+  irwriter_bb_at(ctx->w, sep_ok_bb);
+  int32_t after_sep = irwriter_binop(ctx->w, "add", "i32", cur_col, sr);
+  char after_sep_s[16];
+  _fmt_reg(after_sep_s, sizeof(after_sep_s), after_sep);
+  int32_t er = _emit_leaf_call(ctx, unit, after_sep_s);
+  irwriter_br_cond_r(ctx->w, irwriter_icmp_imm(ctx->w, "slt", "i32", er, 0), end_bb, body_bb);
 
-  irwriter_bb(ctx->w, body_bb);
-  char prev_acc[16];
-  snprintf(prev_acc, sizeof(prev_acc), "%%r%d", irwriter_load(ctx->w, "i32", acc_ptr));
-  char sep_elem[16];
-  snprintf(sep_elem, sizeof(sep_elem), "%%r%d", irwriter_binop(ctx->w, "add", "i32", sr, er));
-  char next[16];
-  snprintf(next, sizeof(next), "%%r%d", irwriter_binop(ctx->w, "add", "i32", prev_acc, sep_elem));
+  irwriter_bb_at(ctx->w, body_bb);
+  int32_t prev_acc = irwriter_load(ctx->w, "i32", acc_ptr);
+  int32_t sep_elem = irwriter_binop(ctx->w, "add", "i32", sr, er);
+  int32_t next = irwriter_binop(ctx->w, "add", "i32", prev_acc, sep_elem);
   irwriter_store(ctx->w, "i32", next, acc_ptr);
   irwriter_br(ctx->w, loop_bb);
 
-  irwriter_bb(ctx->w, end_bb);
-  snprintf(len_out, (size_t)len_out_size, "%%r%d", irwriter_load(ctx->w, "i32", acc_ptr));
+  irwriter_bb_at(ctx->w, end_bb);
+  return irwriter_load(ctx->w, "i32", acc_ptr);
 }
 
-// gen(e+<sep>, col, fail): e (sep e)* — first element required
-static void _gen_plus_interlace(GenCtx* ctx, PegUnit* unit, PegUnit* sep, const char* col_expr, const char* on_fail,
-                                char* len_out, int32_t len_out_size) {
-  int32_t id = ctx->label_counter++;
-  char first_ok_bb[32], loop_bb[32], sep_ok_bb[32], body_bb[32], end_bb[32];
-  snprintf(first_ok_bb, sizeof(first_ok_bb), "plusi_first_%d", id);
-  snprintf(loop_bb, sizeof(loop_bb), "plusi_loop_%d", id);
-  snprintf(sep_ok_bb, sizeof(sep_ok_bb), "plusi_sep_%d", id);
-  snprintf(body_bb, sizeof(body_bb), "plusi_body_%d", id);
-  snprintf(end_bb, sizeof(end_bb), "plusi_end_%d", id);
+static int32_t _gen_plus_interlace(GenCtx* ctx, PegUnit* unit, PegUnit* sep, const char* col_expr,
+                                   int32_t fail_label) {
+  int32_t first_ok_bb = irwriter_label(ctx->w);
+  int32_t loop_bb = irwriter_label(ctx->w);
+  int32_t sep_ok_bb = irwriter_label(ctx->w);
+  int32_t body_bb = irwriter_label(ctx->w);
+  int32_t end_bb = irwriter_label(ctx->w);
 
-  char acc_ptr[16];
-  snprintf(acc_ptr, sizeof(acc_ptr), "%%r%d", irwriter_alloca(ctx->w, "i32"));
-  irwriter_store(ctx->w, "i32", "0", acc_ptr);
+  int32_t acc_ptr = irwriter_alloca(ctx->w, "i32");
+  irwriter_store_imm(ctx->w, "i32", 0, acc_ptr);
 
-  char first[16];
-  _emit_leaf_call(ctx, unit, col_expr, first, sizeof(first));
-  char cmp[16];
-  snprintf(cmp, sizeof(cmp), "%%r%d", irwriter_icmp_imm(ctx->w, "slt", "i32", first, 0));
-  irwriter_br_cond(ctx->w, cmp, on_fail, first_ok_bb);
+  int32_t first = _emit_leaf_call(ctx, unit, col_expr);
+  irwriter_br_cond_r(ctx->w, irwriter_icmp_imm(ctx->w, "slt", "i32", first, 0), fail_label, first_ok_bb);
 
-  irwriter_bb(ctx->w, first_ok_bb);
+  irwriter_bb_at(ctx->w, first_ok_bb);
   irwriter_store(ctx->w, "i32", first, acc_ptr);
   irwriter_br(ctx->w, loop_bb);
 
-  _gen_interlace_loop(ctx, unit, sep, col_expr, acc_ptr, loop_bb, sep_ok_bb, body_bb, end_bb, len_out, len_out_size);
+  return _gen_interlace_loop(ctx, unit, sep, col_expr, acc_ptr, loop_bb, sep_ok_bb, body_bb, end_bb);
 }
 
-// gen(e*<sep>, col, fail): (e (sep e)*)? — zero matches OK
-static void _gen_star_interlace(GenCtx* ctx, PegUnit* unit, PegUnit* sep, const char* col_expr, char* len_out,
-                                int32_t len_out_size) {
-  int32_t id = ctx->label_counter++;
-  char first_ok_bb[32], loop_bb[32], sep_ok_bb[32], body_bb[32], end_bb[32], empty_bb[32];
-  snprintf(first_ok_bb, sizeof(first_ok_bb), "stari_first_%d", id);
-  snprintf(loop_bb, sizeof(loop_bb), "stari_loop_%d", id);
-  snprintf(sep_ok_bb, sizeof(sep_ok_bb), "stari_sep_%d", id);
-  snprintf(body_bb, sizeof(body_bb), "stari_body_%d", id);
-  snprintf(end_bb, sizeof(end_bb), "stari_end_%d", id);
-  snprintf(empty_bb, sizeof(empty_bb), "stari_empty_%d", id);
+static int32_t _gen_star_interlace(GenCtx* ctx, PegUnit* unit, PegUnit* sep, const char* col_expr) {
+  int32_t first_ok_bb = irwriter_label(ctx->w);
+  int32_t loop_bb = irwriter_label(ctx->w);
+  int32_t sep_ok_bb = irwriter_label(ctx->w);
+  int32_t body_bb = irwriter_label(ctx->w);
+  int32_t end_bb = irwriter_label(ctx->w);
+  int32_t empty_bb = irwriter_label(ctx->w);
 
-  char acc_ptr[16];
-  snprintf(acc_ptr, sizeof(acc_ptr), "%%r%d", irwriter_alloca(ctx->w, "i32"));
-  irwriter_store(ctx->w, "i32", "0", acc_ptr);
+  int32_t acc_ptr = irwriter_alloca(ctx->w, "i32");
+  irwriter_store_imm(ctx->w, "i32", 0, acc_ptr);
 
-  char first[16];
-  _emit_leaf_call(ctx, unit, col_expr, first, sizeof(first));
-  char first_neg[16];
-  snprintf(first_neg, sizeof(first_neg), "%%r%d", irwriter_icmp_imm(ctx->w, "slt", "i32", first, 0));
-  irwriter_br_cond(ctx->w, first_neg, empty_bb, first_ok_bb);
+  int32_t first = _emit_leaf_call(ctx, unit, col_expr);
+  irwriter_br_cond_r(ctx->w, irwriter_icmp_imm(ctx->w, "slt", "i32", first, 0), empty_bb, first_ok_bb);
 
-  irwriter_bb(ctx->w, first_ok_bb);
+  irwriter_bb_at(ctx->w, first_ok_bb);
   irwriter_store(ctx->w, "i32", first, acc_ptr);
   irwriter_br(ctx->w, loop_bb);
 
-  _gen_interlace_loop(ctx, unit, sep, col_expr, acc_ptr, loop_bb, sep_ok_bb, body_bb, end_bb, len_out, len_out_size);
+  int32_t result = _gen_interlace_loop(ctx, unit, sep, col_expr, acc_ptr, loop_bb, sep_ok_bb, body_bb, end_bb);
 
-  // Patch: emit empty_bb that jumps to end_bb. end_bb was already emitted by _gen_interlace_loop,
-  // so we re-enter it via the phi/load at end_bb. Since acc_ptr is 0-initialized, loading it gives 0.
-  irwriter_bb(ctx->w, empty_bb);
+  irwriter_bb_at(ctx->w, empty_bb);
   irwriter_br(ctx->w, end_bb);
+
+  return result;
 }
 
 // --- Main gen() dispatcher ---
 
-static void _gen_ir(GenCtx* ctx, PegUnit* unit, const char* col_expr, const char* on_fail, char* len_out,
-                    int32_t len_out_size) {
+static int32_t _gen_ir(GenCtx* ctx, PegUnit* unit, const char* col_expr, int32_t fail_label) {
   if (unit->kind == PEG_TOK || unit->kind == PEG_ID) {
     if (unit->multiplier == 0) {
-      _gen_leaf(ctx, unit, col_expr, on_fail, len_out, len_out_size);
-      return;
+      return _gen_leaf(ctx, unit, col_expr, fail_label);
     }
     if (unit->multiplier == '?') {
-      _gen_optional(ctx, unit, col_expr, len_out, len_out_size);
-      return;
+      return _gen_optional(ctx, unit, col_expr);
     }
     if (unit->multiplier == '+') {
       if (unit->interlace && unit->ninterlace > 0) {
-        _gen_plus_interlace(ctx, unit, unit->interlace, col_expr, on_fail, len_out, len_out_size);
-      } else {
-        _gen_plus(ctx, unit, col_expr, on_fail, len_out, len_out_size);
+        return _gen_plus_interlace(ctx, unit, unit->interlace, col_expr, fail_label);
       }
-      return;
+      return _gen_plus(ctx, unit, col_expr, fail_label);
     }
     if (unit->multiplier == '*') {
       if (unit->interlace && unit->ninterlace > 0) {
-        _gen_star_interlace(ctx, unit, unit->interlace, col_expr, len_out, len_out_size);
-      } else {
-        _gen_star(ctx, unit, col_expr, len_out, len_out_size);
+        return _gen_star_interlace(ctx, unit, unit->interlace, col_expr);
       }
-      return;
+      return _gen_star(ctx, unit, col_expr);
     }
   }
 
   if (unit->kind == PEG_SEQ) {
     int32_t n = (int32_t)darray_size(unit->children);
     if (n == 0) {
-      _gen_empty(ctx, len_out, len_out_size);
-      return;
+      return _gen_empty(ctx);
     }
 
-    // Sequence: gen(a b, col, fail) = r1 = gen(a); r2 = gen(b, col+r1); return r1+r2
-    char total_ptr[16];
-    snprintf(total_ptr, sizeof(total_ptr), "%%r%d", irwriter_alloca(ctx->w, "i32"));
-    irwriter_store(ctx->w, "i32", "0", total_ptr);
+    int32_t total_ptr = irwriter_alloca(ctx->w, "i32");
+    irwriter_store_imm(ctx->w, "i32", 0, total_ptr);
 
     for (int32_t i = 0; i < n; i++) {
-      char prev[16];
-      snprintf(prev, sizeof(prev), "%%r%d", irwriter_load(ctx->w, "i32", total_ptr));
-      char child_col[16];
-      snprintf(child_col, sizeof(child_col), "%%r%d", irwriter_binop(ctx->w, "add", "i32", col_expr, prev));
+      int32_t prev = irwriter_load(ctx->w, "i32", total_ptr);
+      int32_t child_col = irwriter_binop(ctx->w, "add", "i32", _to_reg(ctx, col_expr), prev);
 
-      char child_len[32];
-      _gen_ir(ctx, &unit->children[i], child_col, on_fail, child_len, sizeof(child_len));
+      char child_col_s[16];
+      _fmt_reg(child_col_s, sizeof(child_col_s), child_col);
+      int32_t child_len = _gen_ir(ctx, &unit->children[i], child_col_s, fail_label);
 
-      char new_total[16];
-      snprintf(new_total, sizeof(new_total), "%%r%d", irwriter_load(ctx->w, "i32", total_ptr));
-      char updated[16];
-      snprintf(updated, sizeof(updated), "%%r%d", irwriter_binop(ctx->w, "add", "i32", new_total, child_len));
+      int32_t new_total = irwriter_load(ctx->w, "i32", total_ptr);
+      int32_t updated = irwriter_binop(ctx->w, "add", "i32", new_total, child_len);
       irwriter_store(ctx->w, "i32", updated, total_ptr);
     }
-    snprintf(len_out, (size_t)len_out_size, "%%r%d", irwriter_load(ctx->w, "i32", total_ptr));
-    return;
+    return irwriter_load(ctx->w, "i32", total_ptr);
   }
 
   if (unit->kind == PEG_BRANCHES) {
     int32_t n = (int32_t)darray_size(unit->children);
     if (n == 0) {
-      _gen_empty(ctx, len_out, len_out_size);
-      return;
+      return _gen_empty(ctx);
     }
 
-    // Ordered choice: save/restore/discard per spec
-    int32_t choice_id = ctx->label_counter++;
-    char done_bb[32];
-    snprintf(done_bb, sizeof(done_bb), "choice_done_%d", choice_id);
+    int32_t done_bb = irwriter_label(ctx->w);
+    int32_t result_ptr = irwriter_alloca(ctx->w, "i32");
 
-    char result_ptr[16];
-    snprintf(result_ptr, sizeof(result_ptr), "%%r%d", irwriter_alloca(ctx->w, "i32"));
-
-    // save(col)
     peg_ir_backtrack_push(ctx->w, ctx->bt_stack, col_expr);
 
     for (int32_t i = 0; i < n; i++) {
       int32_t is_last = (i == n - 1);
-      char alt_bb[32];
-      if (!is_last) {
-        snprintf(alt_bb, sizeof(alt_bb), "alt_%d_%d", choice_id, i + 1);
-      }
-      const char* fail_target = is_last ? on_fail : alt_bb;
+      int32_t alt_bb = is_last ? -1 : irwriter_label(ctx->w);
+      int32_t ft = is_last ? fail_label : alt_bb;
 
-      char r[32];
-      _gen_ir(ctx, &unit->children[i], col_expr, fail_target, r, sizeof(r));
+      int32_t r = _gen_ir(ctx, &unit->children[i], col_expr, ft);
 
-      // success: discard saved state
       peg_ir_backtrack_pop(ctx->w, ctx->bt_stack);
       irwriter_store(ctx->w, "i32", r, result_ptr);
       irwriter_br(ctx->w, done_bb);
 
       if (!is_last) {
-        irwriter_bb(ctx->w, alt_bb);
-        // restore + discard + re-save for next alternative
-        char restored[16];
-        snprintf(restored, sizeof(restored), "%%r%d", peg_ir_backtrack_restore(ctx->w, ctx->bt_stack));
+        irwriter_bb_at(ctx->w, alt_bb);
+        int32_t restored = peg_ir_backtrack_restore(ctx->w, ctx->bt_stack);
         peg_ir_backtrack_pop(ctx->w, ctx->bt_stack);
-        peg_ir_backtrack_push(ctx->w, ctx->bt_stack, restored);
+        char restored_s[16];
+        _fmt_reg(restored_s, sizeof(restored_s), restored);
+        peg_ir_backtrack_push(ctx->w, ctx->bt_stack, restored_s);
       }
     }
 
-    irwriter_bb(ctx->w, done_bb);
-    snprintf(len_out, (size_t)len_out_size, "%%r%d", irwriter_load(ctx->w, "i32", result_ptr));
-    return;
+    irwriter_bb_at(ctx->w, done_bb);
+    return irwriter_load(ctx->w, "i32", result_ptr);
   }
 
-  _gen_empty(ctx, len_out, len_out_size);
+  return _gen_empty(ctx);
 }
 
 // --- Rule function generation ---
 
-// Shared prologue: define function, entry BB, compute col_type_ref.
-// Returns col_type_ref via out parameter. Caller emits cache-check logic,
-// then calls _gen_rule_compute to set up backtrack stack, run _gen_ir, and get match_len.
 static void _gen_rule_prologue(PegRule* rule, ScopeCtx* scope, IrWriter* w, char* col_type_ref,
                                int32_t col_type_ref_size) {
   const char* args[] = {"i8*", "i32"};
@@ -697,48 +603,45 @@ static void _gen_rule_prologue(PegRule* rule, ScopeCtx* scope, IrWriter* w, char
   snprintf(func_name, sizeof(func_name), "parse_%s", rule->name);
 
   irwriter_define_start(w, func_name, "i32", 2, args, arg_names);
-  irwriter_bb(w, "entry");
+  irwriter_bb(w);
 
   snprintf(col_type_ref, (size_t)col_type_ref_size, "%%%s", scope->col_type);
 }
 
-// Shared compute phase: alloc backtrack stack, run _gen_ir, write match_len.
-// Must be called after emitting "compute" BB.
-static void _gen_rule_compute(PegRule* rule, IrWriter* w, char** tokens, const char* col_type_ref,
-                              const char* fail_label, char* match_len, int32_t match_len_size) {
-  char bt_stack[16];
-  snprintf(bt_stack, sizeof(bt_stack), "%%r%d", irwriter_alloca(w, "%BtStack"));
-  char bt_top_ptr[16];
-  snprintf(bt_top_ptr, sizeof(bt_top_ptr), "%%r%d", irwriter_gep(w, "%BtStack", bt_stack, "i32 0, i32 1"));
-  irwriter_store(w, "i32", "-1", bt_top_ptr);
+static int32_t _gen_rule_compute(PegRule* rule, IrWriter* w, char** tokens, const char* col_type_ref,
+                                 int32_t fail_label) {
+  int32_t bt_stack = irwriter_alloca(w, "%BtStack");
+  int32_t bt_top_ptr = irwriter_gep(w, "%BtStack", bt_stack, "i32 0, i32 1");
+  irwriter_store_imm(w, "i32", -1, bt_top_ptr);
 
-  GenCtx ctx = {.w = w, .tokens = tokens, .col_type = col_type_ref, .bt_stack = bt_stack, .label_counter = 0};
-  _gen_ir(&ctx, &rule->seq, "%col", fail_label, match_len, match_len_size);
+  GenCtx ctx = {.w = w, .tokens = tokens, .col_type = col_type_ref, .bt_stack = bt_stack};
+  return _gen_ir(&ctx, &rule->seq, "%col", fail_label);
 }
 
 static void _gen_rule_naive(PegRule* rule, RuleInfo* ri, ScopeCtx* scope, IrWriter* w, char** tokens) {
   char col_type_ref[72];
   _gen_rule_prologue(rule, scope, w, col_type_ref, sizeof(col_type_ref));
 
-  char slot_val[16];
-  snprintf(slot_val, sizeof(slot_val), "%%r%d", peg_ir_memo_get(w, col_type_ref, "%table", "%col", 0, ri->slot_idx));
-  char cmp[16];
-  snprintf(cmp, sizeof(cmp), "%%r%d", irwriter_icmp_imm(w, "ne", "i32", slot_val, -1));
-  irwriter_br_cond(w, cmp, "cached", "compute");
+  int32_t cached_bb = irwriter_label(w);
+  int32_t compute_bb = irwriter_label(w);
+  int32_t fail_bb = irwriter_label(w);
 
-  irwriter_bb(w, "cached");
-  irwriter_ret(w, "i32", slot_val);
+  int32_t slot_reg = peg_ir_memo_get(w, col_type_ref, "%table", "%col", 0, ri->slot_idx);
+  irwriter_br_cond_r(w, irwriter_icmp_imm(w, "ne", "i32", slot_reg, -1), cached_bb, compute_bb);
 
-  irwriter_bb(w, "compute");
-  char match_len[32];
-  _gen_rule_compute(rule, w, tokens, col_type_ref, "fail", match_len, sizeof(match_len));
+  irwriter_bb_at(w, cached_bb);
+  irwriter_ret(w, "i32", slot_reg);
+
+  irwriter_bb_at(w, compute_bb);
+  int32_t match_len = _gen_rule_compute(rule, w, tokens, col_type_ref, fail_bb);
 
   peg_ir_memo_set(w, col_type_ref, "%table", "%col", 0, ri->slot_idx, match_len);
   irwriter_ret(w, "i32", match_len);
 
-  irwriter_bb(w, "fail");
-  peg_ir_memo_set(w, col_type_ref, "%table", "%col", 0, ri->slot_idx, "-1");
-  irwriter_ret(w, "i32", "-1");
+  irwriter_bb_at(w, fail_bb);
+  int32_t neg1 = irwriter_imm(w, "i32", -1);
+  peg_ir_memo_set(w, col_type_ref, "%table", "%col", 0, ri->slot_idx, neg1);
+  irwriter_ret_i(w, "i32", -1);
 
   irwriter_define_end(w);
 }
@@ -747,35 +650,35 @@ static void _gen_rule_shared(PegRule* rule, RuleInfo* ri, ScopeCtx* scope, IrWri
   char col_type_ref[72];
   _gen_rule_prologue(rule, scope, w, col_type_ref, sizeof(col_type_ref));
 
-  char bit_ok[16];
-  snprintf(bit_ok, sizeof(bit_ok), "%%r%d",
-           peg_ir_bit_test(w, col_type_ref, "%table", "%col", ri->sg_id, ri->seg_mask));
-  irwriter_br_cond(w, bit_ok, "check_slot", "bit_fail");
+  int32_t check_slot_bb = irwriter_label(w);
+  int32_t cached_bb = irwriter_label(w);
+  int32_t compute_bb = irwriter_label(w);
+  int32_t match_fail_bb = irwriter_label(w);
+  int32_t bit_fail_bb = irwriter_label(w);
 
-  irwriter_bb(w, "check_slot");
-  char slot_val[16];
-  snprintf(slot_val, sizeof(slot_val), "%%r%d", peg_ir_memo_get(w, col_type_ref, "%table", "%col", 1, ri->slot_idx));
-  char slot_cached[16];
-  snprintf(slot_cached, sizeof(slot_cached), "%%r%d", irwriter_icmp_imm(w, "ne", "i32", slot_val, -1));
-  irwriter_br_cond(w, slot_cached, "cached", "compute");
+  irwriter_br_cond_r(w, peg_ir_bit_test(w, col_type_ref, "%table", "%col", ri->sg_id, ri->seg_mask), check_slot_bb,
+                     bit_fail_bb);
 
-  irwriter_bb(w, "cached");
-  irwriter_ret(w, "i32", slot_val);
+  irwriter_bb_at(w, check_slot_bb);
+  int32_t slot_reg = peg_ir_memo_get(w, col_type_ref, "%table", "%col", 1, ri->slot_idx);
+  irwriter_br_cond_r(w, irwriter_icmp_imm(w, "ne", "i32", slot_reg, -1), cached_bb, compute_bb);
 
-  irwriter_bb(w, "compute");
-  char match_len[32];
-  _gen_rule_compute(rule, w, tokens, col_type_ref, "match_fail", match_len, sizeof(match_len));
+  irwriter_bb_at(w, cached_bb);
+  irwriter_ret(w, "i32", slot_reg);
+
+  irwriter_bb_at(w, compute_bb);
+  int32_t match_len = _gen_rule_compute(rule, w, tokens, col_type_ref, match_fail_bb);
 
   peg_ir_bit_exclude(w, col_type_ref, "%table", "%col", ri->sg_id, ri->seg_mask);
   peg_ir_memo_set(w, col_type_ref, "%table", "%col", 1, ri->slot_idx, match_len);
   irwriter_ret(w, "i32", match_len);
 
-  irwriter_bb(w, "match_fail");
+  irwriter_bb_at(w, match_fail_bb);
   peg_ir_bit_deny(w, col_type_ref, "%table", "%col", ri->sg_id, ri->seg_mask);
-  irwriter_ret(w, "i32", "-1");
+  irwriter_ret_i(w, "i32", -1);
 
-  irwriter_bb(w, "bit_fail");
-  irwriter_ret(w, "i32", "-1");
+  irwriter_bb_at(w, bit_fail_bb);
+  irwriter_ret_i(w, "i32", -1);
 
   irwriter_define_end(w);
 }
