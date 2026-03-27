@@ -1,5 +1,6 @@
 #include "irwriter.h"
 #include "darray.h"
+#include <stdarg.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -198,9 +199,7 @@ int32_t irwriter_bb(IrWriter* w) {
   return id;
 }
 
-void irwriter_bb_at(IrWriter* w, int32_t label) {
-  fprintf(w->out, "L%d:\n", label);
-}
+void irwriter_bb_at(IrWriter* w, int32_t label) { fprintf(w->out, "L%d:\n", label); }
 
 void irwriter_dbg(IrWriter* w, int32_t line, int32_t col) {
   w->dbg_line = line;
@@ -345,6 +344,15 @@ int32_t irwriter_insertvalue(IrWriter* w, const char* agg_ty, int32_t agg_reg, c
   return r;
 }
 
+int32_t irwriter_extractvalue(IrWriter* w, const char* agg_ty, int32_t agg_reg, int idx) {
+  int32_t r = _next_reg(w);
+  int dbg = _reserve_dbg(w);
+  fprintf(w->out, "  %%r%d = extractvalue %s %%r%d, %d", r, agg_ty, agg_reg, idx);
+  _emit_dbg_suffix(w, dbg);
+  fprintf(w->out, "\n");
+  return r;
+}
+
 void irwriter_declare(IrWriter* w, const char* ret_type, const char* name, const char* arg_types) {
   for (int i = 0; i < (int)darray_size(w->decls); i++) {
     if (strcmp(w->decls[i], name) == 0) {
@@ -442,3 +450,10 @@ void irwriter_type_def(IrWriter* w, const char* name, const char* body) {
 }
 
 void irwriter_raw(IrWriter* w, const char* text) { fprintf(w->out, "%s", text); }
+
+void irwriter_rawf(IrWriter* w, const char* fmt, ...) {
+  va_list ap;
+  va_start(ap, fmt);
+  vfprintf(w->out, fmt, ap);
+  va_end(ap);
+}

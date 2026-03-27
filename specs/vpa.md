@@ -8,6 +8,38 @@ Every scope, except the `main`, has a starting regex. After the starting regex i
 
 The built-in hook `.begin` / `.end` denotes when to push / pop a TokenChunk. When popping a chunk (scope), if it is mapped to a PEG rule, invoke the PEG parsing -- this is known in compile time, so generated code will hard-code the parsing funciton call for the `.end` action.
 
+Sub-scope calls inlines the leader regexp as matcher. Assume we have a scope like this:
+
+```c
+# braced
+s = /regex1/ {
+  /regex2/
+  a
+}
+
+a = /regex3/ .hook1 {
+  /regex4/
+}
+```
+
+The matcher for `s` first matches `/regex1/`, then the braced union. Since `a` is called, the brace in `s` should be compiled to the union of `/regex2/` and `/regex3/` (the leader regexp of `a`). And if `/regex3/` is matched, go into `a`'s following processing: 1. invoke `.hoo1`, 2. loop into `a`'s braced union with `/regex4/`.
+
+Note that the automata's `action_id` is not token_id or scope id. each action_id should map to a sequence of actions like invoke hook / emit token, so we will have a label array, and utilize the computed-goto extension (there should be equivalent one in LLVM IR) to invoke the series of actions quickly.
+
+### Parallel state matching
+
+When a hook invokes state matching like the following example:
+
+```c
+main = {
+  /regexp1/ # action 1
+  $st
+  /regexp2/ # action 2
+}
+```
+
+The generated code will have automata as the union of `/regexp1/` and `/regexp2/`, a user-defined state matcher is also invoked to check if input matches `$st` state. If state matcher matches but `action 1` is produced, `action 1` wins. If state matcher matches and only `action 2` is produced, state matcher wins.
+
 ### From byte stream to codepoint stream to token stream
 
 The input is byte stream, with [ustr](ustr.md), we already have a bitmap to index the starting positions of codepoints.
@@ -32,7 +64,7 @@ struct TokenChunk { // matches a scope
 
 // 16 bytes a token
 union Token {
-  int32_t tok_id; // or scope_id, parse analysis should give a universal numbering to all of them
+  int32_t tok_id; // or scope_id (negative), parse analysis should give a universal numbering to all of them
   // with cp_start (absolute offset relative to input string):
   // - we can locate the line & column with newline_map
   // - we can locate the byte offset by ustr

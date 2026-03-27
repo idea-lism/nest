@@ -45,6 +45,7 @@ void irwriter_ret_i(IrWriter* w, const char* ty, int64_t val);
 
 int32_t irwriter_insertvalue(IrWriter* w, const char* agg_ty, int32_t agg_reg, const char* elem_ty, int32_t elem_reg,
                              int idx);
+int32_t irwriter_extractvalue(IrWriter* w, const char* agg_ty, int32_t agg_reg, int idx);
 
 void irwriter_declare(IrWriter* w, const char* ret_type, const char* name, const char* arg_types);
 
@@ -65,3 +66,4 @@ int32_t irwriter_sext(IrWriter* w, const char* from_ty, const char* val, const c
 void irwriter_type_def(IrWriter* w, const char* name, const char* body);
 
 void irwriter_raw(IrWriter* w, const char* text);
+void irwriter_rawf(IrWriter* w, const char* fmt, ...) __attribute__((format(printf, 2, 3)));
