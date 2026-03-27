@@ -8,7 +8,6 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <unistd.h>
 
 #define TEST(name) static void name(void)
 #define RUN(name)                                                                                                      \
@@ -227,25 +226,24 @@ TEST(test_vpa_ir_compiles) {
     *peg_start = '\0';
   }
 
-  char ir_path[] = "/tmp/test_vpa_XXXXXX";
-  int fd = mkstemp(ir_path);
-  assert(fd >= 0);
   char ll_path[256];
-  snprintf(ll_path, sizeof(ll_path), "%s.ll", ir_path);
-  rename(ir_path, ll_path);
+  char obj_path[256];
+  snprintf(ll_path, sizeof(ll_path), "%s/test_vpa_compile.ll", BUILD_DIR);
+  snprintf(obj_path, sizeof(obj_path), "%s/test_vpa_compile.o", BUILD_DIR);
   FILE* f = fopen(ll_path, "w");
+  assert(f);
   fputs(ir_buf, f);
   fclose(f);
-  close(fd);
 
-  char cmd[256];
-  snprintf(cmd, sizeof(cmd), "%s -c -o /dev/null %s 2>&1", compat_llvm_cc(), ll_path);
+  char cmd[512];
+  snprintf(cmd, sizeof(cmd), "%s -c -o %s %s 2>&1", compat_llvm_cc(), obj_path, ll_path);
   int rc = system(cmd);
   if (rc != 0) {
     fprintf(stderr, "clang compilation failed for %s\n", ll_path);
   }
   assert(rc == 0);
 
+  remove(obj_path);
   remove(ll_path);
   free(hdr_buf);
   free(ir_buf);

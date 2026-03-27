@@ -73,7 +73,7 @@ $extra_defaults << "#{bd}/test_coloring"
 
 ninja_raw "build #{bd}/test/test_peg.o: cc_test test/test_peg.c\n"
 ninja_raw <<~NINJA
-build #{bd}/test_peg: link #{bd}/test/test_peg.o #{bd}/src/peg.o #{bd}/src/peg_ir.o #{bd}/src/header_writer.o #{bd}/src/irwriter.o #{bd}/src/bitset.o #{bd}/src/darray.o #{bd}/src/coloring.o #{bd}/src/graph.o build/kissat/build/libkissat.a
+build #{bd}/test_peg: link #{bd}/test/test_peg.o #{bd}/test/compat.o #{bd}/src/peg.o #{bd}/src/peg_ir.o #{bd}/src/header_writer.o #{bd}/src/irwriter.o #{bd}/src/bitset.o #{bd}/src/darray.o #{bd}/src/coloring.o #{bd}/src/graph.o build/kissat/build/libkissat.a
 NINJA
 
 $extra_defaults << "#{bd}/test_peg"

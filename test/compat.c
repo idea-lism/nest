@@ -50,6 +50,14 @@ int compat_pclose(FILE* f) { return pclose(f); }
 
 #endif
 
+const char* compat_devnull_path(void) {
+#ifdef _WIN32
+  return "NUL";
+#else
+  return "/dev/null";
+#endif
+}
+
 const char* compat_llvm_cc(void) {
   const char* cc = getenv("LLVM_CC");
   if (cc) {

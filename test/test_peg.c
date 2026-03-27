@@ -2,12 +2,12 @@
 #include "../src/darray.h"
 #include "../src/header_writer.h"
 #include "../src/irwriter.h"
+#include "compat.h"
 
 #include <assert.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <unistd.h>
 
 #define TEST(name) static void name(void)
 #define RUN(name)                                                                                                      \
@@ -18,12 +18,13 @@
   } while (0)
 
 static void _compile_test(const char* h_file, const char* ir_file) {
+  const char* null_out = compat_devnull_path();
   char cmd[512];
-  snprintf(cmd, sizeof(cmd), "clang -c -x c %s -o /dev/null 2>&1", h_file);
+  snprintf(cmd, sizeof(cmd), "%s -c -x c %s -o %s 2>&1", compat_llvm_cc(), h_file, null_out);
   int ret = system(cmd);
   assert(ret == 0);
-  
-  snprintf(cmd, sizeof(cmd), "clang -c %s -o /dev/null 2>&1", ir_file);
+
+  snprintf(cmd, sizeof(cmd), "%s -c %s -o %s 2>&1", compat_llvm_cc(), ir_file, null_out);
   ret = system(cmd);
   assert(ret == 0);
 }
