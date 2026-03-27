@@ -101,15 +101,6 @@ typedef struct {
 
 // --- Helpers ---
 
-static VpaRule* _find_rule(VpaRule* rules, const char* name) {
-  for (int32_t i = 0; i < (int32_t)darray_size(rules); i++) {
-    if (strcmp(rules[i].name, name) == 0) {
-      return &rules[i];
-    }
-  }
-  return NULL;
-}
-
 static VpaUnit* _find_scope_unit(VpaRule* rule) {
   for (int32_t i = 0; i < (int32_t)darray_size(rule->units); i++) {
     if (rule->units[i].kind == VPA_SCOPE) {
@@ -131,15 +122,6 @@ static ScopeInfo* _find_scope(ScopeInfo* scopes, const char* name) {
 static bool _find_state(StateDecl* states, const char* name) {
   for (int32_t i = 0; i < (int32_t)darray_size(states); i++) {
     if (strcmp(states[i].name, name) == 0) {
-      return true;
-    }
-  }
-  return false;
-}
-
-static bool _scope_has_peg(PegRule* peg_rules, const char* scope_name) {
-  for (int32_t i = 0; i < (int32_t)darray_size(peg_rules); i++) {
-    if (strcmp(peg_rules[i].name, scope_name) == 0) {
       return true;
     }
   }
@@ -180,8 +162,8 @@ static bool _is_first_user_hook(ActionRegistry* reg, int32_t idx) {
 }
 
 static void _make_user_hook_symbol(const char* user_hook, char* out, size_t out_sz) {
-  const char* hook_name = user_hook && user_hook[0] == '.' ? user_hook + 1 : user_hook;
-  snprintf(out, out_sz, "vpa_hook_%s", hook_name ? hook_name : "");
+  const char* hook_name = user_hook[0] == '.' ? user_hook + 1 : user_hook;
+  snprintf(out, out_sz, "vpa_hook_%s", hook_name);
 }
 
 static bool _is_first_parse_scope(ActionRegistry* reg, int32_t idx) {
@@ -198,11 +180,11 @@ static bool _is_first_parse_scope(ActionRegistry* reg, int32_t idx) {
 }
 
 static void _make_parse_scope_symbol(const char* scope_name, char* out, size_t out_sz) {
-  snprintf(out, out_sz, "vpa_parse_%s", scope_name ? scope_name : "");
+  snprintf(out, out_sz, "vpa_parse_%s", scope_name);
 }
 
 static void _make_state_match_symbol(const char* state_name, char* out, size_t out_sz) {
-  snprintf(out, out_sz, "match_%s", state_name ? state_name : "");
+  snprintf(out, out_sz, "match_%s", state_name);
 }
 
 // --- Walk ReAstNode and build NFA via re.h API ---
@@ -330,7 +312,15 @@ static int32_t _resolve_action(ActionRegistry* reg, ScopeInfo* scope, VpaUnit* u
   const char* tok_name = (unit->name && unit->name[0]) ? unit->name : default_tok_name;
   int32_t tok_id = tok_name ? _register_token(reg, tok_name) : 0;
   bool pop_scope = unit->hook == TOK_HOOK_END || _hook_has_effect(effects, unit->user_hook, TOK_HOOK_END);
-  const char* parse_scope_name = (pop_scope && _scope_has_peg(peg_rules, scope->name)) ? scope->name : NULL;
+  const char* parse_scope_name = NULL;
+  if (pop_scope) {
+    for (int32_t pi = 0; pi < (int32_t)darray_size(peg_rules); pi++) {
+      if (strcmp(peg_rules[pi].name, scope->name) == 0) {
+        parse_scope_name = scope->name;
+        break;
+      }
+    }
+  }
   bool has_user_hook = unit->user_hook && unit->user_hook[0];
   bool needs_action =
       allow_empty || tok_id > 0 || pop_scope || unit->hook != 0 || has_user_hook || parse_scope_name != NULL;
@@ -364,7 +354,13 @@ static DfaPattern* _resolve_body(ScopeInfo* scope, VpaUnit* body, VpaRule* rules
                   ((DfaPattern){.kind = VPA_STATE, .ast = NULL, .state_name = u->state_name, .action_id = action_id}));
 
     } else if (u->kind == VPA_REF && u->name) {
-      VpaRule* ref_rule = _find_rule(rules, u->name);
+      VpaRule* ref_rule = NULL;
+      for (int32_t ri = 0; ri < (int32_t)darray_size(rules); ri++) {
+        if (strcmp(rules[ri].name, u->name) == 0) {
+          ref_rule = &rules[ri];
+          break;
+        }
+      }
       if (!ref_rule) {
         continue;
       }
@@ -1248,18 +1244,15 @@ void vpa_gen(VpaGenInput* input, HeaderWriter* hw, IrWriter* w) {
     darray_del(patterns);
   }
 
-  // Emit parse bridges, action dispatch, and lex loop in IR
   _gen_parse_scope_bridges_ir(&reg, w);
   _gen_action_dispatch_ir(&reg, w);
   _gen_lex_loop_ir(scopes, w);
 
-  // Emit header: declarations, token IDs, action metadata
   _gen_lex_declarations(scopes, hw);
   _gen_user_hook_header(&reg, hw);
   _gen_token_header(&reg, hw);
   _gen_action_table_header(&reg, scopes, hw);
 
-  // Cleanup
   for (int32_t i = 0; i < (int32_t)darray_size(scopes); i++) {
     free(scopes[i].name);
     free(scopes[i].leader_user_hook);
