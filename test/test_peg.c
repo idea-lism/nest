@@ -36,8 +36,8 @@ TEST(test_empty_input) {
   input.token_ids = NULL;
   input.n_tokens = 0;
 
-  FILE* hf = fopen("build/debug/test_peg_empty.h", "w");
-  FILE* irf = fopen("build/debug/test_peg_empty.ll", "w");
+  FILE* hf = fopen(BUILD_DIR "/test_peg_empty.h", "w");
+  FILE* irf = fopen(BUILD_DIR "/test_peg_empty.ll", "w");
   HeaderWriter* hw = hw_new(hf);
   IrWriter* w = irwriter_new(irf, "x86_64-unknown-linux-gnu");
 
@@ -71,8 +71,8 @@ TEST(test_simple_rule_naive) {
 
   darray_push(input.rules, rule);
 
-  FILE* hf = fopen("build/debug/test_peg_naive.h", "w");
-  FILE* irf = fopen("build/debug/test_peg_naive.ll", "w");
+  FILE* hf = fopen(BUILD_DIR "/test_peg_naive.h", "w");
+  FILE* irf = fopen(BUILD_DIR "/test_peg_naive.ll", "w");
   HeaderWriter* hw = hw_new(hf);
   IrWriter* w = irwriter_new(irf, "x86_64-unknown-linux-gnu");
 
@@ -85,7 +85,7 @@ TEST(test_simple_rule_naive) {
   fclose(irf);
   fclose(hf);
 
-  FILE* check = fopen("build/debug/test_peg_naive.h", "r");
+  FILE* check = fopen(BUILD_DIR "/test_peg_naive.h", "r");
   char buf[1024];
   int found_ref = 0, found_node = 0, found_col = 0;
   while (fgets(buf, sizeof(buf), check)) {
@@ -104,7 +104,7 @@ TEST(test_simple_rule_naive) {
   assert(found_node);
   assert(found_col);
 
-  _compile_test("build/debug/test_peg_naive.h", "build/debug/test_peg_naive.ll");
+  _compile_test(BUILD_DIR "/test_peg_naive.h", BUILD_DIR "/test_peg_naive.ll");
 
   free(rule.seq.children[0].name);
   darray_del(rule.seq.children);
@@ -139,8 +139,8 @@ TEST(test_row_shared_mode) {
   darray_push(r2.seq.children, t2);
   darray_push(input.rules, r2);
 
-  FILE* hf = fopen("build/debug/test_peg_shared.h", "w");
-  FILE* irf = fopen("build/debug/test_peg_shared.ll", "w");
+  FILE* hf = fopen(BUILD_DIR "/test_peg_shared.h", "w");
+  FILE* irf = fopen(BUILD_DIR "/test_peg_shared.ll", "w");
   HeaderWriter* hw = hw_new(hf);
   IrWriter* w = irwriter_new(irf, "x86_64-unknown-linux-gnu");
 
@@ -153,7 +153,7 @@ TEST(test_row_shared_mode) {
   fclose(irf);
   fclose(hf);
 
-  FILE* check = fopen("build/debug/test_peg_shared.h", "r");
+  FILE* check = fopen(BUILD_DIR "/test_peg_shared.h", "r");
   char buf[1024];
   int found_bits = 0;
   while (fgets(buf, sizeof(buf), check)) {
@@ -164,7 +164,7 @@ TEST(test_row_shared_mode) {
   fclose(check);
   assert(found_bits);
 
-  _compile_test("build/debug/test_peg_shared.h", "build/debug/test_peg_shared.ll");
+  _compile_test(BUILD_DIR "/test_peg_shared.h", BUILD_DIR "/test_peg_shared.ll");
 
   free(r1.seq.children[0].name);
   darray_del(r1.seq.children);
@@ -212,7 +212,7 @@ TEST(test_branch_rule) {
   char* hdr_buf = NULL;
   size_t hdr_sz = 0;
   FILE* hf = compat_open_memstream(&hdr_buf, &hdr_sz);
-  FILE* irf = fopen("build/debug/test_peg_branch.ll", "w");
+  FILE* irf = fopen(BUILD_DIR "/test_peg_branch.ll", "w");
   HeaderWriter* hw = hw_new(hf);
   IrWriter* w = irwriter_new(irf, "x86_64-unknown-linux-gnu");
 
@@ -289,7 +289,7 @@ TEST(test_per_scope_col) {
   char* hdr_buf = NULL;
   size_t hdr_sz = 0;
   FILE* hf = compat_open_memstream(&hdr_buf, &hdr_sz);
-  FILE* irf = fopen("build/debug/test_peg_scope.ll", "w");
+  FILE* irf = fopen(BUILD_DIR "/test_peg_scope.ll", "w");
   HeaderWriter* hw = hw_new(hf);
   IrWriter* w = irwriter_new(irf, "x86_64-unknown-linux-gnu");
 
@@ -361,7 +361,7 @@ TEST(test_row_shared_per_scope_compact) {
   char* hdr_buf = NULL;
   size_t hdr_sz = 0;
   FILE* hf = compat_open_memstream(&hdr_buf, &hdr_sz);
-  FILE* irf = fopen("build/debug/test_peg_shared_scope_compact.ll", "w");
+  FILE* irf = fopen(BUILD_DIR "/test_peg_shared_scope_compact.ll", "w");
   HeaderWriter* hw = hw_new(hf);
   IrWriter* w = irwriter_new(irf, "x86_64-unknown-linux-gnu");
 
@@ -426,7 +426,7 @@ TEST(test_scope_refs_not_expanded_in_sets) {
   char* hdr_buf = NULL;
   size_t hdr_sz = 0;
   FILE* hf = compat_open_memstream(&hdr_buf, &hdr_sz);
-  FILE* irf = fopen("build/debug/test_peg_scope_ref_sets.ll", "w");
+  FILE* irf = fopen(BUILD_DIR "/test_peg_scope_ref_sets.ll", "w");
   HeaderWriter* hw = hw_new(hf);
   IrWriter* w = irwriter_new(irf, "x86_64-unknown-linux-gnu");
 
