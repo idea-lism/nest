@@ -78,6 +78,13 @@ NINJA
 
 $extra_defaults << "#{bd}/test_peg"
 
+ninja_raw "build #{bd}/test/test_vpa.o: cc_test test/test_vpa.c\n"
+ninja_raw <<~NINJA
+build #{bd}/test_vpa: link #{bd}/test/test_vpa.o #{bd}/test/compat.o #{bd}/src/vpa.o #{bd}/src/re_ast.o #{bd}/src/header_writer.o #{bd}/src/re.o #{bd}/src/aut.o #{bd}/src/irwriter.o #{bd}/src/bitset.o #{bd}/src/darray.o #{bd}/libustr.a
+NINJA
+
+$extra_defaults << "#{bd}/test_vpa"
+
 test_parse_new_srcs = %w[test/test_parse.c src/parse.c src/token_chunk.c src/vpa.c src/peg.c src/peg_ir.c src/header_writer.c]
 test_parse_new_srcs.each do |src|
   obj = "#{bd}/#{src.sub(/\.c$/, '.o')}"
