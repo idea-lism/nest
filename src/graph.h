@@ -11,3 +11,4 @@ int32_t graph_n_vertices(Graph* g);
 int32_t graph_n_edges(Graph* g);
 int32_t* graph_edges(Graph* g);
 Graph* graph_random_erdos_renyi(uint32_t n, double p);
+int32_t* graph_find_max_clique(Graph* g);

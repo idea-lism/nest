@@ -14,10 +14,9 @@ API
 - function prelude and epilogue `irwriter_define_start()`, `irwriter_define_end()`
   - also with file_path, compiling cwd
 - starting a basic block
-- binop, binop_imm, icmp, icmp_imm
-- insertvalue, insertvalue_imm: insert a scalar into an aggregate at a given index
+- binop, icmp
+- insertvalue: insert a scalar into an aggregate at a given index
   - `insertvalue(agg_ty, agg_val, elem_ty, elem_val, idx)` -- string element value
-  - `insertvalue_imm(agg_ty, agg_val, elem_ty, elem_val, idx)` -- immediate int element value
   - used to build `{i32, i32}` return pairs: first insert at index 0 from undef, then insert at index 1
 - emits debug information
 - can create debugtrap
@@ -41,7 +40,4 @@ Register management
 
 Writer keeps track of register number in integer.
 
-Some functions have a register / imm variant:
-
-`irwriter_br_cond_r()` uses integer register number instead, saving an snprintf.
-`irwriter_ret_i()` returns integer value, saving an snprintf.
+To access imm values, we can generate a register assignment first, then ues the register.

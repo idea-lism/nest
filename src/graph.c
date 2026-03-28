@@ -68,3 +68,44 @@ Graph* graph_random_erdos_renyi(uint32_t n, double p) {
   }
   return g;
 }
+
+int32_t* graph_find_max_clique(Graph* g) {
+  int32_t n = g->n_vertices;
+  if (n == 0) return NULL;
+  
+  int32_t* adj = calloc(n * n, sizeof(int32_t));
+  for (int32_t i = 0; i < g->n_edges; i++) {
+    int32_t u = g->edges[i * 2];
+    int32_t v = g->edges[i * 2 + 1];
+    adj[u * n + v] = 1;
+    adj[v * n + u] = 1;
+  }
+  
+  int32_t* clique = malloc(n * sizeof(int32_t));
+  int32_t clique_size = 0;
+  
+  for (int32_t v = 0; v < n; v++) {
+    int32_t can_add = 1;
+    for (int32_t i = 0; i < clique_size; i++) {
+      if (!adj[v * n + clique[i]]) {
+        can_add = 0;
+        break;
+      }
+    }
+    if (can_add) {
+      clique[clique_size++] = v;
+    }
+  }
+  
+  free(adj);
+  if (clique_size == 0) {
+    free(clique);
+    return NULL;
+  }
+  
+  int32_t* result = malloc((clique_size + 1) * sizeof(int32_t));
+  result[0] = clique_size;
+  memcpy(result + 1, clique, clique_size * sizeof(int32_t));
+  free(clique);
+  return result;
+}

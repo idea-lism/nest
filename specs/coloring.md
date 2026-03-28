@@ -14,7 +14,7 @@ With this optimization - arangement, we can
 
 ## Symmetry breaking
 
-Very simple: find one max clique, assign different colors to it.
+Very simple: find one max clique (with helper from graph.c), assign different colors to it.
 
 ## Graph helpers (src/graph.c)
 
@@ -23,3 +23,4 @@ For testing, src/graph.c provides:
 - `void graph_add_edge(Graph* g, int32_t u, int32_t v)` - add edge
 - `Graph* graph_random_erdos_renyi(uint32_t n, double p)` - generate random graph (edge probability p)
 - `int32_t* graph_edges(Graph* g)` - get edge array for coloring_solve
+- `max_clique()` - get the max clique number for lower bound detection

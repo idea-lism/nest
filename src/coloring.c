@@ -1,4 +1,5 @@
 #include "coloring.h"
+#include "graph.h"
 #include <stdlib.h>
 #include <string.h>
 
@@ -65,9 +66,20 @@ static int32_t* _solve_sat(int32_t n_vertices, int32_t* edges, int32_t n_edges, 
     }
   }
 
-  if (n_vertices > 0) {
-    kissat_add(solver, _var(0, 0, k));
-    kissat_add(solver, 0);
+  Graph* g = graph_new(n_vertices);
+  for (int32_t i = 0; i < n_edges; i++) {
+    graph_add_edge(g, edges[i * 2], edges[i * 2 + 1]);
+  }
+  int32_t* clique = graph_find_max_clique(g);
+  graph_del(g);
+  
+  if (clique) {
+    int32_t clique_size = clique[0];
+    for (int32_t i = 0; i < clique_size && i < k; i++) {
+      kissat_add(solver, _var(clique[i + 1], i, k));
+      kissat_add(solver, 0);
+    }
+    free(clique);
   }
 
   int result = kissat_solve(solver);
@@ -111,7 +123,7 @@ static void _build_segments(ColoringResult* cr, int32_t* colors, int32_t k) {
     int32_t seg_idx = pos / 32;
     int32_t bit_idx = pos % 32;
     cr->vertex_info[v].sg_id = color_sg_base[c] + seg_idx;
-    cr->vertex_info[v].seg_mask = 1 << bit_idx;
+    cr->vertex_info[v].seg_mask = (int32_t)(1u << bit_idx);
   }
 
   free(color_counts);
