@@ -6,6 +6,7 @@
 #include "parse.h"
 #include "darray.h"
 #include "peg.h"
+#include "re.h"
 #include "re_ast.h"
 #include "token_chunk.h"
 #include "ustr.h"
@@ -194,38 +195,43 @@ static TokenChunk _lex_scope(LexCtx* ctx, ScopeId scope_id) {
     int32_t cp_line = ctx->it.line;
     int32_t cp_col = ctx->it.col;
     int32_t cp = _next_cp(ctx);
-    
+
     LexResult r = cfg.lex_fn(state, cp);
-    
+
     if (r.action == LEX_ACTION_NOMATCH) {
-      if (last_action > 0) {
-        if (last_action == cfg.end_token) {
-          ctx->pos = ctx->it.byte_off;
-          return chunk;
+      if (last_action == TOK_END) {
+        ctx->pos = ctx->it.byte_off;
+        return chunk;
+      } else if (last_action == TOK_IGNORE) {
+        break;
+      } else if (last_action == TOK_UNPARSE_END) {
+        // special handling for vpa .unparse .end
+        // TODO unparse a token
+        ctx->pos = ctx->it.byte_off;
+        return chunk;
+      } else if (last_action <= SCOPE_COUNT) { // scope id
+        if (last_action == SCOPE_KEYWORD_STR || last_action == SCOPE_RE_STR) {
+          ctx->last_quote = ctx->ps->src + tok_start;
         }
-        if (last_action && last_action != TOK_IGNORE) {
-          tc_add(&chunk, (Token){last_action, tok_start, cp_byte, tok_line, tok_col});
-        }
+        _lex_scope(ctx, last_action);
+      } else {
+        tc_add(&chunk, (Token){last_action, tok_start, cp_byte, tok_line, tok_col});
       }
+
+      if (cp == LEX_CP_EOF) {
+        // TODO: pop all to make chunks complete
+        return chunk;
+      }
+
       tok_start = cp_byte;
       tok_line = cp_line;
       tok_col = cp_col;
       last_action = 0;
       state = 0;
-      if (cp == -2) break;
-      r = cfg.lex_fn(0, cp);
-      if (r.action == LEX_ACTION_NOMATCH) {
-        tok_start = ctx->it.byte_off;
-        tok_line = ctx->it.line;
-        tok_col = ctx->it.col;
-        ctx->pos = ctx->it.byte_off;
-        continue;
-      }
+    } else {
+      state = r.state;
+      last_action = r.action;
     }
-    last_action = (int32_t)r.action;
-    state = r.state;
-    ctx->pos = ctx->it.byte_off;
-    if (cp == -2) break;
   }
   return chunk;
 }
@@ -816,7 +822,7 @@ static void _expand_kw_in_peg_unit(PegUnit* unit, ParseState* ps) {
   }
 }
 
-void expand_keywords(ParseState* ps) {
+static void _expand_keywords(ParseState* ps) {
   for (int32_t k = 0; k < (int32_t)darray_size(ps->keywords); k++) {
     KeywordEntry* kw = &ps->keywords[k];
     int32_t len = kw->lit_len;
@@ -892,7 +898,7 @@ static VpaUnit _clone_vpa_unit(VpaUnit* src) {
   return dst;
 }
 
-void inline_macros(ParseState* ps) {
+static void _inline_macros(ParseState* ps) {
   for (int32_t r = 0; r < (int32_t)darray_size(ps->vpa_rules); r++) {
     VpaRule* rule = &ps->vpa_rules[r];
     if (rule->is_macro) {
@@ -968,13 +974,13 @@ static void _auto_tag_unit(ParseState* ps, PegRule* rule, PegUnit* unit) {
   }
 }
 
-void auto_tag_branches(ParseState* ps) {
+static void _auto_tag_branches(ParseState* ps) {
   for (int32_t r = 0; r < (int32_t)darray_size(ps->peg_rules); r++) {
     _auto_tag_unit(ps, &ps->peg_rules[r], &ps->peg_rules[r].seq);
   }
 }
 
-void check_cross_bracket_tags(ParseState* ps) {
+static void _check_cross_bracket_tags(ParseState* ps) {
   for (int32_t r = 0; r < (int32_t)darray_size(ps->peg_rules); r++) {
     PegRule* rule = &ps->peg_rules[r];
     char** tags = darray_new(sizeof(char*), 0);
@@ -1113,8 +1119,8 @@ bool parse_nest(ParseState* ps, const char* src) {
     return false;
   }
 
-  inline_macros(ps);
-  expand_keywords(ps);
+  _inline_macros(ps);
+  _expand_keywords(ps);
 
   return true;
 }

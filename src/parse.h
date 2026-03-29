@@ -3,7 +3,6 @@
 #include <stdbool.h>
 #include <stdint.h>
 
-// Scope IDs
 typedef enum {
   SCOPE_MAIN = 0,
   SCOPE_VPA,
@@ -17,49 +16,42 @@ typedef enum {
 } ScopeId;
 
 // Token IDs for the .nest syntax (used as action_id in automata).
-// Derived from specs/bootstrap.nest.
-//
-// IMPORTANT: Within each DFA scope, tokens that should win over '.' (TOK_CHAR)
-// must have a LOWER numeric ID than TOK_CHAR (due to MIN-RULE).
 enum {
   TOK_START = SCOPE_COUNT, // first token ID (after scopes)
 
-  // hook/action tokens
-  TOK_UNPARSE,
-  TOK_END,
+  // shared tokens
+  TOK_END,    // ends any scope
   TOK_IGNORE,
-
-  // whitespace tokens
   TOK_NL,
 
-  // VPA scope tokens
+  // scope: vpa
+  TOK_UNPARSE_END, // .unparse .end
+  TOK_DIRECTIVES_STATE,
+  TOK_DIRECTIVES_IGNORE,
+  TOK_DIRECTIVES_EFFECT,
+  TOK_DIRECTIVES_KEYWORD,
+  TOK_HOOK_BEGIN,
+  TOK_HOOK_END,
+  TOK_HOOK_FAIL,
+  TOK_HOOK_UNPARSE,
   TOK_VPA_ID,
   TOK_MACRO_ID,
   TOK_USER_HOOK_ID,
   TOK_TOK_ID,
   TOK_STATE_ID,
+  TOK_OPS_EQ,
+  TOK_OPS_PIPE,
   TOK_SCOPE_BEGIN,
   TOK_SCOPE_END,
 
-  // directive keywords
-  TOK_KW_STATE,
-  TOK_KW_IGNORE,
-  TOK_KW_EFFECT,
-  TOK_KW_KEYWORD,
+  // shared by re, re_str, charclass, keyword_str
+  TOK_CODEPOINT,
+  TOK_C_ESCAPE,
+  TOK_PLAIN_ESCAPE,
+  TOK_CHAR,
 
-  // ops
-  TOK_OPS_EQ,
-  TOK_OPS_PIPE,
-
-  // scope-transition tokens (consumed by pushdown, not emitted to stream)
-  // These must come before content tokens to win by MIN-RULE
-  TOK_RE_BEGIN,
-  TOK_RE_END,
-  TOK_NEG_CLASS_BEGIN,
-  TOK_CLASS_BEGIN,
-  TOK_CLASS_END,
-
-  // regexp content tokens
+  // re scope
+  TOK_RE_TAG,
   TOK_RE_DOT,
   TOK_RE_SPACE_CLASS,
   TOK_RE_WORD_CLASS,
@@ -67,33 +59,35 @@ enum {
   TOK_RE_HEX_CLASS,
   TOK_RE_BOF,
   TOK_RE_EOF,
-  TOK_RE_ALT,
-  TOK_RE_LPAREN,
-  TOK_RE_RPAREN,
-  TOK_RE_MAYBE,
-  TOK_RE_PLUS,
-  TOK_RE_STAR,
+  TOK_RE_OPS_ALT,
+  TOK_RE_OPS_LPAREN,
+  TOK_RE_OPS_RPAREN,
+  TOK_RE_OPS_MAYBE,
+  TOK_RE_OPS_PLUS,
+  TOK_RE_OPS_STAR,
+
+  // re_ref scope
+  TOK_RE_REF,
+
+  // charclass scope
+  TOK_CHARCLASS_BEGIN,
   TOK_RANGE_SEP,
 
-  // chars (shared across re, charclass, string scopes)
-  // Must be LAST among tokens used in re/charclass/string scopes
-  TOK_CODEPOINT,
-  TOK_C_ESCAPE,
-  TOK_PLAIN_ESCAPE,
-  TOK_CHAR,
+  // keyword_str scope
+  TOK_KEYWORD_STR,
 
-  // PEG scope tokens
+  // peg scope
   TOK_PEG_ID,
   TOK_PEG_TOK_ID,
   TOK_TAG_ID,
-  TOK_PEG_ASSIGN,
   TOK_BRANCHES_BEGIN,
   TOK_BRANCHES_END,
-  TOK_PEG_LT,
-  TOK_PEG_GT,
-  TOK_PEG_QUESTION,
-  TOK_PEG_PLUS,
-  TOK_PEG_STAR,
+  TOK_PEG_OPS_LT,
+  TOK_PEG_OPS_GT,
+  TOK_PEG_OPS_QUESTION,
+  TOK_PEG_OPS_PLUS,
+  TOK_PEG_OPS_STAR,
+  TOK_PEG_OPS_ASSIGN,
 
   TOK_COUNT
 };
@@ -140,11 +134,3 @@ void parse_error(ParseState* ps, const char* fmt, ...);
 bool parse_has_error(ParseState* ps);
 char* parse_sfmt(const char* fmt, ...);
 void parse_set_str(char** dst, char* s);
-
-// --- Post-processing functions ---
-
-void expand_keywords(ParseState* ps);
-void inline_macros(ParseState* ps);
-void auto_tag_branches(ParseState* ps);
-void check_cross_bracket_tags(ParseState* ps);
-void assign_peg_scopes(ParseState* ps);

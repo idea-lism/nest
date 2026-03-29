@@ -5,10 +5,6 @@
 
 %ignore @comment @space
 
-%keyword directives "%state" "%ignore" "%effect" "%keyword"
-
-%keyword ops "=" "|"
-
 # user-defined .set_quote hook will update this state
 %state $last_quote
 
@@ -18,16 +14,18 @@
 main = {
   vpa
   peg
-  *ignores
+  *noise
 }
 
-*ignores = {
+*noise = {
   /#[^\n]*/ @comment
   /[ \t\n]+/ @space
   /\n+/ @nl
 }
 
 # if leading regexp matches, push the scope {}
+%keyword directives "%state" "%ignore" "%effect" "%keyword"
+%keyword ops "=" "|"
 vpa = /\s*\[\[vpa\]\]\n/ .begin {
   /\[\[peg\]\]/ .unparse .end
   re
@@ -45,22 +43,21 @@ vpa = /\s*\[\[vpa\]\]\n/ .begin {
   /{/ @scope_begin
   /}/ @scope_end
   re_str
-  *ignores
+  *noise
 }
 
 %keyword peg_ops "<" ">" "?" "+" "*" "="
-
 peg = /\s*\[\[peg\]\]\n/ .begin {
   /[a-z_]\w*/ @peg_id
   # note: emit_id always attaches to previous regexp unit
   #       so the @tok_id token starts and ends with `id`, excluding the `@`
-  /\@\{id}/ @tok_id
+  /\@\{id}/ @peg_tok_id
   /: *\{id}/ @tag_id
   /[/ @branches_begin
   /]/ @branches_end
   *peg_ops
   keyword_str
-  *ignores
+  *noise
 }
 
 id = /[a-z_]\w*/
@@ -234,7 +231,7 @@ seq = peg_unit+
 
 peg_unit = [
   @peg_id multiplier?
-  @tok_id multiplier?
+  @peg_tok_id multiplier?
   @keyword_str multiplier?
   branches
 ]
