@@ -43,11 +43,10 @@ debug    cflags: "-O0 -g -fsanitize=address -fsanitize=undefined"
 release  cflags: "-O2"
 coverage cflags: "-O0 -g -fprofile-instr-generate -fcoverage-mapping"
 
-# parse_gen -> nest_lex.ll -> nest_lex.o -> link into test_parse
-llvm_cc = RUBY_PLATFORM =~ /darwin/ ? "xcrun clang" : (ENV["CC"] || "clang")
-cc = ENV["CC"] || "/usr/bin/clang"
-cflags = "-std=c23 -D_POSIX_C_SOURCE=200809L -Wall -Wextra -Werror -fvisibility=hidden #{$mode_cflags.fetch(MODE, "")}"
+# --- nest_lex code generation pipeline (parse_gen -> .ll -> .o) ---
 bd = $builddir_ref
+llvm_cc = RUBY_PLATFORM =~ /darwin/ ? "xcrun clang" : (ENV["CC"] || "clang")
+
 ninja_raw <<~NINJA
 rule gen_nest_lex
   command = $in $out
@@ -61,57 +60,30 @@ build #{bd}/nest_lex.ll: gen_nest_lex #{bd}/parse_gen
 build #{bd}/nest_lex.o: ll_cc #{bd}/nest_lex.ll
 NINJA
 
-kissat_lib = IS_WINDOWS ? "" : " build/kissat/build/libkissat.a"
+# --- targets using kissat + generated nest_lex ---
+kissat = IS_WINDOWS ? [] : %w[build/kissat/build/libkissat.a]
+nest_lex = ["#{bd}/nest_lex.o"]
 
-ninja_raw "build #{bd}/test/test_coloring.o: cc_test test/test_coloring.c\n"
-ninja_raw "build #{bd}/src/coloring.o: cc src/coloring.c\n"
-ninja_raw "build #{bd}/src/graph.o: cc src/graph.c\n"
+exe "test_coloring",
+  srcs: %w[test/test_coloring.c src/coloring.c src/graph.c],
+  ext_libs: kissat
 
-ninja_raw <<~NINJA
-build #{bd}/test_coloring: link #{bd}/test/test_coloring.o #{bd}/src/coloring.o #{bd}/src/graph.o#{kissat_lib}
-NINJA
+exe "test_peg",
+  srcs: %w[test/test_peg.c test/compat.c src/peg.c src/peg_ir.c src/header_writer.c src/irwriter.c src/bitset.c src/darray.c src/coloring.c src/graph.c],
+  ext_libs: kissat
 
-$extra_defaults << "#{bd}/test_coloring"
+exe "test_vpa",
+  srcs: %w[test/test_vpa.c test/compat.c src/vpa.c src/re_ast.c src/header_writer.c src/re.c src/aut.c src/irwriter.c src/bitset.c src/darray.c],
+  deps: %w[ustr]
 
-ninja_raw "build #{bd}/test/test_peg.o: cc_test test/test_peg.c\n"
-ninja_raw <<~NINJA
-build #{bd}/test_peg: link #{bd}/test/test_peg.o #{bd}/test/compat.o #{bd}/src/peg.o #{bd}/src/peg_ir.o #{bd}/src/header_writer.o #{bd}/src/irwriter.o #{bd}/src/bitset.o #{bd}/src/darray.o #{bd}/src/coloring.o #{bd}/src/graph.o#{kissat_lib}
-NINJA
+exe "test_parse",
+  srcs: %w[test/test_parse.c test/compat.c src/parse.c src/re_ast.c src/token_chunk.c src/vpa.c src/peg.c src/peg_ir.c src/header_writer.c src/re.c src/aut.c src/irwriter.c src/bitset.c src/darray.c src/coloring.c src/graph.c],
+  deps: %w[ustr],
+  extra_objs: nest_lex,
+  ext_libs: kissat
 
-$extra_defaults << "#{bd}/test_peg"
-
-ninja_raw "build #{bd}/test/test_vpa.o: cc_test test/test_vpa.c\n"
-ninja_raw <<~NINJA
-build #{bd}/test_vpa: link #{bd}/test/test_vpa.o #{bd}/test/compat.o #{bd}/src/vpa.o #{bd}/src/re_ast.o #{bd}/src/header_writer.o #{bd}/src/re.o #{bd}/src/aut.o #{bd}/src/irwriter.o #{bd}/src/bitset.o #{bd}/src/darray.o #{bd}/libustr.a
-NINJA
-
-$extra_defaults << "#{bd}/test_vpa"
-
-test_parse_new_srcs = %w[test/test_parse.c src/parse.c src/token_chunk.c src/vpa.c src/peg.c src/peg_ir.c src/header_writer.c]
-test_parse_new_srcs.each do |src|
-  obj = "#{bd}/#{src.sub(/\.c$/, '.o')}"
-  rule = src.start_with?("test/") ? "cc_test" : "cc"
-  ninja_raw "build #{obj}: #{rule} #{src}\n"
-end
-
-test_parse_all_srcs = %w[test/test_parse.c test/compat.c src/parse.c src/re_ast.c src/token_chunk.c src/vpa.c src/peg.c src/peg_ir.c src/header_writer.c src/re.c src/aut.c src/irwriter.c src/bitset.c src/darray.c src/coloring.c src/graph.c]
-test_parse_objs = test_parse_all_srcs.map { |s| "#{bd}/#{s.sub(/\.c$/, '.o')}" }
-test_parse_all = (test_parse_objs + ["#{bd}/nest_lex.o", "#{bd}/libustr.a"] + (IS_WINDOWS ? [] : ["build/kissat/build/libkissat.a"])).join(" ")
-
-ninja_raw <<~NINJA
-build #{bd}/test_parse: link #{test_parse_all}
-NINJA
-
-$extra_defaults << "#{bd}/test_parse"
-
-ninja_raw "build #{bd}/src/nest.o: cc src/nest.c\n"
-
-nest_srcs = %w[src/nest.c src/parse.c src/re_ast.c src/token_chunk.c src/vpa.c src/peg.c src/peg_ir.c src/header_writer.c src/re.c src/aut.c src/irwriter.c src/bitset.c src/darray.c src/coloring.c src/graph.c]
-nest_objs = nest_srcs.map { |s| "#{bd}/#{s.sub(/\.c$/, '.o')}" }
-nest_all = (nest_objs + ["#{bd}/nest_lex.o", "#{bd}/libustr.a"] + (IS_WINDOWS ? [] : ["build/kissat/build/libkissat.a"])).join(" ")
-
-ninja_raw <<~NINJA
-build #{bd}/nest: link #{nest_all}
-NINJA
-
-$extra_defaults << "#{bd}/nest"
+exe "nest",
+  srcs: %w[src/nest.c src/parse.c src/re_ast.c src/token_chunk.c src/vpa.c src/peg.c src/peg_ir.c src/header_writer.c src/re.c src/aut.c src/irwriter.c src/bitset.c src/darray.c src/coloring.c src/graph.c],
+  deps: %w[ustr],
+  extra_objs: nest_lex,
+  ext_libs: kissat

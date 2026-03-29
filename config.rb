@@ -20,8 +20,8 @@ def lib(name, srcs:)
   $libs << { name: name, srcs: srcs }
 end
 
-def exe(name, srcs:, deps: [])
-  $exes << { name: name, srcs: srcs, deps: deps }
+def exe(name, srcs:, deps: [], ext_libs: [], extra_objs: [])
+  $exes << { name: name, srcs: srcs, deps: deps, ext_libs: ext_libs, extra_objs: extra_objs }
 end
 
 def combined_lib(name, srcs:)
@@ -183,7 +183,7 @@ File.open("build.ninja", "w") do |f|
       obj
     end
     dep_archives = exe[:deps].map { |d| lib_outputs[d] }.compact
-    all_inputs = (objs + dep_archives).join(' ')
+    all_inputs = (objs + dep_archives + exe[:extra_objs] + exe[:ext_libs]).join(' ')
     out = "#{BUILDDIR}/#{exe[:name]}"
     f.puts "build #{out}: link #{all_inputs}"
     f.puts ""
