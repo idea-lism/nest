@@ -33,21 +33,6 @@ The overall handling with this syntax:
    - post-process:
      - expand the `%keyword` sugar
      - inline macro vpa rules
-   - validate syntax correctness (specs below)
-   - allocate peg rule ids for each scope
-   - put processed content as `struct Parser` members
-   - invoke `vpa_gen()` and `peg_gen()`, produce a combined header and a combined LLVM IR module.
-4. create `src/vpa.c` (`vpa_gen()`):
-   - define functions to generates visibly pushdown automata in LLVM IR, using Parser's processed-data
-   - generate helpers for result C header
-      1. token id definitions
-      2. util functions that the final LLVM IR may need
-5. create `src/peg.c` (`peg_gen()`):
-   - define generation logic for different PEG constructs, and generate LLVM IR, using Parser's processed-data
-   - generation helpers for result C header (reference the "Using the generated code" section below):
-      1. node definition
-      2. node extraction functions
-      3. memoize table construction helpers for LLVM IR to use
 
 Resulting interface:
 
@@ -167,26 +152,23 @@ PEG semantics:
 - if there's id named `main` , it is the entrance. there must be one entrance
 - besides basic peg semantics, we have "join" semantics which interlaces the "operator" inside angle brackets with the base_multi_unit
 
-### Nest file definition validation
+### Nested word lexing
 
-- `main` must exist in `[[vpa]]`
-- each scope in `[[vpa]]` must have a `.begin` (or user hook that produces the `.begin` effect) and one or more `.end` (or user hook that produces the `end` effect)
-- for a same scope, used token set in `[[peg]]` must be the same as emit token set in `[[vpa]]`
-  - for example, 
-    - with vpa rule `foo = /.../ @a`, `bar = foo @b`, `bar`'s emit token set is `{@a, @b}` (including descendant's)
-    - with peg rule `foo = @c?`, `bar = foo @b`, `bar`'s used token set is `{@c, @b}`, this doesn't equal to the vpa rule's token set
-    - it is a mismatch, then we should raise error to tell user this rule doesn't add up
+in the bootstraping `parse.c`, define `_lex_scope(scope_id)` function, which finds corresponding scope config
 
-### Implemenation validations
+```c
+typedef ScopeConfigs ScopeConfig*;
 
-- Token ids are allocated scopes too
-- Recursive descend parsers work on scope level
-  - the input token stream buffer is a scoped chunk
-  - no expand sub-scope parsing -- sub-scopes are just a token_id match
-- String literals are stored with source offset + length, no extra allocations for them
-- Regexps are converted to structured AST that can be used by `src/vpa.c`
-- When a scope starts, it should allocate a new token stream chunk.
-- When a scope is complete (at `.end` hook), it should invoke recursive descend parsing on the token stream chunk
+struct ScopeConfig {
+  int32_t scope_id;
+  LexFn fn;
+  int32_t ignore_tokens[];
+  int32_t end_token;
+  int32_t sub_scopes[];
+}
+```
+
+In the loop, when met `end_token`, return and pop chunk head. When a token is one of sub_scopes, call down.
 
 ### What is FORBIDDEN, a no-go
 

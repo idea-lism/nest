@@ -67,7 +67,7 @@ id = /[a-z_]\w*/
 
 %keyword re_ops "|" "(" ")" "?" "+" "*"
 
-re = /(b|i|ib|bi)?\// .begin {
+re = /(b|i|ib|bi)?\// @re_tag .begin {
   /\// .end
   charclass
   /\./ @re_dot
@@ -81,8 +81,8 @@ re = /(b|i|ib|bi)?\// .begin {
   *chars
 }
 
-charclass = /\[\^?/ .begin {
-  /\]/ @class_end .end
+charclass = /\[\^?/ @charclass_begin .begin {
+  /\]/ .end
   /.-/ @range_start  # char followed by dash: start of range
   *chars
 }
@@ -169,7 +169,7 @@ scope_line = [
 
 ### Regex AST rules
 
-re = re_quantified+
+re = @re_tag re_quantified+
 
 re_quantified = re_unit [
   "?" : maybe
@@ -194,7 +194,7 @@ re_atom = [
   @plain_escape
 ]
 
-charclass = charclass_unit+ @class_end
+charclass = @charclass_begin charclass_unit+
 
 charclass_unit = [
   @range_start re_char : range

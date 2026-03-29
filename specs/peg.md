@@ -1,6 +1,13 @@
-Parsing expression grammar
+# Parsing expression grammar
 
 src/peg.c is a packrat parsing generator.
+
+create `src/peg.c` (`peg_gen()`):
+- define generation logic for different PEG constructs, and generate LLVM IR, using Parser's processed-data
+- generation helpers for result C header (reference the "Using the generated code" section below):
+  1. node definition
+  2. node extraction functions
+  3. memoize table construction helpers for LLVM IR to use
 
 It iterates parsed PEG structure, utilize src/re.h to generate code.
 

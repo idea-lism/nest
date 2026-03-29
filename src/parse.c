@@ -20,8 +20,6 @@
 #include <stdlib.h>
 #include <string.h>
 
-#define MAX_SCOPE_DEPTH 32
-
 // --- Generated DFA lexer functions (linked from compiled nest_lex.ll) ---
 
 typedef struct {
@@ -40,31 +38,6 @@ extern LexResult lex_peg(int64_t state, int64_t cp);
 #define LEX_ACTION_NOMATCH (-2)
 
 typedef LexResult (*LexFunc)(int64_t, int64_t);
-
-// --- Pushdown automaton scope stack ---
-
-typedef enum {
-  SECTION_NONE,
-  SECTION_VPA,
-  SECTION_PEG,
-} Section;
-
-typedef enum {
-  LEX_SCOPE_MAIN,
-  LEX_SCOPE_VPA,
-  LEX_SCOPE_RE,
-  LEX_SCOPE_CHARCLASS,
-  LEX_SCOPE_DQUOTE_STR,
-  LEX_SCOPE_SQUOTE_STR,
-  LEX_SCOPE_PEG,
-} LexScopeKind;
-
-typedef struct {
-  LexScopeKind scope;
-  LexFunc func;
-  bool negated;
-  TokenChunk chunk;
-} ScopeFrame;
 
 // --- String span (content region within quotes) ---
 
@@ -188,270 +161,375 @@ static StrSpan _build_str_span(TokenChunk* chunk) {
 #define TOK_RE_AST_BASE 20000
 #define TOK_STR_SPAN_BASE 30000
 
-static bool _is_scope_transition(int32_t id) {
-  return id == TOK_RE_BEGIN || id == TOK_RE_END || id == TOK_NEG_CLASS_BEGIN || id == TOK_CLASS_BEGIN ||
-         id == TOK_CLASS_END || id == TOK_STR_BEGIN || id == TOK_STR_END;
+typedef struct {
+  ParseState* ps;
+  char* ustr;
+  int32_t byte_size;
+  UstrIter it;
+  int32_t pos;
+  ReAstNode* cc_asts; // darray - charclass ASTs for current re scope
+} LexCtx;
+
+static int32_t _next_cp(LexCtx* ctx) {
+  if (ctx->it.byte_off >= ctx->byte_size) {
+    return -2;
+  }
+  return ustr_iter_next(&ctx->it);
 }
 
-static void _switch_section(Section new_section, ScopeFrame* scope_stack, int32_t* scope_depth, LexFunc* cur_lex,
-                            TokenChunk* main_chunk) {
-  if (*scope_depth > 0) {
-    TokenChunk* cur = &scope_stack[0].chunk;
-    for (int32_t i = 0; i < tc_size(*cur); i++) {
-      tc_add(main_chunk, (*cur)[i]);
+static ReAstNode _lex_charclass(LexCtx* ctx, bool negated) {
+  TokenChunk chunk = NULL;
+  tc_init(&chunk);
+  
+  int64_t state = 0;
+  int32_t last_action = 0;
+  int32_t tok_start = ctx->it.byte_off;
+  int32_t tok_line = ctx->it.line;
+  int32_t tok_col = ctx->it.col;
+  
+  while (ctx->pos < ctx->ps->src_len) {
+    int32_t cp_byte = ctx->it.byte_off;
+    int32_t cp_line = ctx->it.line;
+    int32_t cp_col = ctx->it.col;
+    int32_t cp = _next_cp(ctx);
+    
+    LexResult r = lex_charclass(state, cp);
+    
+    if (r.action == LEX_ACTION_NOMATCH) {
+      if (last_action > 0) {
+        if (last_action == TOK_CLASS_END) {
+          ReToken* rtoks = _to_re_tokens(chunk, tc_size(chunk));
+          ReAstNode ast = re_ast_build_charclass(ctx->ps->src, rtoks, tc_size(chunk), negated);
+          free(rtoks);
+          tc_free(&chunk);
+          ctx->pos = ctx->it.byte_off;
+          return ast;
+        }
+        if (last_action != TOK_COMMENT && last_action != TOK_SPACE) {
+          tc_add(&chunk, (Token){last_action, tok_start, cp_byte, tok_line, tok_col});
+        }
+      }
+      tok_start = cp_byte;
+      tok_line = cp_line;
+      tok_col = cp_col;
+      last_action = 0;
+      state = 0;
+      if (cp == -2) break;
+      r = lex_charclass(0, cp);
+      if (r.action == LEX_ACTION_NOMATCH) {
+        tok_start = ctx->it.byte_off;
+        tok_line = ctx->it.line;
+        tok_col = ctx->it.col;
+        ctx->pos = ctx->it.byte_off;
+        continue;
+      }
     }
-    tc_free(cur);
+    last_action = (int32_t)r.action;
+    state = r.state;
+    ctx->pos = ctx->it.byte_off;
+    if (cp == -2) break;
   }
-  for (int32_t i = 1; i < *scope_depth; i++) {
-    tc_free(&scope_stack[i].chunk);
-  }
-  *scope_depth = 0;
-  LexFunc funcs[] = {[SECTION_NONE] = lex_main, [SECTION_VPA] = lex_vpa, [SECTION_PEG] = lex_peg};
-  LexScopeKind kinds[] = {
-      [SECTION_NONE] = LEX_SCOPE_MAIN, [SECTION_VPA] = LEX_SCOPE_VPA, [SECTION_PEG] = LEX_SCOPE_PEG};
-  *cur_lex = funcs[new_section];
-  scope_stack[(*scope_depth)++] = (ScopeFrame){kinds[new_section], *cur_lex, false, NULL};
+  tc_free(&chunk);
+  return (ReAstNode){0};
 }
 
-typedef struct {
-  ReAstNode* asts; // darray
-} CcAstBuf;
-
-static void _cc_buf_add(CcAstBuf* buf, ReAstNode ast) {
-  if (!buf->asts) {
-    buf->asts = darray_new(sizeof(ReAstNode), 0);
+static TokenChunk _lex_re_str(LexCtx* ctx, char quote) {
+  LexFunc lex_fn = (quote == '"') ? lex_dquote_str : lex_squote_str;
+  TokenChunk chunk = NULL;
+  tc_init(&chunk);
+  
+  int64_t state = 0;
+  int32_t last_action = 0;
+  int32_t tok_start = ctx->it.byte_off;
+  int32_t tok_line = ctx->it.line;
+  int32_t tok_col = ctx->it.col;
+  
+  while (ctx->pos < ctx->ps->src_len) {
+    int32_t cp_byte = ctx->it.byte_off;
+    int32_t cp_line = ctx->it.line;
+    int32_t cp_col = ctx->it.col;
+    int32_t cp = _next_cp(ctx);
+    
+    LexResult r = lex_fn(state, cp);
+    
+    if (r.action == LEX_ACTION_NOMATCH) {
+      if (last_action > 0) {
+        if (last_action == TOK_STR_END) {
+          ctx->pos = ctx->it.byte_off;
+          return chunk;
+        }
+        if (last_action != TOK_COMMENT && last_action != TOK_SPACE) {
+          tc_add(&chunk, (Token){last_action, tok_start, cp_byte, tok_line, tok_col});
+        }
+      }
+      tok_start = cp_byte;
+      tok_line = cp_line;
+      tok_col = cp_col;
+      last_action = 0;
+      state = 0;
+      if (cp == -2) break;
+      r = lex_fn(0, cp);
+      if (r.action == LEX_ACTION_NOMATCH) {
+        tok_start = ctx->it.byte_off;
+        tok_line = ctx->it.line;
+        tok_col = ctx->it.col;
+        ctx->pos = ctx->it.byte_off;
+        continue;
+      }
+    }
+    last_action = (int32_t)r.action;
+    state = r.state;
+    ctx->pos = ctx->it.byte_off;
+    if (cp == -2) break;
   }
-  darray_push(buf->asts, ast);
+  return chunk;
 }
 
-typedef struct {
-  CcAstBuf cc_buf;
-} ReScopeCtx;
+static TokenChunk _lex_keyword_str(LexCtx* ctx, char quote) {
+  LexFunc lex_fn = (quote == '"') ? lex_dquote_str : lex_squote_str;
+  TokenChunk chunk = NULL;
+  tc_init(&chunk);
+  
+  int64_t state = 0;
+  int32_t last_action = 0;
+  int32_t tok_start = ctx->it.byte_off;
+  int32_t tok_line = ctx->it.line;
+  int32_t tok_col = ctx->it.col;
+  
+  while (ctx->pos < ctx->ps->src_len) {
+    int32_t cp_byte = ctx->it.byte_off;
+    int32_t cp_line = ctx->it.line;
+    int32_t cp_col = ctx->it.col;
+    int32_t cp = _next_cp(ctx);
+    
+    LexResult r = lex_fn(state, cp);
+    
+    if (r.action == LEX_ACTION_NOMATCH) {
+      if (last_action > 0) {
+        if (last_action == TOK_STR_END) {
+          ctx->pos = ctx->it.byte_off;
+          return chunk;
+        }
+        if (last_action != TOK_COMMENT && last_action != TOK_SPACE) {
+          tc_add(&chunk, (Token){last_action, tok_start, cp_byte, tok_line, tok_col});
+        }
+      }
+      tok_start = cp_byte;
+      tok_line = cp_line;
+      tok_col = cp_col;
+      last_action = 0;
+      state = 0;
+      if (cp == -2) break;
+      r = lex_fn(0, cp);
+      if (r.action == LEX_ACTION_NOMATCH) {
+        tok_start = ctx->it.byte_off;
+        tok_line = ctx->it.line;
+        tok_col = ctx->it.col;
+        ctx->pos = ctx->it.byte_off;
+        continue;
+      }
+    }
+    last_action = (int32_t)r.action;
+    state = r.state;
+    ctx->pos = ctx->it.byte_off;
+    if (cp == -2) break;
+  }
+  return chunk;
+}
+
+static TokenChunk _lex_re(LexCtx* ctx) {
+  TokenChunk chunk = NULL;
+  tc_init(&chunk);
+  ctx->cc_asts = darray_new(sizeof(ReAstNode), 0);
+  
+  int64_t state = 0;
+  int32_t last_action = 0;
+  int32_t tok_start = ctx->it.byte_off;
+  int32_t tok_line = ctx->it.line;
+  int32_t tok_col = ctx->it.col;
+  
+  while (ctx->pos < ctx->ps->src_len) {
+    int32_t cp_byte = ctx->it.byte_off;
+    int32_t cp_line = ctx->it.line;
+    int32_t cp_col = ctx->it.col;
+    int32_t cp = _next_cp(ctx);
+    
+    LexResult r = lex_re(state, cp);
+    
+    if (r.action == LEX_ACTION_NOMATCH) {
+      if (last_action > 0) {
+        if (last_action == TOK_RE_END) {
+          ctx->pos = ctx->it.byte_off;
+          return chunk;
+        }
+        if (last_action == TOK_NEG_CLASS_BEGIN || last_action == TOK_CLASS_BEGIN) {
+          ReAstNode cc_ast = _lex_charclass(ctx, last_action == TOK_NEG_CLASS_BEGIN);
+          darray_push(ctx->cc_asts, cc_ast);
+          tc_add(&chunk, (Token){RE_AST_TOK_CHARCLASS_BASE + (int32_t)darray_size(ctx->cc_asts) - 1,
+                                 tok_start, ctx->it.byte_off, tok_line, tok_col});
+          tok_start = ctx->it.byte_off;
+          tok_line = ctx->it.line;
+          tok_col = ctx->it.col;
+          last_action = 0;
+          state = 0;
+          continue;
+        }
+        if (last_action != TOK_COMMENT && last_action != TOK_SPACE) {
+          tc_add(&chunk, (Token){last_action, tok_start, cp_byte, tok_line, tok_col});
+        }
+      }
+      tok_start = cp_byte;
+      tok_line = cp_line;
+      tok_col = cp_col;
+      last_action = 0;
+      state = 0;
+      if (cp == -2) break;
+      r = lex_re(0, cp);
+      if (r.action == LEX_ACTION_NOMATCH) {
+        tok_start = ctx->it.byte_off;
+        tok_line = ctx->it.line;
+        tok_col = ctx->it.col;
+        ctx->pos = ctx->it.byte_off;
+        continue;
+      }
+    }
+    last_action = (int32_t)r.action;
+    state = r.state;
+    ctx->pos = ctx->it.byte_off;
+    if (cp == -2) break;
+  }
+  return chunk;
+}
 
 static bool _lex_with_dfa(ParseState* ps) {
-  ps->ustr = ustr_new((size_t)ps->src_len, ps->src);
-  if (!ps->ustr) {
+  char* ustr = ustr_new((size_t)ps->src_len, ps->src);
+  if (!ustr) {
     _error(ps, "invalid UTF-8 source");
     return false;
   }
 
-  int32_t byte_size = ustr_bytesize(ps->ustr);
-  UstrIter it;
-  ustr_iter_init(&it, ps->ustr, 0);
+  LexCtx ctx = {
+    .ps = ps,
+    .ustr = ustr,
+    .byte_size = ustr_bytesize(ustr),
+    .pos = 0,
+    .cc_asts = NULL,
+  };
+  ustr_iter_init(&ctx.it, ustr, 0);
 
-  ScopeFrame scope_stack[MAX_SCOPE_DEPTH];
-  int32_t scope_depth = 0;
-
-  ReScopeCtx re_ctx_stack[MAX_SCOPE_DEPTH];
-  int32_t re_ctx_depth = 0;
-
-  Section section = SECTION_NONE;
   LexFunc cur_lex = lex_main;
-  scope_stack[scope_depth++] = (ScopeFrame){LEX_SCOPE_MAIN, lex_main, false, NULL};
-
-  int64_t dfa_state = 0;
+  int64_t state = 0;
   int32_t last_action = 0;
-  int32_t tok_start_byte = 0;
-  int32_t tok_start_line = 1;
-  int32_t tok_start_col = 1;
+  int32_t tok_start = 0;
+  int32_t tok_line = 1;
+  int32_t tok_col = 1;
 
-  int32_t pos = 0;
-  while (pos < ps->src_len) {
-    int32_t cp_byte = it.byte_off;
-    int32_t cp_line = it.line;
-    int32_t cp_col = it.col;
-    int32_t cp = (cp_byte < byte_size) ? ustr_iter_next(&it) : -2;
+  while (ctx.pos < ps->src_len) {
+    int32_t cp_byte = ctx.it.byte_off;
+    int32_t cp_line = ctx.it.line;
+    int32_t cp_col = ctx.it.col;
+    int32_t cp = _next_cp(&ctx);
 
-    LexResult r = cur_lex(dfa_state, cp);
+    LexResult r = cur_lex(state, cp);
 
     if (r.action == LEX_ACTION_NOMATCH) {
       if (last_action > 0) {
-        int32_t emitted = last_action;
-
-        if (emitted == TOK_SECTION_VPA || emitted == TOK_SECTION_PEG) {
-          section = (emitted == TOK_SECTION_VPA) ? SECTION_VPA : SECTION_PEG;
-          _switch_section(section, scope_stack, &scope_depth, &cur_lex, &ps->main_chunk);
-          dfa_state = 0;
+        if (last_action == TOK_SECTION_VPA || last_action == TOK_SECTION_PEG) {
+          cur_lex = (last_action == TOK_SECTION_VPA) ? lex_vpa : lex_peg;
+          tok_start = cp_byte;
+          tok_line = cp_line;
+          tok_col = cp_col;
           last_action = 0;
-          tok_start_byte = cp_byte;
-          tok_start_line = cp_line;
-          tok_start_col = cp_col;
+          state = 0;
           if (cp != -2) {
             r = cur_lex(0, cp);
             if (r.action != LEX_ACTION_NOMATCH) {
               last_action = (int32_t)r.action;
-              dfa_state = r.state;
-              pos = it.byte_off;
+              state = r.state;
+              ctx.pos = ctx.it.byte_off;
               continue;
             }
-            tok_start_byte = it.byte_off;
-            tok_start_line = it.line;
-            tok_start_col = it.col;
-            pos = it.byte_off;
+            tok_start = ctx.it.byte_off;
+            tok_line = ctx.it.line;
+            tok_col = ctx.it.col;
+            ctx.pos = ctx.it.byte_off;
             continue;
           }
           break;
         }
-
-        Token tok = {emitted, tok_start_byte, cp_byte, tok_start_line, tok_start_col};
-
-        if (emitted == TOK_RE_BEGIN) {
-          if (scope_depth < MAX_SCOPE_DEPTH) {
-            scope_stack[scope_depth] = (ScopeFrame){LEX_SCOPE_RE, lex_re, false, NULL};
-            tc_init(&scope_stack[scope_depth].chunk);
-            tc_add(&scope_stack[scope_depth].chunk, tok);
-            scope_depth++;
-            cur_lex = lex_re;
-            if (re_ctx_depth < MAX_SCOPE_DEPTH) {
-              re_ctx_stack[re_ctx_depth++] = (ReScopeCtx){{0}};
-            }
+        if (last_action == TOK_RE_BEGIN) {
+          TokenChunk re_chunk = _lex_re(&ctx);
+          int32_t re_ntok = tc_size(re_chunk);
+          ReToken* re_rtoks = _to_re_tokens(re_chunk, re_ntok);
+          ReAstNode* ast = re_ast_build_re(ps->src, re_rtoks, re_ntok, ctx.cc_asts,
+                                           ctx.cc_asts ? (int32_t)darray_size(ctx.cc_asts) : 0);
+          free(re_rtoks);
+          darray_del(re_chunk);
+          darray_del(ctx.cc_asts);
+          ctx.cc_asts = NULL;
+          if (!ps->re_asts) {
+            ps->re_asts = darray_new(sizeof(ReAstNode*), 0);
           }
-        } else if (emitted == TOK_NEG_CLASS_BEGIN || emitted == TOK_CLASS_BEGIN) {
-          if (scope_depth < MAX_SCOPE_DEPTH) {
-            scope_stack[scope_depth] =
-                (ScopeFrame){LEX_SCOPE_CHARCLASS, lex_charclass, .negated = (emitted == TOK_NEG_CLASS_BEGIN)};
-            tc_init(&scope_stack[scope_depth].chunk);
-            scope_depth++;
-            cur_lex = lex_charclass;
+          darray_push(ps->re_asts, ast);
+          tc_add(&ps->main_chunk, (Token){TOK_RE_AST_BASE + (int32_t)darray_size(ps->re_asts) - 1,
+                                          tok_start, ctx.it.byte_off, tok_line, tok_col});
+          tok_start = ctx.it.byte_off;
+          tok_line = ctx.it.line;
+          tok_col = ctx.it.col;
+          last_action = 0;
+          state = 0;
+          continue;
+        }
+        if (last_action == TOK_STR_BEGIN) {
+          char quote = ps->src[tok_start];
+          TokenChunk str_chunk = (cur_lex == lex_peg) ? _lex_keyword_str(&ctx, quote) : _lex_re_str(&ctx, quote);
+          StrSpan span = _build_str_span(&str_chunk);
+          tc_free(&str_chunk);
+          if (!ps->str_spans) {
+            ps->str_spans = darray_new(sizeof(StrSpan), 0);
           }
-        } else if (emitted == TOK_STR_BEGIN) {
-          if (scope_depth < MAX_SCOPE_DEPTH) {
-            char quote_ch = ps->src[tok_start_byte];
-            LexScopeKind sk = (quote_ch == '"') ? LEX_SCOPE_DQUOTE_STR : LEX_SCOPE_SQUOTE_STR;
-            LexFunc sf = (quote_ch == '"') ? lex_dquote_str : lex_squote_str;
-            scope_stack[scope_depth] = (ScopeFrame){sk, sf, false, NULL};
-            tc_init(&scope_stack[scope_depth].chunk);
-            scope_depth++;
-            cur_lex = sf;
-          }
-        } else if (emitted == TOK_CLASS_END) {
-          if (scope_depth > 1) {
-            ScopeFrame* cc_frame = &scope_stack[scope_depth - 1];
-            int32_t cc_ntok = tc_size(cc_frame->chunk);
-            ReToken* cc_rtoks = _to_re_tokens(cc_frame->chunk, cc_ntok);
-            ReAstNode cc_ast = re_ast_build_charclass(ps->src, cc_rtoks, cc_ntok, cc_frame->negated);
-            free(cc_rtoks);
-            tc_free(&cc_frame->chunk);
-            scope_depth--;
-            cur_lex = scope_stack[scope_depth - 1].func;
-
-            if (re_ctx_depth > 0) {
-              CcAstBuf* buf = &re_ctx_stack[re_ctx_depth - 1].cc_buf;
-              _cc_buf_add(buf, cc_ast);
-              tc_add(&scope_stack[scope_depth - 1].chunk,
-                     (Token){RE_AST_TOK_CHARCLASS_BASE + (int32_t)darray_size(buf->asts) - 1, tok_start_byte, cp_byte,
-                             tok_start_line, tok_start_col});
-            }
-          }
-        } else if (emitted == TOK_RE_END) {
-          if (scope_depth > 1) {
-            ScopeFrame* re_frame = &scope_stack[scope_depth - 1];
-            TokenChunk re_chunk = re_frame->chunk;
-
-            CcAstBuf* cc_buf = (re_ctx_depth > 0) ? &re_ctx_stack[re_ctx_depth - 1].cc_buf : NULL;
-            int32_t re_ntok = tc_size(re_chunk) - 1;
-            ReToken* re_rtoks = _to_re_tokens(re_chunk + 1, re_ntok);
-            ReAstNode* ast = re_ast_build_re(ps->src, re_rtoks, re_ntok, cc_buf ? cc_buf->asts : NULL,
-                                             cc_buf ? (int32_t)darray_size(cc_buf->asts) : 0);
-            free(re_rtoks);
-
-            if (!ps->re_asts) {
-              ps->re_asts = darray_new(sizeof(ReAstNode*), 0);
-            }
-            darray_push(ps->re_asts, ast);
-
-            darray_del(re_chunk);
-            if (re_ctx_depth > 0) {
-              darray_del(re_ctx_stack[re_ctx_depth - 1].cc_buf.asts);
-              re_ctx_depth--;
-            }
-
-            scope_depth--;
-            cur_lex = scope_stack[scope_depth - 1].func;
-
-            tc_add(&scope_stack[scope_depth - 1].chunk,
-                   (Token){TOK_RE_AST_BASE + (int32_t)darray_size(ps->re_asts) - 1, tok_start_byte, cp_byte,
-                           tok_start_line, tok_start_col});
-          }
-        } else if (emitted == TOK_STR_END) {
-          if (scope_depth > 1) {
-            ScopeFrame* str_frame = &scope_stack[scope_depth - 1];
-            StrSpan span = _build_str_span(&str_frame->chunk);
-            if (!ps->str_spans) {
-              ps->str_spans = darray_new(sizeof(StrSpan), 0);
-            }
-            darray_push(ps->str_spans, span);
-
-            tc_free(&str_frame->chunk);
-            scope_depth--;
-            cur_lex = scope_stack[scope_depth - 1].func;
-
-            tc_add(&scope_stack[scope_depth - 1].chunk,
-                   (Token){TOK_STR_SPAN_BASE + (int32_t)darray_size(ps->str_spans) - 1, tok_start_byte, cp_byte,
-                           tok_start_line, tok_start_col});
-          }
-        } else if (emitted == TOK_COMMENT || emitted == TOK_SPACE) {
-          // skip
-        } else {
-          tc_add(&scope_stack[scope_depth - 1].chunk, tok);
+          darray_push(ps->str_spans, span);
+          tc_add(&ps->main_chunk, (Token){TOK_STR_SPAN_BASE + (int32_t)darray_size(ps->str_spans) - 1,
+                                          tok_start, ctx.it.byte_off, tok_line, tok_col});
+          tok_start = ctx.it.byte_off;
+          tok_line = ctx.it.line;
+          tok_col = ctx.it.col;
+          last_action = 0;
+          state = 0;
+          continue;
+        }
+        if (last_action != TOK_COMMENT && last_action != TOK_SPACE) {
+          tc_add(&ps->main_chunk, (Token){last_action, tok_start, cp_byte, tok_line, tok_col});
         }
       }
-
-      tok_start_byte = cp_byte;
-      tok_start_line = cp_line;
-      tok_start_col = cp_col;
+      tok_start = cp_byte;
+      tok_line = cp_line;
+      tok_col = cp_col;
       last_action = 0;
-      dfa_state = 0;
-
-      if (cp == -2) {
-        break;
-      }
-
+      state = 0;
+      if (cp == -2) break;
       r = cur_lex(0, cp);
       if (r.action == LEX_ACTION_NOMATCH) {
-        tok_start_byte = it.byte_off;
-        tok_start_line = it.line;
-        tok_start_col = it.col;
-        pos = it.byte_off;
+        tok_start = ctx.it.byte_off;
+        tok_line = ctx.it.line;
+        tok_col = ctx.it.col;
+        ctx.pos = ctx.it.byte_off;
         continue;
       }
     }
-
     last_action = (int32_t)r.action;
-    dfa_state = r.state;
-    pos = it.byte_off;
-
-    if (cp == -2) {
-      break;
-    }
+    state = r.state;
+    ctx.pos = ctx.it.byte_off;
+    if (cp == -2) break;
   }
 
-  if (last_action > 0) {
-    if (!_is_scope_transition(last_action) && last_action != TOK_COMMENT && last_action != TOK_SPACE &&
-        last_action != TOK_SECTION_VPA && last_action != TOK_SECTION_PEG) {
-      tc_add(&scope_stack[scope_depth - 1].chunk,
-             (Token){last_action, tok_start_byte, pos, tok_start_line, tok_start_col});
-    }
+  if (last_action > 0 && last_action != TOK_COMMENT && last_action != TOK_SPACE) {
+    tc_add(&ps->main_chunk, (Token){last_action, tok_start, ctx.pos, tok_line, tok_col});
   }
 
-  if (scope_depth > 0) {
-    TokenChunk* cur = &scope_stack[0].chunk;
-    for (int32_t i = 0; i < tc_size(*cur); i++) {
-      tc_add(&ps->main_chunk, (*cur)[i]);
-    }
-    tc_free(cur);
-  }
-  for (int32_t i = 1; i < scope_depth; i++) {
-    tc_free(&scope_stack[i].chunk);
-  }
-
-  ustr_del(ps->ustr);
-  ps->ustr = NULL;
+  ustr_del(ustr);
   return true;
 }
-
-// --- Token stream helpers ---
-
 static Token* _peek(ParseState* ps) {
   if (ps->tpos < tc_size(ps->main_chunk)) {
     return &ps->main_chunk[ps->tpos];

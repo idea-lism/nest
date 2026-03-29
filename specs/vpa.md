@@ -1,4 +1,10 @@
-src/vpa.c is a vpa lexer generator.
+# Visibly pushdown generator
+
+Create `src/vpa.c` (`vpa_gen()`):
+- define functions to generates visibly pushdown automata in LLVM IR, using Parser's processed-data
+- generate helpers for result C header
+  1. token id definitions
+  2. util functions that the final LLVM IR may need
 
 It iterates the parsed & desugared AST, utilize src/re.h to generate DFA, utilize src/irwriter.h to generate the upper level visibly pushdown machine.
 
