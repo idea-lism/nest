@@ -52,11 +52,18 @@ def ninja_raw(text)
   $extra_ninja += text + "\n"
 end
 
+def sh *cmd, **opts
+  print "system "
+  p cmd
+  system *cmd, out: $stdout, err: $stderr, **opts or abort "sh failed"
+end
+
 # --- Ensure kissat is built (not needed on Windows, DSatur fallback used instead) ---
 IS_WINDOWS = RUBY_PLATFORM =~ /mingw|mswin|cygwin/
 KISSAT_LIB = "build/kissat/build/libkissat.a"
 unless IS_WINDOWS || File.exist?(KISSAT_LIB)
   require 'tmpdir'
+  require 'open-uri'
   version  = "rel-4.0.4"
   url      = "https://github.com/arminbiere/kissat/archive/refs/tags/#{version}.tar.gz"
   dest     = "build/kissat"
@@ -64,15 +71,14 @@ unless IS_WINDOWS || File.exist?(KISSAT_LIB)
   FileUtils.rm_rf(dest)
   puts "Downloading kissat #{version}..."
   tarball = "build/kissat.tar.gz"
-  URI.open(url) { |src| File.binwrite(tarball, src.read) }
-  system("tar", "xzf", tarball, "-C", "build", "--exclude=*/test/cnf/hard.cnf") or abort("tar failed")
+  open(url) { |src| File.binwrite(tarball, src.read) }
+  sh "tar", "xzf", tarball, "-C", "build", "--exclude=*/test/cnf/hard.cnf"
   File.delete(tarball)
   File.rename("build/kissat-#{version}", dest)
-  puts "Configuring kissat..."
-  cfg_args = CC != "cc" ? ["./configure", "CC=#{CC}"] : ["./configure"]
-  Dir.chdir(dest) { system(*cfg_args) or abort("configure failed") }
-  puts "Building kissat..."
-  Dir.chdir("#{dest}/build") { system("make", "libkissat.a") or abort("make failed") }
+  Dir.chdir dest do
+    sh "./configure"
+    sh "make"
+  end
   puts "Done: #{KISSAT_LIB}"
 end
 
@@ -117,7 +123,7 @@ unless File.executable?(TOOL_BIN)
   URI.open(amalgamate_url) do |remote|
     File.binwrite(zip_path, remote.read)
   end
-  system("unzip", "-o", zip_path, "-d", "build/tools/", out: File::NULL) || abort("unzip failed")
+  sh "unzip", "-o", zip_path, "-d", "build/tools/", out: File::NULL
   # The zip contains a subdirectory; move the binary up
   Dir.glob("build/tools/*/amalgamate").each do |bin|
     FileUtils.mv(bin, TOOL_BIN)
