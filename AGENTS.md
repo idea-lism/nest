@@ -49,10 +49,10 @@ scripts/coverage # generate coverage report at build/coverage/html/index.html
 | lex | lex.c, lex.h | Regex syntax parser, used internally by vpa.c (not distributed) |
 | parse_gen | parse_gen.c | Build-time tool: generates DFA lexers for .nest syntax (inlines lex helpers) |
 | ulex | ulex.c | CLI tool wrapping lex: reads pattern file, emits .ll |
-| coloring | coloring.c, coloring.h | SAT-based graph coloring for PEG parser optimization (uses kissat) |
+| coloring | coloring.c, coloring.h | Graph coloring for PEG parser optimization (kissat SAT on macOS/Linux, DSatur on Windows) |
 
 Dependency chain: ustr → bitset → irwriter → aut → re → lex → ulex
-PEG parser: coloring (kissat) → peg
+PEG parser: coloring (kissat / DSatur) → peg
 
 ## Key design points
 
@@ -68,7 +68,7 @@ The `coloring` module uses kissat (SAT solver) to optimize PEG parser memory lay
 
 ### Build dependency
 
-kissat is built automatically by `config.rb` via `scripts/build_kissat.rb` (downloads rel-4.0.4, builds to `build/kissat/build/libkissat.a`).
+kissat is built automatically by `config.rb` on macOS/Linux (downloads rel-4.0.4, builds to `build/kissat/build/libkissat.a`). On Windows, DSatur is used instead and kissat is not required.
 
 ### SAT encoding
 

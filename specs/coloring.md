@@ -24,3 +24,7 @@ For testing, src/graph.c provides:
 - `Graph* graph_random_erdos_renyi(uint32_t n, double p)` - generate random graph (edge probability p)
 - `int32_t* graph_edges(Graph* g)` - get edge array for coloring_solve
 - `max_clique()` - get the max clique number for lower bound detection
+
+## Windows fallback
+
+kissat crashes in windows, we use DSatur algorithm instead. So in windows build we don't need to download/build kissat either.

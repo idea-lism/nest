@@ -61,19 +61,21 @@ build #{bd}/nest_lex.ll: gen_nest_lex #{bd}/parse_gen
 build #{bd}/nest_lex.o: ll_cc #{bd}/nest_lex.ll
 NINJA
 
+kissat_lib = IS_WINDOWS ? "" : " build/kissat/build/libkissat.a"
+
 ninja_raw "build #{bd}/test/test_coloring.o: cc_test test/test_coloring.c\n"
 ninja_raw "build #{bd}/src/coloring.o: cc src/coloring.c\n"
 ninja_raw "build #{bd}/src/graph.o: cc src/graph.c\n"
 
 ninja_raw <<~NINJA
-build #{bd}/test_coloring: link #{bd}/test/test_coloring.o #{bd}/src/coloring.o #{bd}/src/graph.o build/kissat/build/libkissat.a
+build #{bd}/test_coloring: link #{bd}/test/test_coloring.o #{bd}/src/coloring.o #{bd}/src/graph.o#{kissat_lib}
 NINJA
 
 $extra_defaults << "#{bd}/test_coloring"
 
 ninja_raw "build #{bd}/test/test_peg.o: cc_test test/test_peg.c\n"
 ninja_raw <<~NINJA
-build #{bd}/test_peg: link #{bd}/test/test_peg.o #{bd}/test/compat.o #{bd}/src/peg.o #{bd}/src/peg_ir.o #{bd}/src/header_writer.o #{bd}/src/irwriter.o #{bd}/src/bitset.o #{bd}/src/darray.o #{bd}/src/coloring.o #{bd}/src/graph.o build/kissat/build/libkissat.a
+build #{bd}/test_peg: link #{bd}/test/test_peg.o #{bd}/test/compat.o #{bd}/src/peg.o #{bd}/src/peg_ir.o #{bd}/src/header_writer.o #{bd}/src/irwriter.o #{bd}/src/bitset.o #{bd}/src/darray.o #{bd}/src/coloring.o #{bd}/src/graph.o#{kissat_lib}
 NINJA
 
 $extra_defaults << "#{bd}/test_peg"
@@ -94,7 +96,7 @@ end
 
 test_parse_all_srcs = %w[test/test_parse.c test/compat.c src/parse.c src/re_ast.c src/token_chunk.c src/vpa.c src/peg.c src/peg_ir.c src/header_writer.c src/re.c src/aut.c src/irwriter.c src/bitset.c src/darray.c src/coloring.c src/graph.c]
 test_parse_objs = test_parse_all_srcs.map { |s| "#{bd}/#{s.sub(/\.c$/, '.o')}" }
-test_parse_all = (test_parse_objs + ["#{bd}/nest_lex.o", "#{bd}/libustr.a", "build/kissat/build/libkissat.a"]).join(" ")
+test_parse_all = (test_parse_objs + ["#{bd}/nest_lex.o", "#{bd}/libustr.a"] + (IS_WINDOWS ? [] : ["build/kissat/build/libkissat.a"])).join(" ")
 
 ninja_raw <<~NINJA
 build #{bd}/test_parse: link #{test_parse_all}
@@ -106,7 +108,7 @@ ninja_raw "build #{bd}/src/nest.o: cc src/nest.c\n"
 
 nest_srcs = %w[src/nest.c src/parse.c src/re_ast.c src/token_chunk.c src/vpa.c src/peg.c src/peg_ir.c src/header_writer.c src/re.c src/aut.c src/irwriter.c src/bitset.c src/darray.c src/coloring.c src/graph.c]
 nest_objs = nest_srcs.map { |s| "#{bd}/#{s.sub(/\.c$/, '.o')}" }
-nest_all = (nest_objs + ["#{bd}/nest_lex.o", "#{bd}/libustr.a", "build/kissat/build/libkissat.a"]).join(" ")
+nest_all = (nest_objs + ["#{bd}/nest_lex.o", "#{bd}/libustr.a"] + (IS_WINDOWS ? [] : ["build/kissat/build/libkissat.a"])).join(" ")
 
 ninja_raw <<~NINJA
 build #{bd}/nest: link #{nest_all}

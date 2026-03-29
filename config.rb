@@ -52,11 +52,28 @@ def ninja_raw(text)
   $extra_ninja += text + "\n"
 end
 
-# --- Ensure kissat is built ---
+# --- Ensure kissat is built (not needed on Windows, DSatur fallback used instead) ---
+IS_WINDOWS = RUBY_PLATFORM =~ /mingw|mswin|cygwin/
 KISSAT_LIB = "build/kissat/build/libkissat.a"
-unless File.exist?(KISSAT_LIB)
+unless IS_WINDOWS || File.exist?(KISSAT_LIB)
+  require 'tmpdir'
+  version  = "rel-4.0.4"
+  url      = "https://github.com/arminbiere/kissat/archive/refs/tags/#{version}.tar.gz"
+  dest     = "build/kissat"
+  FileUtils.mkdir_p("build")
+  FileUtils.rm_rf(dest)
+  puts "Downloading kissat #{version}..."
+  tarball = "build/kissat.tar.gz"
+  URI.open(url) { |src| File.binwrite(tarball, src.read) }
+  system("tar", "xzf", tarball, "-C", "build", "--exclude=*/test/cnf/hard.cnf") or abort("tar failed")
+  File.delete(tarball)
+  File.rename("build/kissat-#{version}", dest)
+  puts "Configuring kissat..."
+  cfg_args = CC != "cc" ? ["./configure", "CC=#{CC}"] : ["./configure"]
+  Dir.chdir(dest) { system(*cfg_args) or abort("configure failed") }
   puts "Building kissat..."
-  system("ruby", "scripts/build_kissat.rb") || abort("kissat build failed")
+  Dir.chdir("#{dest}/build") { system("make", "libkissat.a") or abort("make failed") }
+  puts "Done: #{KISSAT_LIB}"
 end
 
 # --- Load project config ---

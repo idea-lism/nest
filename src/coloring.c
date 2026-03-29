@@ -14,6 +14,73 @@ struct ColoringResult {
   VertexInfo* vertex_info;
 };
 
+#ifdef _WIN32
+
+// DSatur: pick uncolored vertex with max saturation (ties broken by degree), assign smallest feasible color.
+static int32_t* _solve_dsatur(int32_t n_vertices, int32_t* edges, int32_t n_edges, int32_t k) {
+  int32_t* adj = calloc(n_vertices * n_vertices, sizeof(int32_t));
+  int32_t* degree = calloc(n_vertices, sizeof(int32_t));
+  for (int32_t i = 0; i < n_edges; i++) {
+    int32_t u = edges[i * 2], v = edges[i * 2 + 1];
+    adj[u * n_vertices + v] = 1;
+    adj[v * n_vertices + u] = 1;
+    degree[u]++;
+    degree[v]++;
+  }
+
+  int32_t* colors = malloc(n_vertices * sizeof(int32_t));
+  memset(colors, -1, n_vertices * sizeof(int32_t));
+
+  // sat[v] = number of distinct colors among v's colored neighbors
+  int32_t* sat = calloc(n_vertices, sizeof(int32_t));
+  // neighbor_colors[v * k + c] = 1 if v has a neighbor colored c
+  int32_t* neighbor_colors = calloc(n_vertices * k, sizeof(int32_t));
+
+  for (int32_t step = 0; step < n_vertices; step++) {
+    // pick vertex with max saturation, break ties by degree
+    int32_t best = -1;
+    for (int32_t v = 0; v < n_vertices; v++) {
+      if (colors[v] >= 0) continue;
+      if (best < 0 || sat[v] > sat[best] || (sat[v] == sat[best] && degree[v] > degree[best])) {
+        best = v;
+      }
+    }
+
+    // assign smallest color not used by neighbors
+    int32_t c;
+    for (c = 0; c < k; c++) {
+      if (!neighbor_colors[best * k + c]) break;
+    }
+    if (c >= k) {
+      free(adj);
+      free(degree);
+      free(sat);
+      free(neighbor_colors);
+      free(colors);
+      return NULL;
+    }
+    colors[best] = c;
+
+    // update saturation of uncolored neighbors
+    for (int32_t v = 0; v < n_vertices; v++) {
+      if (adj[best * n_vertices + v] && colors[v] < 0) {
+        if (!neighbor_colors[v * k + c]) {
+          neighbor_colors[v * k + c] = 1;
+          sat[v]++;
+        }
+      }
+    }
+  }
+
+  free(adj);
+  free(degree);
+  free(sat);
+  free(neighbor_colors);
+  return colors;
+}
+
+#else
+
 typedef struct kissat kissat;
 extern kissat* kissat_init(void);
 extern void kissat_add(kissat* solver, int lit);
@@ -32,10 +99,10 @@ static int32_t* _solve_sat(int32_t n_vertices, int32_t* edges, int32_t n_edges, 
   kissat* solver = kissat_init();
   kissat_set_option(solver, "seed", seed);
   kissat_set_option(solver, "quiet", 1);
-  
+
   int32_t max_var = n_vertices * k;
   kissat_reserve(solver, max_var);
-  
+
   if (max_steps > 0) {
     kissat_set_conflict_limit(solver, (unsigned)max_steps);
   }
@@ -73,7 +140,7 @@ static int32_t* _solve_sat(int32_t n_vertices, int32_t* edges, int32_t n_edges, 
   }
   int32_t* clique = graph_find_max_clique(g);
   graph_del(g);
-  
+
   if (clique) {
     int32_t clique_size = clique[0];
     for (int32_t i = 0; i < clique_size && i < k; i++) {
@@ -101,6 +168,8 @@ static int32_t* _solve_sat(int32_t n_vertices, int32_t* edges, int32_t n_edges, 
   return colors;
 }
 
+#endif
+
 static void _build_segments(ColoringResult* cr, int32_t* colors, int32_t k) {
   int32_t* color_counts = calloc(k, sizeof(int32_t));
   for (int32_t i = 0; i < cr->n_vertices; i++) {
@@ -109,7 +178,7 @@ static void _build_segments(ColoringResult* cr, int32_t* colors, int32_t k) {
 
   int32_t sg_id = 0;
   int32_t* color_sg_base = malloc(k * sizeof(int32_t));
-  
+
   for (int32_t c = 0; c < k; c++) {
     color_sg_base[c] = sg_id;
     int32_t count = color_counts[c];
@@ -137,13 +206,20 @@ ColoringResult* coloring_solve(int32_t n_vertices, int32_t* edges, int32_t n_edg
   cr->n_vertices = n_vertices;
   cr->vertex_info = malloc(n_vertices * sizeof(VertexInfo));
 
+#ifdef _WIN32
+  (void)max_steps;
+  (void)seed;
+  int32_t* colors = _solve_dsatur(n_vertices, edges, n_edges, k);
+#else
   int32_t* colors = _solve_sat(n_vertices, edges, n_edges, k, max_steps, seed);
+#endif
+
   if (!colors) {
     free(cr->vertex_info);
     free(cr);
     return NULL;
   }
-  
+
   _build_segments(cr, colors, k);
   free(colors);
 
