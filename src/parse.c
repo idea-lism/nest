@@ -161,6 +161,22 @@ static StrSpan _build_str_span(TokenChunk* chunk) {
 #define TOK_RE_AST_BASE 20000
 #define TOK_STR_SPAN_BASE 30000
 
+typedef enum {
+  SCOPE_MAIN,
+  SCOPE_VPA,
+  SCOPE_PEG,
+  SCOPE_RE,
+  SCOPE_CHARCLASS,
+  SCOPE_DQUOTE_STR,
+  SCOPE_SQUOTE_STR,
+} ScopeId;
+
+typedef struct {
+  ScopeId id;
+  LexFunc lex_fn;
+  int32_t end_token;
+} ScopeConfig;
+
 typedef struct {
   ParseState* ps;
   char* ustr;
@@ -177,170 +193,77 @@ static int32_t _next_cp(LexCtx* ctx) {
   return ustr_iter_next(&ctx->it);
 }
 
+static TokenChunk _lex_scope(LexCtx* ctx, ScopeConfig* cfg) {
+  TokenChunk chunk = NULL;
+  tc_init(&chunk);
+  
+  int64_t state = 0;
+  int32_t last_action = 0;
+  int32_t tok_start = ctx->it.byte_off;
+  int32_t tok_line = ctx->it.line;
+  int32_t tok_col = ctx->it.col;
+  
+  while (ctx->pos < ctx->ps->src_len) {
+    int32_t cp_byte = ctx->it.byte_off;
+    int32_t cp_line = ctx->it.line;
+    int32_t cp_col = ctx->it.col;
+    int32_t cp = _next_cp(ctx);
+    
+    LexResult r = cfg->lex_fn(state, cp);
+    
+    if (r.action == LEX_ACTION_NOMATCH) {
+      if (last_action > 0) {
+        if (last_action == cfg->end_token) {
+          ctx->pos = ctx->it.byte_off;
+          return chunk;
+        }
+        if (last_action != TOK_COMMENT && last_action != TOK_SPACE) {
+          tc_add(&chunk, (Token){last_action, tok_start, cp_byte, tok_line, tok_col});
+        }
+      }
+      tok_start = cp_byte;
+      tok_line = cp_line;
+      tok_col = cp_col;
+      last_action = 0;
+      state = 0;
+      if (cp == -2) break;
+      r = cfg->lex_fn(0, cp);
+      if (r.action == LEX_ACTION_NOMATCH) {
+        tok_start = ctx->it.byte_off;
+        tok_line = ctx->it.line;
+        tok_col = ctx->it.col;
+        ctx->pos = ctx->it.byte_off;
+        continue;
+      }
+    }
+    last_action = (int32_t)r.action;
+    state = r.state;
+    ctx->pos = ctx->it.byte_off;
+    if (cp == -2) break;
+  }
+  return chunk;
+}
+
 static ReAstNode _lex_charclass(LexCtx* ctx, bool negated) {
-  TokenChunk chunk = NULL;
-  tc_init(&chunk);
-  
-  int64_t state = 0;
-  int32_t last_action = 0;
-  int32_t tok_start = ctx->it.byte_off;
-  int32_t tok_line = ctx->it.line;
-  int32_t tok_col = ctx->it.col;
-  
-  while (ctx->pos < ctx->ps->src_len) {
-    int32_t cp_byte = ctx->it.byte_off;
-    int32_t cp_line = ctx->it.line;
-    int32_t cp_col = ctx->it.col;
-    int32_t cp = _next_cp(ctx);
-    
-    LexResult r = lex_charclass(state, cp);
-    
-    if (r.action == LEX_ACTION_NOMATCH) {
-      if (last_action > 0) {
-        if (last_action == TOK_CLASS_END) {
-          ReToken* rtoks = _to_re_tokens(chunk, tc_size(chunk));
-          ReAstNode ast = re_ast_build_charclass(ctx->ps->src, rtoks, tc_size(chunk), negated);
-          free(rtoks);
-          tc_free(&chunk);
-          ctx->pos = ctx->it.byte_off;
-          return ast;
-        }
-        if (last_action != TOK_COMMENT && last_action != TOK_SPACE) {
-          tc_add(&chunk, (Token){last_action, tok_start, cp_byte, tok_line, tok_col});
-        }
-      }
-      tok_start = cp_byte;
-      tok_line = cp_line;
-      tok_col = cp_col;
-      last_action = 0;
-      state = 0;
-      if (cp == -2) break;
-      r = lex_charclass(0, cp);
-      if (r.action == LEX_ACTION_NOMATCH) {
-        tok_start = ctx->it.byte_off;
-        tok_line = ctx->it.line;
-        tok_col = ctx->it.col;
-        ctx->pos = ctx->it.byte_off;
-        continue;
-      }
-    }
-    last_action = (int32_t)r.action;
-    state = r.state;
-    ctx->pos = ctx->it.byte_off;
-    if (cp == -2) break;
-  }
+  ScopeConfig cfg = {.id = SCOPE_CHARCLASS, .lex_fn = lex_charclass, .end_token = TOK_CLASS_END};
+  TokenChunk chunk = _lex_scope(ctx, &cfg);
+  ReToken* rtoks = _to_re_tokens(chunk, tc_size(chunk));
+  ReAstNode ast = re_ast_build_charclass(ctx->ps->src, rtoks, tc_size(chunk), negated);
+  free(rtoks);
   tc_free(&chunk);
-  return (ReAstNode){0};
+  return ast;
 }
 
-static TokenChunk _lex_re_str(LexCtx* ctx, char quote) {
+static TokenChunk _lex_str(LexCtx* ctx, char quote) {
   LexFunc lex_fn = (quote == '"') ? lex_dquote_str : lex_squote_str;
-  TokenChunk chunk = NULL;
-  tc_init(&chunk);
-  
-  int64_t state = 0;
-  int32_t last_action = 0;
-  int32_t tok_start = ctx->it.byte_off;
-  int32_t tok_line = ctx->it.line;
-  int32_t tok_col = ctx->it.col;
-  
-  while (ctx->pos < ctx->ps->src_len) {
-    int32_t cp_byte = ctx->it.byte_off;
-    int32_t cp_line = ctx->it.line;
-    int32_t cp_col = ctx->it.col;
-    int32_t cp = _next_cp(ctx);
-    
-    LexResult r = lex_fn(state, cp);
-    
-    if (r.action == LEX_ACTION_NOMATCH) {
-      if (last_action > 0) {
-        if (last_action == TOK_STR_END) {
-          ctx->pos = ctx->it.byte_off;
-          return chunk;
-        }
-        if (last_action != TOK_COMMENT && last_action != TOK_SPACE) {
-          tc_add(&chunk, (Token){last_action, tok_start, cp_byte, tok_line, tok_col});
-        }
-      }
-      tok_start = cp_byte;
-      tok_line = cp_line;
-      tok_col = cp_col;
-      last_action = 0;
-      state = 0;
-      if (cp == -2) break;
-      r = lex_fn(0, cp);
-      if (r.action == LEX_ACTION_NOMATCH) {
-        tok_start = ctx->it.byte_off;
-        tok_line = ctx->it.line;
-        tok_col = ctx->it.col;
-        ctx->pos = ctx->it.byte_off;
-        continue;
-      }
-    }
-    last_action = (int32_t)r.action;
-    state = r.state;
-    ctx->pos = ctx->it.byte_off;
-    if (cp == -2) break;
-  }
-  return chunk;
-}
-
-static TokenChunk _lex_keyword_str(LexCtx* ctx, char quote) {
-  LexFunc lex_fn = (quote == '"') ? lex_dquote_str : lex_squote_str;
-  TokenChunk chunk = NULL;
-  tc_init(&chunk);
-  
-  int64_t state = 0;
-  int32_t last_action = 0;
-  int32_t tok_start = ctx->it.byte_off;
-  int32_t tok_line = ctx->it.line;
-  int32_t tok_col = ctx->it.col;
-  
-  while (ctx->pos < ctx->ps->src_len) {
-    int32_t cp_byte = ctx->it.byte_off;
-    int32_t cp_line = ctx->it.line;
-    int32_t cp_col = ctx->it.col;
-    int32_t cp = _next_cp(ctx);
-    
-    LexResult r = lex_fn(state, cp);
-    
-    if (r.action == LEX_ACTION_NOMATCH) {
-      if (last_action > 0) {
-        if (last_action == TOK_STR_END) {
-          ctx->pos = ctx->it.byte_off;
-          return chunk;
-        }
-        if (last_action != TOK_COMMENT && last_action != TOK_SPACE) {
-          tc_add(&chunk, (Token){last_action, tok_start, cp_byte, tok_line, tok_col});
-        }
-      }
-      tok_start = cp_byte;
-      tok_line = cp_line;
-      tok_col = cp_col;
-      last_action = 0;
-      state = 0;
-      if (cp == -2) break;
-      r = lex_fn(0, cp);
-      if (r.action == LEX_ACTION_NOMATCH) {
-        tok_start = ctx->it.byte_off;
-        tok_line = ctx->it.line;
-        tok_col = ctx->it.col;
-        ctx->pos = ctx->it.byte_off;
-        continue;
-      }
-    }
-    last_action = (int32_t)r.action;
-    state = r.state;
-    ctx->pos = ctx->it.byte_off;
-    if (cp == -2) break;
-  }
-  return chunk;
+  ScopeConfig cfg = {.id = (quote == '"') ? SCOPE_DQUOTE_STR : SCOPE_SQUOTE_STR, .lex_fn = lex_fn, .end_token = TOK_STR_END};
+  return _lex_scope(ctx, &cfg);
 }
 
 static TokenChunk _lex_re(LexCtx* ctx) {
+  ctx->cc_asts = darray_new(sizeof(ReAstNode), 0);
   TokenChunk chunk = NULL;
   tc_init(&chunk);
-  ctx->cc_asts = darray_new(sizeof(ReAstNode), 0);
   
   int64_t state = 0;
   int32_t last_action = 0;
@@ -482,7 +405,7 @@ static bool _lex_with_dfa(ParseState* ps) {
         }
         if (last_action == TOK_STR_BEGIN) {
           char quote = ps->src[tok_start];
-          TokenChunk str_chunk = (cur_lex == lex_peg) ? _lex_keyword_str(&ctx, quote) : _lex_re_str(&ctx, quote);
+          TokenChunk str_chunk = _lex_str(&ctx, quote);
           StrSpan span = _build_str_span(&str_chunk);
           tc_free(&str_chunk);
           if (!ps->str_spans) {

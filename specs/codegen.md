@@ -23,3 +23,4 @@ Takes parser AST, validate and call codegen.
 
 ### code generator invocation
 
+Use `src/vpa.c` and `src/peg.c` for the code generating.
