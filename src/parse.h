@@ -9,9 +9,9 @@
 // IMPORTANT: Within each DFA scope, tokens that should win over '.' (TOK_CHAR)
 // must have a LOWER numeric ID than TOK_CHAR (due to MIN-RULE).
 enum {
-  TOK_COMMENT = 1,
-  TOK_SPACE,
-  TOK_NL,
+  IGNORED_COMMENT = 1,
+  IGNORED_SPACE,
+  IGNORED_NL,
 
   // section headers
   TOK_SECTION_VPA,
@@ -64,7 +64,7 @@ enum {
   TOK_RE_MAYBE,
   TOK_RE_PLUS,
   TOK_RE_STAR,
-  TOK_RANGE_START,
+  TOK_RANGE_SEP,
 
   // chars (shared across re, charclass, string scopes)
   // Must be LAST among tokens used in re/charclass/string scopes

@@ -106,9 +106,9 @@ ReAstNode re_ast_build_charclass(const char* src, ReToken* tokens, int32_t ntoke
   ReAstNode node = {.kind = RE_AST_CHARCLASS, .negated = negated};
   int32_t i = 0;
   while (i < ntokens) {
-    ReToken* t = &tokens[i];
-    if (t->id == TOK_RANGE_START) {
-      int32_t lo = (unsigned char)src[t->start];
+    int32_t lo = re_ast_parse_char_cp(src, &tokens[i]);
+    i++;
+    if (i < ntokens && tokens[i].id == TOK_RANGE_SEP) {
       i++;
       if (i < ntokens) {
         int32_t hi = re_ast_parse_char_cp(src, &tokens[i]);
@@ -116,9 +116,7 @@ ReAstNode re_ast_build_charclass(const char* src, ReToken* tokens, int32_t ntoke
         i++;
       }
     } else {
-      int32_t cp = re_ast_parse_char_cp(src, t);
-      re_ast_add_child(&node, (ReAstNode){.kind = RE_AST_CHAR, .codepoint = cp});
-      i++;
+      re_ast_add_child(&node, (ReAstNode){.kind = RE_AST_CHAR, .codepoint = lo});
     }
   }
   return node;

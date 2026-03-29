@@ -432,9 +432,9 @@ static void _lex_gen_func(Lex* l, IrWriter* w, bool debug_mode) {
 // --- Scope builders ---
 
 static void _build_ignores(Lex* l) {
-  _lex_add(l, "#[^\\n]*", __LINE__, 15, TOK_COMMENT);
-  _lex_add(l, "[ \\t]+", __LINE__, 15, TOK_SPACE);
-  _lex_add(l, "\\n+", __LINE__, 15, TOK_NL);
+  _lex_add(l, "#[^\\n]*", __LINE__, 15, IGNORED_COMMENT);
+  _lex_add(l, "[ \\t]+", __LINE__, 15, IGNORED_SPACE);
+  _lex_add(l, "\\n+", __LINE__, 15, IGNORED_NL);
 }
 
 static Lex* _build_main_scope(void) {
@@ -514,7 +514,7 @@ static Lex* _build_charclass_scope(void) {
   Lex* l = _lex_new("lex_charclass", "nest", "");
 
   _lex_add(l, "\\]", __LINE__, 15, TOK_CLASS_END);
-  _lex_add(l, ".-", __LINE__, 15, TOK_RANGE_START);
+  _lex_add(l, ".-", __LINE__, 15, TOK_RANGE_SEP);
 
   _lex_add(l, "\\\\u\\{[0-9a-fA-F]+\\}", __LINE__, 15, TOK_CODEPOINT);
   _lex_add(l, "\\\\[bfnrtv]", __LINE__, 15, TOK_C_ESCAPE);
