@@ -1,5 +1,7 @@
 Takes parser AST, validate and call codegen.
 
+Create "src/validate_and_gen.c"
+
 ### Nest file definition validation
 
 - `main` must exist in `[[vpa]]`
