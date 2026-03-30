@@ -36,7 +36,7 @@ The overall handling with this syntax:
 
 Resulting interface:
 
-- `parse_nest(const char* src, HeaderWriter* header_writer, IrWriter* ir_writer)`
+- `bool parse_nest(const char* src, HeaderWriter* header_writer, IrWriter* ir_writer)`
 
 For reference, file `specs/bootstrap.nest` contains the full syntax definition in its own syntax.
 
@@ -172,6 +172,12 @@ In the loop of `_lex_scope`
 Error handling:
 - when sub lexer meets error, set error to lexing state
 - parent lexer checks lexing state after calling sub lexer, if error, just return
+
+The [token stream tree](src/tok_chunk.c) is organized the same way as `TokenTree` in [VPA generated code]specs/vpa.md .
+
+The parsing also follows this nested structure:
+- When parsing matches to a rule that is not a scope, call it as in normal recursive descendant parsers
+- When parsing matches to a rule that maps to a scope, read a scope_id token and the chunk it points to, and call rule with the new child chunk
 
 ### What is FORBIDDEN, a no-go
 

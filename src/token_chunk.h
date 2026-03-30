@@ -3,17 +3,19 @@
 #include <stdint.h>
 
 typedef struct {
-  int32_t id;
-  int32_t start;
-  int32_t end;
-  int32_t line;
-  int32_t col;
+  int32_t tok_id;
+  int32_t cp_start;
+  int32_t cp_size;
+  int32_t chunk_id;
 } Token;
 
-// TokenChunk is a darray of Token.
-typedef Token* TokenChunk;
+typedef struct {
+  int32_t scope_id;
+  int32_t parent_id;
+  Token* tokens;
+} TokenChunk;
 
-void tc_init(TokenChunk* c);
+void tc_init(TokenChunk* c, int32_t scope_id, int32_t parent_id);
 void tc_add(TokenChunk* c, Token t);
-int32_t tc_size(TokenChunk c);
+int32_t tc_size(TokenChunk* c);
 void tc_free(TokenChunk* c);
