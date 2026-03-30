@@ -25,3 +25,23 @@ On top of aut.
   - `re_append_ch` and `re_append_range` accept `DebugInfo di` (line/col in the regexp source file)
   - passed through to `aut_transition` so generated IR has DWARF locations pointing back to the regexp source
   - callers that don't need debug info pass `(DebugInfo){0, 0}` (line 0 means no debug location)
+
+# Ignore-case APIs
+
+- `re_range_ic(range)` make the range ignore case (if the range is negative, revert first)
+- `re_append_ch_ic(re, int32_t codepoint, DebugInfo di)`
+
+# Predefined char groups
+
+- `re_append_group_s(re)`
+- `re_append_group_d(re)`
+- `re_append_group_w(re)`
+- `re_append_group_dot(re)`
+
+# Predefined escape
+
+- `re_append_c_escape(re, char symbol)` - `\\[bfnrtv]`
+
+# Hex
+
+- `re_append_hex(re, char* h, size_t size)`

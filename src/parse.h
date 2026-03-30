@@ -30,11 +30,13 @@ enum {
   TOK_DIRECTIVES_IGNORE,
   TOK_DIRECTIVES_EFFECT,
   TOK_DIRECTIVES_KEYWORD,
+  TOK_DIRECTIVES_DEFINE,
   TOK_HOOK_BEGIN,
   TOK_HOOK_END,
   TOK_HOOK_FAIL,
   TOK_HOOK_UNPARSE,
   TOK_VPA_ID,
+  TOK_RE_FRAG_ID,
   TOK_MACRO_ID,
   TOK_USER_HOOK_ID,
   TOK_TOK_ID,
@@ -93,7 +95,6 @@ enum {
 };
 
 #include "peg.h"
-#include "re_ast.h"
 #include "token_chunk.h"
 #include "vpa.h"
 
@@ -107,13 +108,13 @@ typedef struct {
 typedef struct {
   const char* src;
   int32_t src_len;
-  char* ustr;
 
-  TokenChunk main_chunk;
+  TokenTree* tree;
+  TokenChunk* read_chunk; // chunk being parsed (cursor target)
   int32_t tpos;
 
-  ReAstNode** re_asts; // darray
-  StrSpan* str_spans;  // darray (StrSpan*)
+  ReIr* re_irs;       // darray
+  StrSpan* str_spans; // darray (StrSpan*)
 
   VpaRule* vpa_rules;     // darray
   KeywordEntry* keywords; // darray

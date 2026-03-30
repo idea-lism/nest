@@ -5,11 +5,10 @@
 
 %ignore @comment @space
 
-# user-defined .set_quote hook will update this state
-%state $last_quote
+# pre-define partial regexp for later use
+%define ID /[a-z_]\w*/
 
-# no used in this syntax:
-# - `%effect .some_user_hook = .end | @some_token | ...`
+%effect .str_check_end = @re_char | .end
 
 main = {
   vpa
@@ -24,7 +23,7 @@ main = {
 }
 
 # if leading regexp matches, push the scope {}
-%keyword directives "%state" "%ignore" "%effect" "%keyword"
+%keyword directives "%ignore" "%effect" "%keyword" "%define"
 %keyword ops "=" "|"
 vpa = /\s*\[\[vpa\]\]\n/ .begin {
   /\[\[peg\]\]/ .unparse .end
@@ -35,10 +34,10 @@ vpa = /\s*\[\[vpa\]\]\n/ .begin {
   /\.fail/ @hook_fail
   /\.unparse/ @hook_unparse
   id @vpa_id
+  /[A-Z]\w*/ @re_frag_id
   /\*\{id}/ @macro_id
   /\.\{id}/ @user_hook_id
   /\@\{id}/ @tok_id
-  /\$\{id}/ @state_id
   ops
   /{/ @scope_begin
   /}/ @scope_end
@@ -60,8 +59,6 @@ peg = /\s*\[\[peg\]\]\n/ .begin {
   *noise
 }
 
-id = /[a-z_]\w*/
-
 %keyword re_ops "|" "(" ")" "?" "+" "*"
 
 re = /(b|i|ib|bi)?\// @re_tag .begin {
@@ -80,7 +77,7 @@ re = /(b|i|ib|bi)?\// @re_tag .begin {
 }
 
 re_ref = /\\\{/ .begin {
-  id @re_ref
+  ID @re_ref
   /\}/ .end
 }
 
@@ -92,18 +89,18 @@ charclass = /\[\^?/ @charclass_begin .begin {
 
 *chars = {
   /\\\{\h+\}/ @codepoint
-  /\\[bfnrv]/ @c_escape
+  /\\[bfnrtv]/ @c_escape
   /\\./ @plain_escape
   /./ @char
 }
 
 re_str = /["']/ .set_quote .begin {
-  $last_quote .end # meet " and strings ends
+  /["']/ .str_check_end # may emit char or terminate matching
   *chars
 }
 
 keyword_str = /["']/ .set_quote .begin {
-  $last_quote .end
+  /["']/ .str_check_end # may emit char or terminate matching
   /(\\.|[^"\\])+/ @keyword_str # reduced token
 }
 
@@ -117,15 +114,13 @@ main = vpa peg
 vpa = @nl* vpa_line+<@nl> @nl*
 
 vpa_line = [ # branches
-  state_decl
   ignore_toks
   effect_spec
   keyword_def
+  frag_def
   vpa_rule
   vpa_macro_rule
 ]
-
-state_decl = "%state" @state_id
 
 ignore_toks = "%ignore" @tok_id+
 
@@ -141,8 +136,11 @@ effect = [
 
 keyword_def = "%keyword" @vpa_id @tok_id+
 
+frag_def = "%define" @re_frag_id re
+
 vpa_rule = @vpa_id "=" [
   re followup*
+  @re_frag_id followup*
   re_str followup*
   @vpa_id followup*
 ]

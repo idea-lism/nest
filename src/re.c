@@ -73,6 +73,36 @@ void re_range_neg(ReRange* range) {
 
   darray_del(range->ivs);
   range->ivs = gaps;
+  range->negated = !range->negated;
+}
+
+void re_range_ic(ReRange* range) {
+  bool was_neg = range->negated;
+  if (was_neg) {
+    re_range_neg(range);
+  }
+
+  int32_t n = (int32_t)darray_size(range->ivs);
+  for (int32_t i = 0; i < n; i++) {
+    int32_t lo = range->ivs[i].start;
+    int32_t hi = range->ivs[i].end;
+    // if overlaps a-z, add A-Z counterpart
+    if (lo <= 'z' && hi >= 'a') {
+      int32_t clo = (lo > 'a' ? lo : 'a') - 32;
+      int32_t chi = (hi < 'z' ? hi : 'z') - 32;
+      re_range_add(range, clo, chi);
+    }
+    // if overlaps A-Z, add a-z counterpart
+    if (lo <= 'Z' && hi >= 'A') {
+      int32_t clo = (lo > 'A' ? lo : 'A') + 32;
+      int32_t chi = (hi < 'Z' ? hi : 'Z') + 32;
+      re_range_add(range, clo, chi);
+    }
+  }
+
+  if (was_neg) {
+    re_range_neg(range);
+  }
 }
 
 typedef struct {
@@ -139,6 +169,18 @@ void re_append_ch(Re* re, int32_t codepoint, DebugInfo di) {
   f->cur_state = s;
 }
 
+void re_append_ch_ic(Re* re, int32_t codepoint, DebugInfo di) {
+  GroupFrame* f = _top(re);
+  int32_t s = _alloc_state(re);
+  aut_transition(re->aut, (TransitionDef){f->cur_state, s, codepoint, codepoint}, di);
+  if (codepoint >= 'a' && codepoint <= 'z') {
+    aut_transition(re->aut, (TransitionDef){f->cur_state, s, codepoint - 32, codepoint - 32}, di);
+  } else if (codepoint >= 'A' && codepoint <= 'Z') {
+    aut_transition(re->aut, (TransitionDef){f->cur_state, s, codepoint + 32, codepoint + 32}, di);
+  }
+  f->cur_state = s;
+}
+
 void re_append_range(Re* re, ReRange* range, DebugInfo di) {
   assert(darray_size(range->ivs) > 0);
   GroupFrame* f = _top(re);
@@ -147,6 +189,73 @@ void re_append_range(Re* re, ReRange* range, DebugInfo di) {
     aut_transition(re->aut, (TransitionDef){f->cur_state, s, range->ivs[i].start, range->ivs[i].end}, di);
   }
   f->cur_state = s;
+}
+
+void re_append_group_s(Re* re, ReRange* range) {
+  (void)re;
+  re_range_add(range, '\t', '\r');
+  re_range_add(range, ' ', ' ');
+}
+
+void re_append_group_d(Re* re, ReRange* range) {
+  (void)re;
+  re_range_add(range, '0', '9');
+}
+
+void re_append_group_w(Re* re, ReRange* range) {
+  (void)re;
+  re_range_add(range, '0', '9');
+  re_range_add(range, 'A', 'Z');
+  re_range_add(range, '_', '_');
+  re_range_add(range, 'a', 'z');
+}
+
+void re_append_group_h(Re* re, ReRange* range) {
+  (void)re;
+  re_range_add(range, '0', '9');
+  re_range_add(range, 'A', 'F');
+  re_range_add(range, 'a', 'f');
+}
+
+void re_append_group_dot(Re* re, ReRange* range) {
+  (void)re;
+  re_range_add(range, 0, 9);
+  re_range_add(range, 11, MAX_UNICODE);
+}
+
+int32_t re_c_escape(char symbol) {
+  switch (symbol) {
+  case 'b':
+    return '\b';
+  case 'f':
+    return '\f';
+  case 'n':
+    return '\n';
+  case 'r':
+    return '\r';
+  case 't':
+    return '\t';
+  case 'v':
+    return '\v';
+  default:
+    return -1;
+  }
+}
+
+int32_t re_hex_to_codepoint(const char* h, size_t size) {
+  int32_t cp = 0;
+  for (size_t i = 0; i < size; i++) {
+    cp <<= 4;
+    char c = h[i];
+    if (c >= '0' && c <= '9') {
+      cp |= c - '0';
+    } else if (c >= 'a' && c <= 'f') {
+      cp |= c - 'a' + 10;
+    } else if (c >= 'A' && c <= 'F') {
+      cp |= c - 'A' + 10;
+    }
+  }
+  return cp;
 }
 
 void re_lparen(Re* re) {

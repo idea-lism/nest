@@ -121,56 +121,39 @@ static void _lp_emit_ch(LexParser* p, int32_t cp) {
 static void _add_class_ranges(ReRange* range, int32_t cls) {
   switch (cls) {
   case 's':
-    re_range_add(range, '\t', '\r');
-    re_range_add(range, ' ', ' ');
+    re_append_group_s(NULL, range);
     break;
   case 'w':
-    re_range_add(range, '0', '9');
-    re_range_add(range, 'A', 'Z');
-    re_range_add(range, '_', '_');
-    re_range_add(range, 'a', 'z');
+    re_append_group_w(NULL, range);
     break;
   case 'd':
-    re_range_add(range, '0', '9');
+    re_append_group_d(NULL, range);
     break;
   case 'h':
-    re_range_add(range, '0', '9');
-    re_range_add(range, 'A', 'F');
-    re_range_add(range, 'a', 'f');
+    re_append_group_h(NULL, range);
     break;
   }
 }
 
 static int32_t _c_escape(int32_t ch) {
-  switch (ch) {
-  case 'n':
-    return '\n';
-  case 't':
-    return '\t';
-  case 'r':
-    return '\r';
-  case '0':
-    return '\0';
-  case 'f':
-    return '\f';
-  case 'v':
-    return '\v';
-  default:
-    return -1;
+  int32_t esc = re_c_escape((char)ch);
+  if (esc >= 0) {
+    return esc;
   }
+  if (ch == '0') {
+    return '\0';
+  }
+  return -1;
 }
 
 static int32_t _lp_parse_unicode_escape(LexParser* p) {
   _lp_advance(p);
-  int32_t cp = 0;
-  while (_lp_peek(p) != '}' && _lp_peek(p) >= 0) {
+  char buf[16];
+  size_t n = 0;
+  while (_lp_peek(p) != '}' && _lp_peek(p) >= 0 && n < sizeof(buf)) {
     int32_t ch = _lp_advance(p);
-    if (ch >= '0' && ch <= '9') {
-      cp = cp * 16 + (ch - '0');
-    } else if (ch >= 'a' && ch <= 'f') {
-      cp = cp * 16 + (ch - 'a' + 10);
-    } else if (ch >= 'A' && ch <= 'F') {
-      cp = cp * 16 + (ch - 'A' + 10);
+    if ((ch >= '0' && ch <= '9') || (ch >= 'a' && ch <= 'f') || (ch >= 'A' && ch <= 'F')) {
+      buf[n++] = (char)ch;
     } else {
       fprintf(stderr, "nest: invalid hex char '%c' in \\u{...} escape\n", (char)ch);
       exit(1);
@@ -179,7 +162,7 @@ static int32_t _lp_parse_unicode_escape(LexParser* p) {
   if (_lp_peek(p) == '}') {
     _lp_advance(p);
   }
-  return cp;
+  return re_hex_to_codepoint(buf, n);
 }
 
 static int32_t _lp_parse_class_escape(LexParser* p, ReRange* range) {
@@ -291,8 +274,7 @@ static void _lp_parse_atom(LexParser* p) {
       re_range_add(range, 0, 9);
       re_range_add(range, 11, 255);
     } else {
-      re_range_add(range, 0, 9);
-      re_range_add(range, 11, 0x10FFFF);
+      re_append_group_dot(p->lex->re, range);
     }
     re_append_range(p->lex->re, range, _lp_di(p));
     re_range_del(range);

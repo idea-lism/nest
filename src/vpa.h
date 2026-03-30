@@ -3,7 +3,7 @@
 #include "header_writer.h"
 #include "irwriter.h"
 #include "peg.h"
-#include "re_ast.h"
+#include "re.h"
 
 #include <stdbool.h>
 #include <stdint.h>
@@ -18,10 +18,38 @@ typedef enum {
 
 typedef struct VpaUnit VpaUnit;
 
+typedef enum {
+  RE_IR_RANGE_BEGIN,      // current_range = re_range_new()
+  RE_IR_RANGE_END,        // re_append_range(current_range), current_range = NULL
+  RE_IR_RANGE_NEG,        // re_range_neg(current_range)
+  RE_IR_RANGE_IC,         // (before range_end) re_range_ic(current_range)
+  RE_IR_APPEND_CH,        // current_range ? re_range_add(ch) : re_append_ch(ch)
+  RE_IR_APPEND_CH_IC,     // current_range ? re_range_add(ch) : re_append_ch_ic(ch)
+  RE_IR_APPEND_GROUP_S,   // \s group
+  RE_IR_APPEND_GROUP_W,   // \w group
+  RE_IR_APPEND_GROUP_D,   // \d group
+  RE_IR_APPEND_GROUP_H,   // \h group
+  RE_IR_APPEND_GROUP_DOT, // . group
+  RE_IR_APPEND_C_ESCAPE,  // start = escape symbol char (b/f/n/r/t/v)
+  RE_IR_APPEND_HEX,       // start/end = packed hex codepoint
+  RE_IR_LPAREN,           // re_lparen()
+  RE_IR_RPAREN,           // re_rparen()
+  RE_FORK,                // re_fork() on new branches
+  RE_IR_ACTION,           // re_action()
+} ReIrKind;
+
+typedef struct {
+  ReIrKind kind;
+  int32_t start;
+  int32_t end;
+} ReIrOp;
+
+typedef ReIrOp* ReIr; // darray
+
 struct VpaUnit {
   VpaUnitKind kind;
-  ReAstNode* re_ast; // VPA_REGEXP: structured AST (owned)
-  char mode[4];      // VPA_REGEXP: "b","i","bi","ib",""
+  ReIr re;           // a flattened regexp representation
+  bool binary_mode;  // true if tagged with 'b' mode
   char* name;        // tok_id name (without @) or ref name (owned)
   char* state_name;  // VPA_STATE: state matcher name (without $) (owned)
   int32_t hook;      // TOK_HOOK_BEGIN, _END, _FAIL, _UNPARSE, or 0

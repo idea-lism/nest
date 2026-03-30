@@ -21,12 +21,12 @@ exe "test_aut",
 exe "test_re",
   srcs: %w[test/test_re.c test/compat.c src/re.c src/aut.c src/irwriter.c src/bitset.c src/darray.c]
 
-exe "test_re_ast",
-  srcs: %w[test/test_re_ast.c src/re_ast.c src/darray.c],
-  deps: %w[ustr]
-
 exe "test_parse_gen",
   srcs: %w[test/test_parse_gen.c test/compat.c]
+
+exe "test_token_chunk",
+  srcs: %w[test/test_token_chunk.c src/token_chunk.c src/darray.c],
+  deps: %w[ustr]
 
 exe "parse_gen",
   srcs: %w[src/parse_gen.c src/re.c src/aut.c src/irwriter.c src/bitset.c src/darray.c],
@@ -73,17 +73,17 @@ exe "test_peg",
   ext_libs: kissat
 
 exe "test_vpa",
-  srcs: %w[test/test_vpa.c test/compat.c src/vpa.c src/re_ast.c src/header_writer.c src/re.c src/aut.c src/irwriter.c src/bitset.c src/darray.c],
+  srcs: %w[test/test_vpa.c test/compat.c src/vpa.c src/header_writer.c src/re.c src/aut.c src/irwriter.c src/bitset.c src/darray.c],
   deps: %w[ustr]
 
 exe "test_parse",
-  srcs: %w[test/test_parse.c test/compat.c src/parse.c src/re_ast.c src/token_chunk.c src/vpa.c src/peg.c src/peg_ir.c src/header_writer.c src/re.c src/aut.c src/irwriter.c src/bitset.c src/darray.c src/coloring.c src/graph.c],
+  srcs: %w[test/test_parse.c test/compat.c src/parse.c src/token_chunk.c src/vpa.c src/peg.c src/peg_ir.c src/header_writer.c src/re.c src/aut.c src/irwriter.c src/bitset.c src/darray.c src/coloring.c src/graph.c],
   deps: %w[ustr],
   extra_objs: nest_lex,
   ext_libs: kissat
 
 exe "nest",
-  srcs: %w[src/nest.c src/parse.c src/re_ast.c src/token_chunk.c src/vpa.c src/peg.c src/peg_ir.c src/header_writer.c src/re.c src/aut.c src/irwriter.c src/bitset.c src/darray.c src/coloring.c src/graph.c],
+  srcs: %w[src/nest.c src/parse.c src/token_chunk.c src/vpa.c src/peg.c src/peg_ir.c src/header_writer.c src/re.c src/aut.c src/irwriter.c src/bitset.c src/darray.c src/coloring.c src/graph.c],
   deps: %w[ustr],
   extra_objs: nest_lex,
   ext_libs: kissat

@@ -12,15 +12,15 @@ typedef struct Token {
 typedef struct TokenChunk {
   int32_t scope_id;
   int32_t parent_id;
-  Token* tokens;
+  Token* tokens; // darray fat pointer
 } TokenChunk;
 
 typedef struct TokenTree {
   const char* src;
-  uint64_t* newline_map;
+  uint64_t* newline_map; // darray fat pointer
   TokenChunk* root;
   TokenChunk* current;
-  TokenChunk* table;
+  TokenChunk* table; // darray fat pointer
 } TokenTree;
 
 typedef struct {

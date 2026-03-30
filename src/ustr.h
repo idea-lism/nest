@@ -15,7 +15,7 @@ typedef enum {
 } UstrErr;
 
 UstrErr ustr_find_error(size_t sz, const char* data, size_t* pos);
-char* ustr_slice(const char* s, int32_t start, int32_t end);
+char* ustr_slice(const char* s, int32_t cp_start, int32_t cp_end);
 
 int32_t ustr_bytesize(const char* s);
 int32_t ustr_size(const char* s);

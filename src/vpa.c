@@ -1,10 +1,3 @@
-// VPA (Visibly Pushdown Automata) code generation.
-//
-// Generates per-scope DFA lexer functions in LLVM IR,
-// an action dispatch function (switch on action_id -> micro-ops),
-// an outer lexing loop with scope stack management,
-// and emits runtime data structures and token ID definitions to the C header.
-
 #include "vpa.h"
 #include "aut.h"
 #include "darray.h"
@@ -85,7 +78,7 @@ typedef struct {
   char* name;
   int32_t scope_id;
   VpaUnit* body;         // NOT owned
-  ReAstNode* leader_ast; // NOT owned
+  ReIr leader_re;        // NOT owned
   int32_t leader_hook;
   char* leader_user_hook;
 } ScopeInfo;
@@ -94,7 +87,7 @@ typedef struct {
 
 typedef struct {
   VpaUnitKind kind;
-  ReAstNode* ast;
+  ReIr ir;
   const char* state_name;
   int32_t action_id;
 } DfaPattern;
@@ -187,121 +180,76 @@ static void _make_state_match_symbol(const char* state_name, char* out, size_t o
   snprintf(out, out_sz, "match_%s", state_name);
 }
 
-// --- Walk ReAstNode and build NFA via re.h API ---
+// --- Interpret ReIr bytecode into re.h NFA-building API ---
 
-static void _emit_re_ast(Re* re, Aut* aut, ReAstNode* node, DebugInfo di) {
-  switch (node->kind) {
-  case RE_AST_CHAR:
-    re_append_ch(re, node->codepoint, di);
-    break;
-  case RE_AST_RANGE: {
-    ReRange* rng = re_range_new();
-    re_range_add(rng, node->range_lo, node->range_hi);
-    re_append_range(re, rng, di);
-    re_range_del(rng);
-    break;
-  }
-  case RE_AST_DOT: {
-    ReRange* rng = re_range_new();
-    re_range_add(rng, 0, '\n' - 1);
-    re_range_add(rng, '\n' + 1, 0x10FFFF);
-    re_append_range(re, rng, di);
-    re_range_del(rng);
-    break;
-  }
-  case RE_AST_SHORTHAND: {
-    ReRange* rng = re_range_new();
-    switch (node->shorthand) {
-    case 's':
-      re_range_add(rng, ' ', ' ');
-      re_range_add(rng, '\t', '\t');
-      re_range_add(rng, '\n', '\n');
-      re_range_add(rng, '\r', '\r');
+static void _re_ir_exec(Re* re, Aut* aut, ReIr ir, DebugInfo di) {
+  ReRange* range = NULL;
+  int32_t n = (int32_t)darray_size(ir);
+  for (int32_t i = 0; i < n; i++) {
+    ReIrOp* op = &ir[i];
+    switch (op->kind) {
+    case RE_IR_RANGE_BEGIN:
+      range = re_range_new();
       break;
-    case 'w':
-      re_range_add(rng, 'a', 'z');
-      re_range_add(rng, 'A', 'Z');
-      re_range_add(rng, '0', '9');
-      re_range_add(rng, '_', '_');
+    case RE_IR_RANGE_END:
+      re_append_range(re, range, di);
+      re_range_del(range);
+      range = NULL;
       break;
-    case 'd':
-      re_range_add(rng, '0', '9');
+    case RE_IR_RANGE_NEG:
+      re_range_neg(range);
       break;
-    case 'h':
-      re_range_add(rng, '0', '9');
-      re_range_add(rng, 'a', 'f');
-      re_range_add(rng, 'A', 'F');
+    case RE_IR_RANGE_IC:
+      re_range_ic(range);
       break;
-    case 'a':
-      re_append_ch(re, LEX_CP_BOF, di);
-      re_range_del(rng);
-      return;
-    case 'z':
-      re_append_ch(re, LEX_CP_EOF, di);
-      re_range_del(rng);
-      return;
-    }
-    re_append_range(re, rng, di);
-    re_range_del(rng);
-    break;
-  }
-  case RE_AST_CHARCLASS: {
-    ReRange* rng = re_range_new();
-    for (int32_t i = 0; i < (int32_t)darray_size(node->children); i++) {
-      ReAstNode* child = &node->children[i];
-      if (child->kind == RE_AST_RANGE) {
-        re_range_add(rng, child->range_lo, child->range_hi);
-      } else if (child->kind == RE_AST_CHAR) {
-        re_range_add(rng, child->codepoint, child->codepoint);
+    case RE_IR_APPEND_CH:
+      if (range) {
+        re_range_add(range, op->start, op->end);
+      } else {
+        re_append_ch(re, op->start, di);
       }
-    }
-    if (node->negated) {
-      re_range_neg(rng);
-    }
-    re_append_range(re, rng, di);
-    re_range_del(rng);
-    break;
-  }
-  case RE_AST_SEQ:
-    for (int32_t i = 0; i < (int32_t)darray_size(node->children); i++) {
-      _emit_re_ast(re, aut, &node->children[i], di);
-    }
-    break;
-  case RE_AST_ALT:
-    re_lparen(re);
-    for (int32_t i = 0; i < (int32_t)darray_size(node->children); i++) {
-      if (i > 0) {
-        re_fork(re);
+      break;
+    case RE_IR_APPEND_CH_IC:
+      if (range) {
+        re_range_add(range, op->start, op->end);
+      } else {
+        re_append_ch_ic(re, op->start, di);
       }
-      _emit_re_ast(re, aut, &node->children[i], di);
-    }
-    re_rparen(re);
-    break;
-  case RE_AST_GROUP:
-    re_lparen(re);
-    for (int32_t i = 0; i < (int32_t)darray_size(node->children); i++) {
-      _emit_re_ast(re, aut, &node->children[i], di);
-    }
-    re_rparen(re);
-    break;
-  case RE_AST_QUANTIFIED: {
-    if ((int32_t)darray_size(node->children) < 1) {
+      break;
+    case RE_IR_APPEND_GROUP_S:
+      re_append_group_s(re, range);
+      break;
+    case RE_IR_APPEND_GROUP_W:
+      re_append_group_w(re, range);
+      break;
+    case RE_IR_APPEND_GROUP_D:
+      re_append_group_d(re, range);
+      break;
+    case RE_IR_APPEND_GROUP_H:
+      re_append_group_h(re, range);
+      break;
+    case RE_IR_APPEND_GROUP_DOT:
+      re_append_group_dot(re, range);
+      break;
+    case RE_IR_APPEND_C_ESCAPE:
+      re_append_ch(re, re_c_escape((char)op->start), di);
+      break;
+    case RE_IR_APPEND_HEX:
+      re_append_ch(re, op->start, di);
+      break;
+    case RE_IR_LPAREN:
+      re_lparen(re);
+      break;
+    case RE_IR_RPAREN:
+      re_rparen(re);
+      break;
+    case RE_FORK:
+      re_fork(re);
+      break;
+    case RE_IR_ACTION:
+      re_action(re, op->start);
       break;
     }
-    ReAstNode* inner = &node->children[0];
-    int32_t before = re_cur_state(re);
-    _emit_re_ast(re, aut, inner, di);
-    int32_t after = re_cur_state(re);
-    if (node->quantifier == '?') {
-      aut_epsilon(aut, before, after);
-    } else if (node->quantifier == '+') {
-      aut_epsilon(aut, after, before);
-    } else if (node->quantifier == '*') {
-      aut_epsilon(aut, before, after);
-      aut_epsilon(aut, after, before);
-    }
-    break;
-  }
   }
 }
 
@@ -341,18 +289,18 @@ static DfaPattern* _resolve_body(ScopeInfo* scope, VpaUnit* body, VpaRule* rules
   for (int32_t i = 0; i < (int32_t)darray_size(body); i++) {
     VpaUnit* u = &body[i];
 
-    if (u->kind == VPA_REGEXP && u->re_ast) {
+    if (u->kind == VPA_REGEXP && u->re) {
       int32_t action_id = _resolve_action(reg, scope, u, NULL, effects, peg_rules, false);
       if (action_id == 0) {
         continue;
       }
       darray_push(patterns,
-                  ((DfaPattern){.kind = VPA_REGEXP, .ast = u->re_ast, .state_name = NULL, .action_id = action_id}));
+                  ((DfaPattern){.kind = VPA_REGEXP, .ir = u->re, .state_name = NULL, .action_id = action_id}));
 
     } else if (u->kind == VPA_STATE && u->state_name && _find_state(states, u->state_name)) {
       int32_t action_id = _resolve_action(reg, scope, u, NULL, effects, peg_rules, true);
       darray_push(patterns,
-                  ((DfaPattern){.kind = VPA_STATE, .ast = NULL, .state_name = u->state_name, .action_id = action_id}));
+                  ((DfaPattern){.kind = VPA_STATE, .ir = NULL, .state_name = u->state_name, .action_id = action_id}));
 
     } else if (u->kind == VPA_REF && u->name) {
       VpaRule* ref_rule = NULL;
@@ -366,38 +314,38 @@ static DfaPattern* _resolve_body(ScopeInfo* scope, VpaUnit* body, VpaRule* rules
         continue;
       }
       VpaUnit* scope_unit = _find_scope_unit(ref_rule);
-      if (scope_unit && scope_unit->re_ast) {
+      if (scope_unit && scope_unit->re) {
         ScopeInfo* target = _find_scope(scopes, ref_rule->name);
         if (target) {
           int32_t aid =
               _register_action(reg, 0, target->scope_id, false, scope_unit->hook, scope_unit->user_hook, NULL);
           darray_push(
               patterns,
-              ((DfaPattern){.kind = VPA_REGEXP, .ast = scope_unit->re_ast, .state_name = NULL, .action_id = aid}));
+              ((DfaPattern){.kind = VPA_REGEXP, .ir = scope_unit->re, .state_name = NULL, .action_id = aid}));
         }
       }
       for (int32_t j = 0; j < (int32_t)darray_size(ref_rule->units); j++) {
         VpaUnit* ru = &ref_rule->units[j];
-        if (ru->kind == VPA_REGEXP && ru->re_ast) {
+        if (ru->kind == VPA_REGEXP && ru->re) {
           int32_t aid = _resolve_action(reg, scope, ru, ref_rule->name, effects, peg_rules, false);
           if (aid == 0) {
             continue;
           }
           darray_push(patterns,
-                      ((DfaPattern){.kind = VPA_REGEXP, .ast = ru->re_ast, .state_name = NULL, .action_id = aid}));
+                      ((DfaPattern){.kind = VPA_REGEXP, .ir = ru->re, .state_name = NULL, .action_id = aid}));
         } else if (ru->kind == VPA_STATE && ru->state_name && _find_state(states, ru->state_name)) {
           int32_t aid = _resolve_action(reg, scope, ru, ref_rule->name, effects, peg_rules, true);
           darray_push(patterns,
-                      ((DfaPattern){.kind = VPA_STATE, .ast = NULL, .state_name = ru->state_name, .action_id = aid}));
+                      ((DfaPattern){.kind = VPA_STATE, .ir = NULL, .state_name = ru->state_name, .action_id = aid}));
         }
       }
 
-    } else if (u->kind == VPA_SCOPE && u->re_ast) {
+    } else if (u->kind == VPA_SCOPE && u->re) {
       ScopeInfo* target = _find_scope(scopes, u->name ? u->name : "");
       if (target) {
         int32_t aid = _register_action(reg, 0, target->scope_id, false, u->hook, u->user_hook, NULL);
         darray_push(patterns,
-                    ((DfaPattern){.kind = VPA_REGEXP, .ast = u->re_ast, .state_name = NULL, .action_id = aid}));
+                    ((DfaPattern){.kind = VPA_REGEXP, .ir = u->re, .state_name = NULL, .action_id = aid}));
       }
     }
   }
@@ -414,7 +362,7 @@ static void _gen_scope_dfa(ScopeInfo* scope, DfaPattern* patterns, IrWriter* w) 
 
   int32_t n_regex = 0;
   for (int32_t i = 0; i < (int32_t)darray_size(patterns); i++) {
-    if (patterns[i].kind == VPA_REGEXP && patterns[i].ast) {
+    if (patterns[i].kind == VPA_REGEXP && patterns[i].ir) {
       n_regex++;
     }
   }
@@ -432,14 +380,14 @@ static void _gen_scope_dfa(ScopeInfo* scope, DfaPattern* patterns, IrWriter* w) 
 
   int32_t emitted = 0;
   for (int32_t i = 0; i < (int32_t)darray_size(patterns); i++) {
-    if (patterns[i].kind != VPA_REGEXP || !patterns[i].ast) {
+    if (patterns[i].kind != VPA_REGEXP || !patterns[i].ir) {
       continue;
     }
     if (emitted > 0) {
       re_fork(re);
     }
     DebugInfo di = {0, 0};
-    _emit_re_ast(re, aut, patterns[i].ast, di);
+    _re_ir_exec(re, aut, patterns[i].ir, di);
     re_action(re, patterns[i].action_id);
     emitted++;
   }
@@ -1180,7 +1128,7 @@ static ScopeInfo* _collect_scopes(VpaRule* rules) {
           .name = strdup(rule->name),
           .scope_id = (int32_t)darray_size(scopes),
           .body = rule->units,
-          .leader_ast = NULL,
+          .leader_re = NULL,
           .leader_hook = 0,
           .leader_user_hook = NULL,
       };
@@ -1193,7 +1141,7 @@ static ScopeInfo* _collect_scopes(VpaRule* rules) {
             .name = strdup(rule->name),
             .scope_id = (int32_t)darray_size(scopes),
             .body = su->children,
-            .leader_ast = su->re_ast,
+            .leader_re = su->re,
             .leader_hook = su->hook,
             .leader_user_hook = su->user_hook ? strdup(su->user_hook) : NULL,
         };

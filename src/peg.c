@@ -1,8 +1,3 @@
-// PEG (Parsing Expression Grammar) code generation.
-// Generates packrat parser functions in LLVM IR,
-// and emits node type definitions to the C header.
-// Follows the PEG IR reference patterns from peg_ir.md.
-
 #include "peg.h"
 #include "bitset.h"
 #include "coloring.h"

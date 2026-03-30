@@ -29,7 +29,6 @@ The overall handling with this syntax:
 3. implement recursive descendent parsers in `src/parse.c` to:
    - recursive descend parse the whole source
    - the token chunk helper lives in `src/token_chunk.c`
-   - the regexp AST parsing is relatively independent, so it lives in `src/re_ast.c`
    - post-process:
      - expand the `%keyword` sugar
      - inline macro vpa rules
@@ -90,6 +89,9 @@ the semantic:
 - when a vpa scope ends, if there is a `peg_rule` with the same id as the `vpa_rule`, invoke peg parsing on the scope tokens.
   - non-peg vpa's -- don't create sub-stream (see below example)
   - non-vpa peg's -- just a peg sub-rule, no special handling
+
+in addtion, the `re` scope has interpolation syntax:
+- `\{UPPER_CASED_ID}` references a predefined regexp fragment
 
 token stream at runtime looks like this if `scope1` is used in peg but `scope2` is not used in peg.
 ```
@@ -173,11 +175,51 @@ Error handling:
 - when sub lexer meets error, set error to lexing state
 - parent lexer checks lexing state after calling sub lexer, if error, just return
 
-The [token stream tree](src/tok_chunk.c) is organized the same way as `TokenTree` in [VPA generated code]specs/vpa.md .
+The [token stream tree](src/tok_chunk.c) is organized the same way as `TokenTree` in [VPA generated code](specs/vpa.md).
 
 The parsing also follows this nested structure:
 - When parsing matches to a rule that is not a scope, call it as in normal recursive descendant parsers
 - When parsing matches to a rule that maps to a scope, read a scope_id token and the chunk it points to, and call rule with the new child chunk
+
+### Regexp parsing and VPA parse result
+
+Before parsing, call `_collect_re_frags()` to iterate the token tree for the `%define` rules to build the fragment table.
+
+When met `re_ref` sub-scope, replace the scope chunk with the `%define`-ed regexp.
+
+Note that `%define` can reference each other, must avoid infinite recursions.
+
+The `ReIr` struct is a flatten VM which can be interpreted with `re.h` methods (and be combined when generating vpa):
+
+```c
+typedef enum {
+  RE_IR_RANGE_BEGIN, // current_range = re_range_new()
+  RE_IR_RANGE_END, // re_append_range(current_range), current_range = NULL
+  RE_IR_RANGE_NEG, // re_range_neg(current_range)
+  RE_IR_RANGE_IC, // (after re_range_neg) re_range_ic(current_range)
+  RE_IR_APPEND_CH, // current_range ? re_range_append(ch) : re_append_ch(ch)
+  RE_IR_APPEND_CH_IC, // current_range ? re_range_append(ch) : re_append_ch_ic(ch)
+  RE_IR_APPEND_GROUP_S,
+  RE_IR_APPEND_GROUP_W,
+  RE_IR_APPEND_GROUP_D,
+  RE_IR_APPEND_GROUP_H,
+  RE_IR_APPEND_GROUP_DOT,
+  RE_IR_APPEND_C_ESCAPE,
+  RE_IR_APPEND_HEX,
+  RE_IR_LPAREN, // re_lparen()
+  RE_IR_RPAREN, // re_rparen()
+  RE_FORK, // re_fork() on new branches
+  RE_IR_ACTION, // re_action()
+} ReIrKind;
+
+typedef struct {
+  ReIrKind kind;
+  int32_t start;
+  int32_t end;
+} ReIrOp;
+
+typedef ReIrOp* ReIr; // darray
+```
 
 ### What is FORBIDDEN, a no-go
 
