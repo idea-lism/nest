@@ -1,5 +1,7 @@
 base = (Dir.glob "src/*.c") - ["src/nest.c", "src/parse_gen.c", "src/ustr.c", "src/ustr_neon.c", "src/ustr_avx.c"]
 base_lean = base - %w[src/parse.c src/post_process.c]
+kissat = IS_WINDOWS ? [] : %w[build/kissat/build/libkissat.a]
+nest_lex = ["#{BUILDDIR}/nest_lex.o"]
 
 lib "ustr",
   srcs: %w[src/ustr.c src/ustr_neon.c src/ustr_avx.c]
@@ -68,24 +70,3 @@ amalgamate input: "src/re_rt.h.in",
 debug    cflags: "-O0 -g -fsanitize=address -fsanitize=undefined"
 release  cflags: "-O2"
 coverage cflags: "-O0 -g -fprofile-instr-generate -fcoverage-mapping"
-
-# --- nest_lex code generation pipeline (parse_gen -> .ll -> .o) ---
-bd = $builddir_ref
-llvm_cc = RUBY_PLATFORM =~ /darwin/ ? "xcrun clang" : (ENV["CC"] || "clang")
-
-ninja_raw <<~NINJA
-rule gen_nest_lex
-  command = $in $out
-  description = GEN $out
-
-rule ll_cc
-  command = #{llvm_cc} -c $in -o $out
-  description = LLCC $in
-
-build #{bd}/nest_lex.ll: gen_nest_lex #{bd}/parse_gen
-build #{bd}/nest_lex.o: ll_cc #{bd}/nest_lex.ll
-NINJA
-
-# --- targets using kissat + generated nest_lex ---
-kissat = IS_WINDOWS ? [] : %w[build/kissat/build/libkissat.a]
-nest_lex = ["#{bd}/nest_lex.o"]
