@@ -189,37 +189,17 @@ When met `re_ref` sub-scope, replace the scope chunk with the `%define`-ed regex
 
 Note that `%define` can reference each other, must avoid infinite recursions.
 
-The `ReIr` struct is a flatten VM which can be interpreted with `re.h` methods (and be combined when generating vpa):
+Regexp is parsed into [re_ir](src/re_ir.h).s
 
-```c
-typedef enum {
-  RE_IR_RANGE_BEGIN, // current_range = re_range_new()
-  RE_IR_RANGE_END, // re_append_range(current_range), current_range = NULL
-  RE_IR_RANGE_NEG, // re_range_neg(current_range)
-  RE_IR_RANGE_IC, // (after re_range_neg) re_range_ic(current_range)
-  RE_IR_APPEND_CH, // current_range ? re_range_append(ch) : re_append_ch(ch)
-  RE_IR_APPEND_CH_IC, // current_range ? re_range_append(ch) : re_append_ch_ic(ch)
-  RE_IR_APPEND_GROUP_S,
-  RE_IR_APPEND_GROUP_W,
-  RE_IR_APPEND_GROUP_D,
-  RE_IR_APPEND_GROUP_H,
-  RE_IR_APPEND_GROUP_DOT,
-  RE_IR_APPEND_C_ESCAPE,
-  RE_IR_APPEND_HEX,
-  RE_IR_LPAREN, // re_lparen()
-  RE_IR_RPAREN, // re_rparen()
-  RE_FORK, // re_fork() on new branches
-  RE_IR_ACTION, // re_action()
-} ReIrKind;
+### Recursive descend parsing
 
-typedef struct {
-  ReIrKind kind;
-  int32_t start;
-  int32_t end;
-} ReIrOp;
-
-typedef ReIrOp* ReIr; // darray
-```
+- Token ids are allocated scopes too
+- Recursive descend parsers work on scope level
+  - the input token stream buffer is a scoped chunk
+  - no expand sub-scope parsing -- sub-scopes are just a token_id match
+- String literals are stored with source offset + length, no extra allocations for them
+- Regexps are converted to IR that can be used by `src/vpa.c`
+- When a scope is complete (at `.end` hook), it should invoke recursive descend parsing on the token stream chunk
 
 ### What is FORBIDDEN, a no-go
 

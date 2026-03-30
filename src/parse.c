@@ -1,7 +1,9 @@
+// specs/parse.md
 #include "parse.h"
 #include "darray.h"
 #include "peg.h"
 #include "re.h"
+#include "re_ir.h"
 #include "token_chunk.h"
 #include "ustr.h"
 #include "vpa.h"
@@ -93,45 +95,6 @@ __attribute__((format(printf, 1, 2))) char* parse_sfmt(const char* fmt, ...) {
 void parse_set_str(char** dst, char* s) {
   free(*dst);
   *dst = s;
-}
-
-// --- ReIr helpers ---
-
-static void _re_ir_free(ReIr ir) { darray_del(ir); }
-
-static ReIr _re_ir_clone(ReIr src) {
-  if (!src) {
-    return NULL;
-  }
-  int32_t n = (int32_t)darray_size(src);
-  ReIr dst = darray_new(sizeof(ReIrOp), (size_t)n);
-  memcpy(dst, src, (size_t)n * sizeof(ReIrOp));
-  return dst;
-}
-
-static ReIr _re_ir_new(void) { return darray_new(sizeof(ReIrOp), 0); }
-
-static void _re_ir_emit(ReIr* ir, ReIrKind kind, int32_t start, int32_t end) {
-  darray_push(*ir, ((ReIrOp){kind, start, end}));
-}
-
-static void _re_ir_emit_ch(ReIr* ir, int32_t cp) { _re_ir_emit(ir, RE_IR_APPEND_CH, cp, cp); }
-
-static ReIr _re_ir_build_literal(const char* src, int32_t cp_off, int32_t cp_len) {
-  ReIr ir = _re_ir_new();
-  char* s = ustr_slice(src, cp_off, cp_off + cp_len);
-  int32_t size = ustr_size(s);
-  UstrIter it = {0};
-  ustr_iter_init(&it, s, size);
-  for (int32_t i = 0; i < size; i++) {
-    int32_t cp = ustr_iter_next(&it);
-    if (cp < 0) {
-      break;
-    }
-    _re_ir_emit_ch(&ir, cp);
-  }
-  ustr_del(s);
-  return ir;
 }
 
 // --- Build string span from a chunk's tokens ---
@@ -267,7 +230,7 @@ static void _parse_charclass(ReParseCtx* rctx, ReIr* ir) {
   if (!begin) {
     return;
   }
-  _re_ir_emit(ir, RE_IR_RANGE_BEGIN, 0, 0);
+  re_ir_emit(ir, RE_IR_RANGE_BEGIN, 0, 0);
 
   char* text = ustr_slice(rctx->ps->src, begin->cp_start, begin->cp_start + begin->cp_size);
   bool neg = false;
@@ -279,7 +242,7 @@ static void _parse_charclass(ReParseCtx* rctx, ReIr* ir) {
   }
   ustr_del(text);
   if (neg) {
-    _re_ir_emit(ir, RE_IR_RANGE_NEG, 0, 0);
+    re_ir_emit(ir, RE_IR_RANGE_NEG, 0, 0);
   }
 
   while (rctx->pos < rctx->count) {
@@ -294,50 +257,50 @@ static void _parse_charclass(ReParseCtx* rctx, ReIr* ir) {
       rctx->pos += 2;
       Token* hi_t = _re_next(rctx);
       int32_t hi = hi_t ? _decode_codepoint(rctx->ps->src, hi_t) : lo;
-      _re_ir_emit(ir, RE_IR_APPEND_CH, lo, hi);
+      re_ir_emit(ir, RE_IR_APPEND_CH, lo, hi);
     } else if (t->tok_id == TOK_CHAR || t->tok_id == TOK_CODEPOINT || t->tok_id == TOK_C_ESCAPE ||
                t->tok_id == TOK_PLAIN_ESCAPE) {
       int32_t cp = _decode_codepoint(rctx->ps->src, t);
       _re_next(rctx);
-      _re_ir_emit(ir, RE_IR_APPEND_CH, cp, cp);
+      re_ir_emit(ir, RE_IR_APPEND_CH, cp, cp);
     } else {
       break;
     }
   }
 
   if (rctx->icase) {
-    _re_ir_emit(ir, RE_IR_RANGE_IC, 0, 0);
+    re_ir_emit(ir, RE_IR_RANGE_IC, 0, 0);
   }
-  _re_ir_emit(ir, RE_IR_RANGE_END, 0, 0);
+  re_ir_emit(ir, RE_IR_RANGE_END, 0, 0);
 }
 
 static void _emit_shorthand_class(ReIr* ir, int32_t tok_id) {
   switch (tok_id) {
   case TOK_RE_DOT:
-    _re_ir_emit(ir, RE_IR_RANGE_BEGIN, 0, 0);
-    _re_ir_emit(ir, RE_IR_RANGE_NEG, 0, 0);
-    _re_ir_emit(ir, RE_IR_APPEND_CH, '\n', '\n');
-    _re_ir_emit(ir, RE_IR_RANGE_END, 0, 0);
+    re_ir_emit(ir, RE_IR_RANGE_BEGIN, 0, 0);
+    re_ir_emit(ir, RE_IR_RANGE_NEG, 0, 0);
+    re_ir_emit(ir, RE_IR_APPEND_CH, '\n', '\n');
+    re_ir_emit(ir, RE_IR_RANGE_END, 0, 0);
     break;
   case TOK_RE_SPACE_CLASS:
-    _re_ir_emit(ir, RE_IR_RANGE_BEGIN, 0, 0);
-    _re_ir_emit(ir, RE_IR_APPEND_GROUP_S, 0, 0);
-    _re_ir_emit(ir, RE_IR_RANGE_END, 0, 0);
+    re_ir_emit(ir, RE_IR_RANGE_BEGIN, 0, 0);
+    re_ir_emit(ir, RE_IR_APPEND_GROUP_S, 0, 0);
+    re_ir_emit(ir, RE_IR_RANGE_END, 0, 0);
     break;
   case TOK_RE_WORD_CLASS:
-    _re_ir_emit(ir, RE_IR_RANGE_BEGIN, 0, 0);
-    _re_ir_emit(ir, RE_IR_APPEND_GROUP_W, 0, 0);
-    _re_ir_emit(ir, RE_IR_RANGE_END, 0, 0);
+    re_ir_emit(ir, RE_IR_RANGE_BEGIN, 0, 0);
+    re_ir_emit(ir, RE_IR_APPEND_GROUP_W, 0, 0);
+    re_ir_emit(ir, RE_IR_RANGE_END, 0, 0);
     break;
   case TOK_RE_DIGIT_CLASS:
-    _re_ir_emit(ir, RE_IR_RANGE_BEGIN, 0, 0);
-    _re_ir_emit(ir, RE_IR_APPEND_GROUP_D, 0, 0);
-    _re_ir_emit(ir, RE_IR_RANGE_END, 0, 0);
+    re_ir_emit(ir, RE_IR_RANGE_BEGIN, 0, 0);
+    re_ir_emit(ir, RE_IR_APPEND_GROUP_D, 0, 0);
+    re_ir_emit(ir, RE_IR_RANGE_END, 0, 0);
     break;
   case TOK_RE_HEX_CLASS:
-    _re_ir_emit(ir, RE_IR_RANGE_BEGIN, 0, 0);
-    _re_ir_emit(ir, RE_IR_APPEND_GROUP_H, 0, 0);
-    _re_ir_emit(ir, RE_IR_RANGE_END, 0, 0);
+    re_ir_emit(ir, RE_IR_RANGE_BEGIN, 0, 0);
+    re_ir_emit(ir, RE_IR_APPEND_GROUP_H, 0, 0);
+    re_ir_emit(ir, RE_IR_RANGE_END, 0, 0);
     break;
   default:
     break;
@@ -353,12 +316,12 @@ static void _parse_re_unit(ReParseCtx* rctx, ReIr* ir) {
   switch (t->tok_id) {
   case TOK_RE_OPS_LPAREN:
     _re_next(rctx);
-    _re_ir_emit(ir, RE_IR_LPAREN, 0, 0);
+    re_ir_emit(ir, RE_IR_LPAREN, 0, 0);
     _parse_re_expr(rctx, ir);
     if (_re_at(rctx, TOK_RE_OPS_RPAREN)) {
       _re_next(rctx);
     }
-    _re_ir_emit(ir, RE_IR_RPAREN, 0, 0);
+    re_ir_emit(ir, RE_IR_RPAREN, 0, 0);
     break;
 
   case TOK_CHARCLASS_BEGIN:
@@ -376,12 +339,12 @@ static void _parse_re_unit(ReParseCtx* rctx, ReIr* ir) {
 
   case TOK_RE_BOF:
     _re_next(rctx);
-    _re_ir_emit_ch(ir, LEX_CP_BOF);
+    re_ir_emit_ch(ir, LEX_CP_BOF);
     break;
 
   case TOK_RE_EOF:
     _re_next(rctx);
-    _re_ir_emit_ch(ir, LEX_CP_EOF);
+    re_ir_emit_ch(ir, LEX_CP_EOF);
     break;
 
   case TOK_RE_REF: {
@@ -395,7 +358,7 @@ static void _parse_re_unit(ReParseCtx* rctx, ReIr* ir) {
   case TOK_PLAIN_ESCAPE: {
     _re_next(rctx);
     int32_t cp = _decode_codepoint(rctx->ps->src, t);
-    _re_ir_emit(ir, rctx->icase ? RE_IR_APPEND_CH_IC : RE_IR_APPEND_CH, cp, cp);
+    re_ir_emit(ir, rctx->icase ? RE_IR_APPEND_CH_IC : RE_IR_APPEND_CH, cp, cp);
     break;
   }
 
@@ -430,16 +393,16 @@ static void _parse_re_quantified(ReParseCtx* rctx, ReIr* ir) {
     *ir = darray_grow(*ir, darray_size(*ir) + 3);
     memmove(&(*ir)[unit_start + 1], &(*ir)[unit_start], (size_t)(unit_end - unit_start) * sizeof(ReIrOp));
     (*ir)[unit_start] = lparen;
-    _re_ir_emit(ir, RE_FORK, 0, 0);
-    _re_ir_emit(ir, RE_IR_RPAREN, 0, 0);
+    re_ir_emit(ir, RE_FORK, 0, 0);
+    re_ir_emit(ir, RE_IR_RPAREN, 0, 0);
   } else if (q->tok_id == TOK_RE_OPS_PLUS) {
     _re_next(rctx);
-    _re_ir_emit(ir, RE_IR_LPAREN, 0, 0);
+    re_ir_emit(ir, RE_IR_LPAREN, 0, 0);
     for (int32_t i = unit_start; i < unit_end; i++) {
       darray_push(*ir, (*ir)[i]);
     }
-    _re_ir_emit(ir, RE_FORK, 0, 0);
-    _re_ir_emit(ir, RE_IR_RPAREN, 0, 0);
+    re_ir_emit(ir, RE_FORK, 0, 0);
+    re_ir_emit(ir, RE_IR_RPAREN, 0, 0);
   } else if (q->tok_id == TOK_RE_OPS_STAR) {
     _re_next(rctx);
     ReIrOp lparen = {RE_IR_LPAREN, 0, 0};
@@ -449,8 +412,8 @@ static void _parse_re_quantified(ReParseCtx* rctx, ReIr* ir) {
     for (int32_t i = unit_start + 1; i <= unit_end; i++) {
       darray_push(*ir, (*ir)[i]);
     }
-    _re_ir_emit(ir, RE_FORK, 0, 0);
-    _re_ir_emit(ir, RE_IR_RPAREN, 0, 0);
+    re_ir_emit(ir, RE_FORK, 0, 0);
+    re_ir_emit(ir, RE_IR_RPAREN, 0, 0);
   }
 }
 
@@ -461,7 +424,7 @@ static void _parse_re_expr(ReParseCtx* rctx, ReIr* ir) {
 
   while (_re_at(rctx, TOK_RE_OPS_ALT)) {
     _re_next(rctx);
-    _re_ir_emit(ir, RE_FORK, 0, 0);
+    re_ir_emit(ir, RE_FORK, 0, 0);
     while (rctx->pos < rctx->count) {
       Token* t = _re_peek(rctx);
       if (!t || !_is_re_unit_start(t->tok_id)) {
@@ -474,7 +437,7 @@ static void _parse_re_expr(ReParseCtx* rctx, ReIr* ir) {
 
 static ReIr _parse_re_tokens(ParseState* ps, Token* tokens, int32_t count, bool icase) {
   ReParseCtx rctx = {.ps = ps, .tokens = tokens, .count = count, .pos = 0, .icase = icase};
-  ReIr ir = _re_ir_new();
+  ReIr ir = re_ir_new();
   _parse_re_expr(&rctx, &ir);
   return ir;
 }
@@ -631,15 +594,6 @@ static bool _at(ParseState* ps, int32_t id) {
   return t && t->tok_id == id;
 }
 
-// --- VPA unit helpers ---
-
-static void _add_vpa_unit(VpaRule* rule, VpaUnit unit) {
-  if (!rule->units) {
-    rule->units = darray_new(sizeof(VpaUnit), 0);
-  }
-  darray_push(rule->units, unit);
-}
-
 // --- Shared VPA followup parsing ---
 
 static bool _parse_vpa_scope_body(ParseState* ps, VpaRule* rule);
@@ -674,6 +628,13 @@ static void _parse_unit_followups(ParseState* ps, VpaUnit* unit, VpaRule* rule) 
 }
 
 // --- VPA rule body: bool-returning try-functions ---
+
+static void _add_vpa_unit(VpaRule* rule, VpaUnit unit) {
+  if (!rule->units) {
+    rule->units = darray_new(sizeof(VpaUnit), 0);
+  }
+  darray_push(rule->units, unit);
+}
 
 static bool _parse_vpa_regexp(ParseState* ps, VpaRule* rule) {
   Token* t = _peek(ps);
@@ -712,7 +673,7 @@ static bool _parse_vpa_re_str(ParseState* ps, VpaRule* rule) {
   _next(ps);
   VpaUnit unit = {.kind = VPA_REGEXP};
   StrSpan span = ps->str_spans[t->tok_id - TOK_STR_SPAN_BASE];
-  unit.re = _re_ir_build_literal(ps->src, span.off, span.len);
+  unit.re = re_ir_build_literal(ps->src, span.off, span.len);
 
   _parse_unit_followups(ps, &unit, rule);
   _add_vpa_unit(rule, unit);
@@ -1164,218 +1125,10 @@ static bool _parse_peg_section(ParseState* ps) {
   return true;
 }
 
-// --- Post-processing: keyword expansion ---
-
-static void _expand_kw_in_peg_unit(PegUnit* unit, ParseState* ps) {
-  if (unit->kind == PEG_TOK && unit->name) {
-    for (int32_t k = 0; k < (int32_t)darray_size(ps->keywords); k++) {
-      KeywordEntry* kw = &ps->keywords[k];
-      char* lit = ustr_slice(ps->src, kw->lit_off, kw->lit_off + kw->lit_len);
-      if (strcmp(unit->name, lit) == 0) {
-        parse_set_str(&unit->name, parse_sfmt("%s.%s", kw->group, lit));
-        ustr_del(lit);
-        break;
-      }
-      ustr_del(lit);
-    }
-  }
-  for (int32_t i = 0; i < (int32_t)darray_size(unit->children); i++) {
-    _expand_kw_in_peg_unit(&unit->children[i], ps);
-  }
-  if (unit->interlace) {
-    _expand_kw_in_peg_unit(unit->interlace, ps);
-  }
-}
-
-static void _expand_keywords(ParseState* ps) {
-  for (int32_t k = 0; k < (int32_t)darray_size(ps->keywords); k++) {
-    KeywordEntry* kw = &ps->keywords[k];
-    char* lit = ustr_slice(ps->src, kw->lit_off, kw->lit_off + kw->lit_len);
-
-    char* tok_name = parse_sfmt("%s.%s", kw->group, lit);
-    ustr_del(lit);
-    ReIr ir = _re_ir_build_literal(ps->src, kw->lit_off, kw->lit_len);
-
-    bool added = false;
-    for (int32_t i = 0; i < (int32_t)darray_size(ps->vpa_rules) && !added; i++) {
-      VpaRule* rule = &ps->vpa_rules[i];
-      if (rule->is_macro || !rule->is_scope) {
-        continue;
-      }
-      for (int32_t j = 0; j < (int32_t)darray_size(rule->units); j++) {
-        if (rule->units[j].kind == VPA_REF && rule->units[j].name && strcmp(rule->units[j].name, kw->group) == 0) {
-          VpaUnit unit = {.kind = VPA_REGEXP, .re = ir, .name = strdup(tok_name)};
-          _add_vpa_unit(rule, unit);
-          added = true;
-          break;
-        }
-      }
-    }
-
-    if (!added) {
-      for (int32_t i = 0; i < (int32_t)darray_size(ps->vpa_rules); i++) {
-        if (strcmp(ps->vpa_rules[i].name, kw->group) == 0) {
-          VpaUnit unit = {.kind = VPA_REGEXP, .re = ir, .name = strdup(tok_name)};
-          _add_vpa_unit(&ps->vpa_rules[i], unit);
-          added = true;
-          break;
-        }
-      }
-    }
-
-    if (!added) {
-      _re_ir_free(ir);
-    }
-    free(tok_name);
-  }
-
-  for (int32_t p = 0; p < (int32_t)darray_size(ps->peg_rules); p++) {
-    _expand_kw_in_peg_unit(&ps->peg_rules[p].seq, ps);
-  }
-}
-
-// --- Post-processing: inline macros ---
-
-static VpaRule* _find_macro(ParseState* ps, const char* name) {
-  for (int32_t i = 0; i < (int32_t)darray_size(ps->vpa_rules); i++) {
-    if (ps->vpa_rules[i].is_macro && strcmp(ps->vpa_rules[i].name, name) == 0) {
-      return &ps->vpa_rules[i];
-    }
-  }
-  return NULL;
-}
-
-static VpaUnit _clone_vpa_unit(VpaUnit* src) {
-  VpaUnit dst = *src;
-  dst.name = src->name ? strdup(src->name) : NULL;
-  dst.state_name = src->state_name ? strdup(src->state_name) : NULL;
-  dst.user_hook = src->user_hook ? strdup(src->user_hook) : NULL;
-  dst.re = _re_ir_clone(src->re);
-  if ((int32_t)darray_size(src->children) > 0) {
-    dst.children = darray_new(sizeof(VpaUnit), darray_size(src->children));
-    for (int32_t i = 0; i < (int32_t)darray_size(src->children); i++) {
-      dst.children[i] = _clone_vpa_unit(&src->children[i]);
-    }
-  }
-  return dst;
-}
-
-static void _free_vpa_unit(VpaUnit* unit);
-static void _inline_macros(ParseState* ps) {
-  for (int32_t r = 0; r < (int32_t)darray_size(ps->vpa_rules); r++) {
-    VpaRule* rule = &ps->vpa_rules[r];
-    if (rule->is_macro) {
-      continue;
-    }
-    for (int32_t i = 0; i < (int32_t)darray_size(rule->units); i++) {
-      VpaUnit* unit = &rule->units[i];
-      if (unit->kind != VPA_REF || !unit->name || unit->name[0] != '*') {
-        continue;
-      }
-      VpaRule* macro = _find_macro(ps, unit->name + 1);
-      if (!macro) {
-        continue;
-      }
-
-      int32_t new_count = (int32_t)darray_size(rule->units) - 1 + (int32_t)darray_size(macro->units);
-      int32_t tail = (int32_t)darray_size(rule->units) - i - 1;
-
-      _free_vpa_unit(unit);
-
-      rule->units = darray_grow(rule->units, (size_t)new_count);
-
-      if (tail > 0 && (int32_t)darray_size(macro->units) != 1) {
-        memmove(&rule->units[i + (int32_t)darray_size(macro->units)], &rule->units[i + 1],
-                (size_t)tail * sizeof(VpaUnit));
-      }
-
-      for (int32_t m = 0; m < (int32_t)darray_size(macro->units); m++) {
-        rule->units[i + m] = _clone_vpa_unit(&macro->units[m]);
-      }
-      i += (int32_t)darray_size(macro->units) - 1;
-    }
-  }
-}
-
-// --- Post-processing: PEG branch auto-tagging ---
-
-static void _auto_tag_unit(ParseState* ps, PegRule* rule, PegUnit* unit) {
-  if (unit->kind == PEG_BRANCHES) {
-    for (int32_t i = 0; i < (int32_t)darray_size(unit->children); i++) {
-      PegUnit* branch = &unit->children[i];
-      if (!branch->tag || branch->tag[0] == '\0') {
-        if ((int32_t)darray_size(branch->children) > 0) {
-          PegUnit* first = &branch->children[0];
-          if (first->kind == PEG_ID && first->name && first->name[0]) {
-            free(branch->tag);
-            branch->tag = strdup(first->name);
-          }
-        }
-        if (!branch->tag || branch->tag[0] == '\0') {
-          parse_error(ps, "branch in rule '%s' must have an explicit tag", rule->name);
-          return;
-        }
-      }
-    }
-
-    for (int32_t i = 0; i < (int32_t)darray_size(unit->children); i++) {
-      for (int32_t j = i + 1; j < (int32_t)darray_size(unit->children); j++) {
-        if (unit->children[i].tag && unit->children[i].tag[0] && unit->children[j].tag && unit->children[j].tag[0] &&
-            strcmp(unit->children[i].tag, unit->children[j].tag) == 0) {
-          parse_error(ps, "duplicate tag '%s' in rule '%s'", unit->children[i].tag, rule->name);
-          return;
-        }
-      }
-    }
-  }
-
-  for (int32_t i = 0; i < (int32_t)darray_size(unit->children); i++) {
-    _auto_tag_unit(ps, rule, &unit->children[i]);
-  }
-  if (unit->interlace) {
-    _auto_tag_unit(ps, rule, unit->interlace);
-  }
-}
-
-static void _auto_tag_branches(ParseState* ps) {
-  for (int32_t r = 0; r < (int32_t)darray_size(ps->peg_rules); r++) {
-    _auto_tag_unit(ps, &ps->peg_rules[r], &ps->peg_rules[r].seq);
-  }
-}
-
-static void _check_cross_bracket_tags(ParseState* ps) {
-  for (int32_t r = 0; r < (int32_t)darray_size(ps->peg_rules); r++) {
-    PegRule* rule = &ps->peg_rules[r];
-    char** tags = darray_new(sizeof(char*), 0);
-
-    for (int32_t i = 0; i < (int32_t)darray_size(rule->seq.children); i++) {
-      PegUnit* child = &rule->seq.children[i];
-      if (child->kind != PEG_BRANCHES) {
-        continue;
-      }
-      for (int32_t j = 0; j < (int32_t)darray_size(child->children); j++) {
-        char* tag = child->children[j].tag;
-        if (!tag || !tag[0]) {
-          continue;
-        }
-        for (int32_t k = 0; k < (int32_t)darray_size(tags); k++) {
-          if (strcmp(tags[k], tag) == 0) {
-            parse_error(ps, "duplicate tag '%s' across bracket groups in rule '%s'", tag, rule->name);
-            goto next_rule;
-          }
-        }
-        darray_push(tags, tag);
-      }
-    }
-  next_rule:
-    darray_del(tags);
-  }
-}
-
 // --- Free helpers ---
 
 static void _free_vpa_unit(VpaUnit* unit) {
-  _re_ir_free(unit->re);
+  re_ir_free(unit->re);
   free(unit->name);
   free(unit->state_name);
   free(unit->user_hook);
@@ -1417,7 +1170,7 @@ static void _free_state(ParseState* ps) {
   }
   darray_del(ps->peg_rules);
   for (int32_t i = 0; i < (int32_t)darray_size(ps->re_irs); i++) {
-    _re_ir_free(ps->re_irs[i]);
+    re_ir_free(ps->re_irs[i]);
   }
   darray_del(ps->re_irs);
   darray_del(ps->str_spans);
@@ -1491,17 +1244,6 @@ bool parse_nest(ParseState* ps, const char* src) {
     _error_at(ps, _peek(ps), "unexpected token after end of input");
     return false;
   }
-
-  _inline_macros(ps);
-  _auto_tag_branches(ps);
-  if (parse_has_error(ps)) {
-    return false;
-  }
-  _check_cross_bracket_tags(ps);
-  if (parse_has_error(ps)) {
-    return false;
-  }
-  _expand_keywords(ps);
 
   return true;
 }

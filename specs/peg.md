@@ -3,6 +3,7 @@
 src/peg.c is a packrat parsing generator.
 
 create `src/peg.c` (`peg_gen()`):
+- gather scope closures (see below)
 - define generation logic for different PEG constructs, and generate LLVM IR, using Parser's processed-data
 - generation helpers for result C header (reference the "Using the generated code" section below):
   1. node definition
@@ -14,6 +15,15 @@ It iterates parsed PEG structure, utilize src/re.h to generate code.
 It assigns rule ids for each scope.
 
 It provides 2 generating options: naive & row_shared, so we can benchmark.
+
+### Scope closures
+
+`_gather_scope_closures()` will gather rules for each scope:
+
+- same rule within different scopes will have their independent numbering
+  - for example, scope `s1 = r1` and scope `s2 = r2`, r1 & r2 may have different numbering in this 2 scopes because we are parsing in a divide-and-conqur manner. Scope is the division unit
+- to gather rules for each scope, we recursively walk down the scope's definition, expanding sub rules and sub-sub rules and go on. but we don't expand scopes.
+- the purpose of this closure-finding is to make each scope's parsing table minimum.
 
 ### Breakdown rules
 

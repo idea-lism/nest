@@ -1,3 +1,5 @@
+base = (Dir.glob "src/*.c") - ["src/nest.c", "src/parse_gen.c", "src/ustr.c", "src/ustr_neon.c", "src/ustr_avx.c"]
+
 lib "ustr",
   srcs: %w[src/ustr.c src/ustr_neon.c src/ustr_avx.c]
 
@@ -31,9 +33,6 @@ exe "test_token_chunk",
 exe "parse_gen",
   srcs: %w[src/parse_gen.c src/re.c src/aut.c src/irwriter.c src/bitset.c src/darray.c],
   deps: %w[ustr]
-
-combined_lib "re",
-  srcs: %w[src/ustr.c src/ustr_neon.c src/ustr_avx.c src/irwriter.c src/bitset.c src/aut.c src/re.c src/darray.c]
 
 amalgamate input: "src/re_rt.h.in",
   output: "out/re_rt.h",
@@ -69,21 +68,21 @@ exe "test_coloring",
   ext_libs: kissat
 
 exe "test_peg",
-  srcs: %w[test/test_peg.c test/compat.c src/peg.c src/peg_ir.c src/header_writer.c src/irwriter.c src/bitset.c src/darray.c src/coloring.c src/graph.c],
+  srcs: base + %w[test/test_peg.c test/compat.c],
   ext_libs: kissat
 
 exe "test_vpa",
-  srcs: %w[test/test_vpa.c test/compat.c src/vpa.c src/header_writer.c src/re.c src/aut.c src/irwriter.c src/bitset.c src/darray.c],
+  srcs: base + %w[test/test_vpa.c test/compat.c],
   deps: %w[ustr]
 
 exe "test_parse",
-  srcs: %w[test/test_parse.c test/compat.c src/parse.c src/token_chunk.c src/vpa.c src/peg.c src/peg_ir.c src/header_writer.c src/re.c src/aut.c src/irwriter.c src/bitset.c src/darray.c src/coloring.c src/graph.c],
+  srcs: base + %w[test/test_parse.c test/compat.c],
   deps: %w[ustr],
   extra_objs: nest_lex,
   ext_libs: kissat
 
 exe "nest",
-  srcs: %w[src/nest.c src/parse.c src/token_chunk.c src/vpa.c src/peg.c src/peg_ir.c src/header_writer.c src/re.c src/aut.c src/irwriter.c src/bitset.c src/darray.c src/coloring.c src/graph.c],
+  srcs: base + %w[src/nest.c],
   deps: %w[ustr],
   extra_objs: nest_lex,
   ext_libs: kissat

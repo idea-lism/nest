@@ -1,8 +1,6 @@
-// nest CLI: regex lexer generator and .nest parser compiler.
-
-#include "header_writer.h"
-#include "irwriter.h"
+// specs/nest.md
 #include "parse.h"
+#include "post_process.h"
 #include "re.h"
 #include "ustr.h"
 
@@ -135,17 +133,6 @@ static void _add_class_ranges(ReRange* range, int32_t cls) {
   }
 }
 
-static int32_t _c_escape(int32_t ch) {
-  int32_t esc = re_c_escape((char)ch);
-  if (esc >= 0) {
-    return esc;
-  }
-  if (ch == '0') {
-    return '\0';
-  }
-  return -1;
-}
-
 static int32_t _lp_parse_unicode_escape(LexParser* p) {
   _lp_advance(p);
   char buf[16];
@@ -170,7 +157,7 @@ static int32_t _lp_parse_class_escape(LexParser* p, ReRange* range) {
   if (ch < 0) {
     return -1;
   }
-  int32_t esc = _c_escape(ch);
+  int32_t esc = re_c_escape(ch);
   if (esc >= 0) {
     return esc;
   }
@@ -301,7 +288,7 @@ static void _lp_parse_atom(LexParser* p) {
       int32_t cp = _lp_parse_unicode_escape(p);
       _lp_emit_ch(p, cp);
     } else {
-      int32_t esc = _c_escape(ch);
+      int32_t esc = re_c_escape(ch);
       _lp_advance(p);
       _lp_emit_ch(p, esc >= 0 ? esc : ch);
     }
@@ -609,9 +596,31 @@ static int32_t _cmd_compile(int32_t argc, char** argv) {
   IrWriter* w = irwriter_new(fout, triple);
   irwriter_start(w, input, ".");
   HeaderWriter* hw = hw_new(fhdr);
+  ParseState* ps = parse_state_new();
 
-  parse_nest(src, hw, w);
+  int ret = 0;
+  if (!parse_nest(ps, src)) {
+    ret = -1;
+    goto cleanup;
+  }
+  if (!pp_all_passes(ps)) {
+    ret = -1;
+    goto cleanup;
+  }
 
+  peg_gen(&(PegGenInput){.rules = ps->peg_rules}, hw, w);
+  vpa_gen(
+      &(VpaGenInput){
+          .rules = ps->vpa_rules,
+          .keywords = ps->keywords,
+          .states = ps->states,
+          .effects = ps->effects,
+          .peg_rules = ps->peg_rules,
+          .src = ps->src,
+      },
+      hw, w);
+
+cleanup:
   irwriter_end(w);
   irwriter_del(w);
   hw_del(hw);
@@ -619,7 +628,7 @@ static int32_t _cmd_compile(int32_t argc, char** argv) {
   fclose(fhdr);
   ustr_del(src);
   free(header_path);
-  return 0;
+  return ret;
 }
 
 int main(int argc, char** argv) {

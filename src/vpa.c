@@ -77,8 +77,8 @@ static void _free_action_registry(ActionRegistry* reg) {
 typedef struct {
   char* name;
   int32_t scope_id;
-  VpaUnit* body;         // NOT owned
-  ReIr leader_re;        // NOT owned
+  VpaUnit* body;  // NOT owned
+  ReIr leader_re; // NOT owned
   int32_t leader_hook;
   char* leader_user_hook;
 } ScopeInfo;
@@ -180,79 +180,6 @@ static void _make_state_match_symbol(const char* state_name, char* out, size_t o
   snprintf(out, out_sz, "match_%s", state_name);
 }
 
-// --- Interpret ReIr bytecode into re.h NFA-building API ---
-
-static void _re_ir_exec(Re* re, Aut* aut, ReIr ir, DebugInfo di) {
-  ReRange* range = NULL;
-  int32_t n = (int32_t)darray_size(ir);
-  for (int32_t i = 0; i < n; i++) {
-    ReIrOp* op = &ir[i];
-    switch (op->kind) {
-    case RE_IR_RANGE_BEGIN:
-      range = re_range_new();
-      break;
-    case RE_IR_RANGE_END:
-      re_append_range(re, range, di);
-      re_range_del(range);
-      range = NULL;
-      break;
-    case RE_IR_RANGE_NEG:
-      re_range_neg(range);
-      break;
-    case RE_IR_RANGE_IC:
-      re_range_ic(range);
-      break;
-    case RE_IR_APPEND_CH:
-      if (range) {
-        re_range_add(range, op->start, op->end);
-      } else {
-        re_append_ch(re, op->start, di);
-      }
-      break;
-    case RE_IR_APPEND_CH_IC:
-      if (range) {
-        re_range_add(range, op->start, op->end);
-      } else {
-        re_append_ch_ic(re, op->start, di);
-      }
-      break;
-    case RE_IR_APPEND_GROUP_S:
-      re_append_group_s(re, range);
-      break;
-    case RE_IR_APPEND_GROUP_W:
-      re_append_group_w(re, range);
-      break;
-    case RE_IR_APPEND_GROUP_D:
-      re_append_group_d(re, range);
-      break;
-    case RE_IR_APPEND_GROUP_H:
-      re_append_group_h(re, range);
-      break;
-    case RE_IR_APPEND_GROUP_DOT:
-      re_append_group_dot(re, range);
-      break;
-    case RE_IR_APPEND_C_ESCAPE:
-      re_append_ch(re, re_c_escape((char)op->start), di);
-      break;
-    case RE_IR_APPEND_HEX:
-      re_append_ch(re, op->start, di);
-      break;
-    case RE_IR_LPAREN:
-      re_lparen(re);
-      break;
-    case RE_IR_RPAREN:
-      re_rparen(re);
-      break;
-    case RE_FORK:
-      re_fork(re);
-      break;
-    case RE_IR_ACTION:
-      re_action(re, op->start);
-      break;
-    }
-  }
-}
-
 // --- Resolve scope body into DFA/state patterns ---
 
 static int32_t _resolve_action(ActionRegistry* reg, ScopeInfo* scope, VpaUnit* unit, const char* default_tok_name,
@@ -319,9 +246,8 @@ static DfaPattern* _resolve_body(ScopeInfo* scope, VpaUnit* body, VpaRule* rules
         if (target) {
           int32_t aid =
               _register_action(reg, 0, target->scope_id, false, scope_unit->hook, scope_unit->user_hook, NULL);
-          darray_push(
-              patterns,
-              ((DfaPattern){.kind = VPA_REGEXP, .ir = scope_unit->re, .state_name = NULL, .action_id = aid}));
+          darray_push(patterns,
+                      ((DfaPattern){.kind = VPA_REGEXP, .ir = scope_unit->re, .state_name = NULL, .action_id = aid}));
         }
       }
       for (int32_t j = 0; j < (int32_t)darray_size(ref_rule->units); j++) {
@@ -331,8 +257,7 @@ static DfaPattern* _resolve_body(ScopeInfo* scope, VpaUnit* body, VpaRule* rules
           if (aid == 0) {
             continue;
           }
-          darray_push(patterns,
-                      ((DfaPattern){.kind = VPA_REGEXP, .ir = ru->re, .state_name = NULL, .action_id = aid}));
+          darray_push(patterns, ((DfaPattern){.kind = VPA_REGEXP, .ir = ru->re, .state_name = NULL, .action_id = aid}));
         } else if (ru->kind == VPA_STATE && ru->state_name && _find_state(states, ru->state_name)) {
           int32_t aid = _resolve_action(reg, scope, ru, ref_rule->name, effects, peg_rules, true);
           darray_push(patterns,
@@ -344,8 +269,7 @@ static DfaPattern* _resolve_body(ScopeInfo* scope, VpaUnit* body, VpaRule* rules
       ScopeInfo* target = _find_scope(scopes, u->name ? u->name : "");
       if (target) {
         int32_t aid = _register_action(reg, 0, target->scope_id, false, u->hook, u->user_hook, NULL);
-        darray_push(patterns,
-                    ((DfaPattern){.kind = VPA_REGEXP, .ir = u->re, .state_name = NULL, .action_id = aid}));
+        darray_push(patterns, ((DfaPattern){.kind = VPA_REGEXP, .ir = u->re, .state_name = NULL, .action_id = aid}));
       }
     }
   }
@@ -387,7 +311,7 @@ static void _gen_scope_dfa(ScopeInfo* scope, DfaPattern* patterns, IrWriter* w) 
       re_fork(re);
     }
     DebugInfo di = {0, 0};
-    _re_ir_exec(re, aut, patterns[i].ir, di);
+    re_ir_exec(re, patterns[i].ir, di);
     re_action(re, patterns[i].action_id);
     emitted++;
   }

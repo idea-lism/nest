@@ -7,7 +7,6 @@ MODE = (ARGV[0] || "debug").freeze
 # --- DSL state ---
 $libs = []
 $exes = []
-$combined_libs = []
 $amalgamates = []
 $dist_headers = []
 $mode_cflags = {}
@@ -22,10 +21,6 @@ end
 
 def exe(name, srcs:, deps: [], ext_libs: [], extra_objs: [])
   $exes << { name: name, srcs: srcs, deps: deps, ext_libs: ext_libs, extra_objs: extra_objs }
-end
-
-def combined_lib(name, srcs:)
-  $combined_libs << { name: name, srcs: srcs }
 end
 
 def amalgamate(input:, output:, include_dirs: [])
@@ -195,21 +190,6 @@ File.open("build.ninja", "w") do |f|
     f.puts ""
   end
 
-  # Combined libraries
-  $combined_libs.each do |cl|
-    all_objs = cl[:srcs].map do |src|
-      obj = "#{BUILDDIR}/#{src.sub(/\.c$/, '.o')}"
-      unless emitted[obj]
-        f.puts "build #{obj}: cc #{src}"
-        emitted[obj] = true
-      end
-      obj
-    end
-    out = "out/lib#{cl[:name]}.a"
-    f.puts "build #{out}: ar #{all_objs.join(' ')}"
-    f.puts ""
-  end
-
   # Amalgamate
   unless $amalgamates.empty?
     f.puts "rule amalgamate"
@@ -243,7 +223,6 @@ File.open("build.ninja", "w") do |f|
 
   # Default: build everything
   all = $exes.map { |e| "#{BUILDDIR}/#{e[:name]}" }
-  all += $combined_libs.map { |cl| "out/lib#{cl[:name]}.a" }
   all += $amalgamates.map { |am| am[:output] }
   all += $dist_headers.map { |dh| dh[:to] }
   all += $extra_defaults
@@ -251,7 +230,7 @@ File.open("build.ninja", "w") do |f|
   f.puts ""
 
   # Format
-  all_srcs = ($libs.flat_map { |l| l[:srcs] } + $exes.flat_map { |e| e[:srcs] } + $combined_libs.flat_map { |cl| cl[:srcs] }).uniq
+  all_srcs = ($libs.flat_map { |l| l[:srcs] } + $exes.flat_map { |e| e[:srcs] }).uniq
   all_hdrs = all_srcs.flat_map { |s| [s.sub(/\.c$/, '.h'), s.sub(/\.c$/, '_intern.h')] }.select { |h| File.exist?(h) }
   fmt_files = (all_srcs + all_hdrs).sort.uniq.join(' ')
   f.puts "rule format"
@@ -267,7 +246,7 @@ puts "Generated build.ninja (mode=#{MODE}, cc=#{CC})"
 require 'json'
 
 project_root = File.expand_path(__dir__)
-all_srcs = ($libs.flat_map { |l| l[:srcs] } + $exes.flat_map { |e| e[:srcs] } + $combined_libs.flat_map { |cl| cl[:srcs] }).uniq
+all_srcs = ($libs.flat_map { |l| l[:srcs] } + $exes.flat_map { |e| e[:srcs] }).uniq
 test_define = "-DBUILD_DIR=\\\"#{BUILDDIR}\\\""
 
 entries = all_srcs.map do |src|
