@@ -116,8 +116,6 @@ typedef struct {
   int32_t src_len;
 
   TokenTree* tree;
-  TokenChunk* read_chunk;
-  int32_t tpos;
 
   ReFragment* re_frags;
 

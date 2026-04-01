@@ -221,11 +221,11 @@ Scope parsing example, especially for peg_str & re_str:
 ```c
 typedef void* DStr; // darray of chars
 
-bool _parse_peg_str(const char* src, TokenChunk* chunk) {
+bool _parse_peg_str(const char* src, TokenChunk* chunk, int32_t* tpos) {
   DStr buf = darray_new(sizeof(int32_t), 0);
   char* b = (char*)buf;
   int32_t n = (int32_t)darray_size(chunk->tokens);
-  for (int32_t i = 0; i < n; i++) {
+  for (int32_t i = *tpos; i < n; i++) {
     Token* t = &chunk->tokens[i];
     switch (t->tok_id) {
       case TOK_CHAR: {
@@ -268,15 +268,16 @@ typedef struct {
   ReIr re_ir;
 } ReStrUnit;
 
-bool _parse_re_str(const char* src, TokenChunk* chunk) {
+bool _parse_re_str(const char* src, TokenChunk* chunk, int32_t* tpos) {
   ReStrUnit unit = {0};
   // save some work by invoking existing parser
-  _parse_peg_str(src, chunk);
+  int32_t tpos_copy = *tpos;
+  _parse_peg_str(src, chunk, &tpos_copy);
   unit.tok_name = chunk->value;
 
   ReIr re = re_ir_new();
   int32_t n = (int32_t)darray_size(chunk->tokens);
-  for (int32_t i = 0; i < n; i++) {
+  for (int32_t i = *tpos; i < n; i++) {
     Token* t = &chunk->tokens[i];
     switch (t->tok_id) {
       case TOK_CHAR: {
