@@ -17,7 +17,6 @@ typedef struct {
   int64_t action;
 } LexResult;
 
-
 struct SharedState {
   int32_t last_quote_cp;
   bool re_mode_icase;

@@ -48,14 +48,6 @@ foo = a [
 - walk down peg rules to detect left recursions -- we don't allow this infinite loop.
   - when analyzing, be ware of the scope boundary: if there is a scope, we don't expand it. for example str is defined `str = str_char*`, but it always takes a slot in token stream so parsing the scope won't result in infinite loop.
 
-### vpa & peg: keyword matching & expansion
-
-`bool pp_expand_keywords(ParseState* ps);`:
-- expand the `.lit` sugar
-- token name is auto-generated as: `@lit.{literal-content}`
-- for example, `"=" .lit` will emit a token `@lit.=`, and the usage of
-  - in this example, `"="` in peg is replaced by `@lit.=`
-
 ### other validations
 
 `bool pp_validate(ParseState* ps);`:
