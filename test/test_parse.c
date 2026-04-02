@@ -148,8 +148,6 @@ TEST(test_minimal_parse) {
 
 static const char DIRECTIVES_NEST[] = "[[vpa]]\n"
                                       "%ignore @space @comment\n"
-                                      "%state $mode\n"
-                                      "%keyword ops \"=\" \"|\"\n"
                                       "%define ID /[a-z_]\\w*/\n"
                                       "main = { *noise }\n"
                                       "*noise = { /[ \\t\\n]+/ @space /#[^\\n]*/ @comment /\\n+/ @nl }\n"
@@ -210,8 +208,7 @@ TEST(test_hooks) {
 
 static const char KEYWORD_NEST[] = "[[vpa]]\n"
                                    "%ignore @space @comment\n"
-                                   "%keyword ops \"=\" \"|\"\n"
-                                   "main = { ops *noise }\n"
+                                   "main = { *noise }\n"
                                    "*noise = { /[ \\t\\n]+/ @space /#[^\\n]*/ @comment /\\n+/ @nl }\n"
                                    "[[peg]]\n"
                                    "main = @nl*\n";
@@ -434,7 +431,6 @@ TEST(test_bootstrap_nest) {
 
 static const char STRLIT_NEST[] = "[[vpa]]\n"
                                   "%ignore @space @comment\n"
-                                  "%state $last_quote\n"
                                   "main = { str *noise }\n"
                                   "str = /[\"']/ .begin { /[\"']/ .end /[^\"']+/ @char }\n"
                                   "*noise = { /[ \\t\\n]+/ @space /#[^\\n]*/ @comment /\\n+/ @nl }\n"
@@ -553,7 +549,7 @@ TEST(test_nested_scopes) {
 // --- Invalid regexp ---
 
 static const char BAD_RE_NEST[] = "[[vpa]]\n"
-                                  "main = { // @tok_a }\n"
+                                  "main = { /[/ @tok_a }\n"
                                   "[[peg]]\n"
                                   "main = @tok_a\n";
 

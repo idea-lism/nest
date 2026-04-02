@@ -60,8 +60,8 @@ static void _build_range(Aut* a, IrWriter* w) {
 
 TEST(test_range_transition) {
   char* out = _gen_ir(_build_range);
-  assert(strstr(out, "icmp sge i32 %r"));
-  assert(strstr(out, "icmp sle i32 %r"));
+  assert(strstr(out, "icmp sge i32 %cp"));
+  assert(strstr(out, "icmp sle i32 %cp"));
   free(out);
 }
 
@@ -79,10 +79,10 @@ static void _build_multi(Aut* a, IrWriter* w) {
 
 TEST(test_multi_transitions) {
   char* out = _gen_ir(_build_multi);
-  assert(strstr(out, "icmp sge i32 %r"));
-  assert(strstr(out, "icmp sle i32 %r"));
-  assert(strstr(out, "icmp sge i32 %r"));
-  assert(strstr(out, "icmp sle i32 %r"));
+  assert(strstr(out, "icmp sge i32 %cp"));
+  assert(strstr(out, "icmp sle i32 %cp"));
+  assert(strstr(out, "icmp sge i32 %cp"));
+  assert(strstr(out, "icmp sle i32 %cp"));
   free(out);
 }
 
@@ -144,7 +144,7 @@ static void _build_action_smallest(Aut* a, IrWriter* w) {
 
 TEST(test_action_smallest) {
   char* out = _gen_ir(_build_action_smallest);
-  assert(strstr(out, "add i32 0, 3"));
+  assert(strstr(out, "i32 3, 1"));
   free(out);
 }
 
@@ -235,7 +235,7 @@ static void _build_action_basic(Aut* a, IrWriter* w) {
 
 TEST(test_action_basic) {
   char* out = _gen_ir(_build_action_basic);
-  assert(strstr(out, "add i32 0, 7"));
+  assert(strstr(out, "i32 7, 1"));
   free(out);
 }
 
@@ -251,7 +251,7 @@ static void _build_min_rule(Aut* a, IrWriter* w) {
 
 TEST(test_min_rule) {
   char* out = _gen_ir(_build_min_rule);
-  assert(strstr(out, "add i32 0, 3"));
+  assert(strstr(out, "i32 3, 1"));
   free(out);
 }
 
@@ -275,8 +275,8 @@ static void _build_preserve(Aut* a, IrWriter* w) {
 
 TEST(test_preserving_rule) {
   char* out = _gen_ir(_build_preserve);
-  assert(strstr(out, "add i32 0, 2"));
-  assert(strstr(out, "add i32 0, 5"));
+  assert(strstr(out, "i32 2, 1"));
+  assert(strstr(out, "i32 5, 1"));
   free(out);
 }
 
@@ -337,10 +337,10 @@ TEST(test_optimize_preserves_action) {
   }
 
   // Both must have action_id=3 and action_id=4
-  assert(strstr(unopt, "add i32 0, 3"));
-  assert(strstr(unopt, "add i32 0, 4"));
-  assert(strstr(opt, "add i32 0, 3"));
-  assert(strstr(opt, "add i32 0, 4"));
+  assert(strstr(unopt, "i32 3, 1"));
+  assert(strstr(unopt, "i32 4, 1"));
+  assert(strstr(opt, "i32 3, 1"));
+  assert(strstr(opt, "i32 4, 1"));
 
   free(unopt);
   free(opt);

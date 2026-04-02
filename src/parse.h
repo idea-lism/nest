@@ -120,6 +120,7 @@ typedef struct {
   ReFragment* re_frags;
 
   VpaRule* vpa_rules;
+  KeywordEntry* keywords;
   IgnoreSet ignores;
   EffectDecl* effects;
   PegRule* peg_rules;

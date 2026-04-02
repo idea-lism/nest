@@ -600,6 +600,7 @@ static int32_t _cmd_compile(int32_t argc, char** argv) {
 
   int ret = 0;
   if (!parse_nest(ps, src)) {
+    fprintf(stderr, "nest: %s\n", parse_get_error(ps));
     ret = -1;
     goto cleanup;
   }

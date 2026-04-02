@@ -66,12 +66,16 @@ static void _assert_func(const char* name) {
 
 TEST(test_has_lex_main) { _assert_func("lex_main"); }
 TEST(test_has_lex_vpa) { _assert_func("lex_vpa"); }
+TEST(test_has_lex_scope) { _assert_func("lex_scope"); }
+TEST(test_has_lex_lit_scope) { _assert_func("lex_lit_scope"); }
+TEST(test_has_lex_peg) { _assert_func("lex_peg"); }
+TEST(test_has_lex_branches) { _assert_func("lex_branches"); }
+TEST(test_has_lex_peg_tag) { _assert_func("lex_peg_tag"); }
 TEST(test_has_lex_re) { _assert_func("lex_re"); }
+TEST(test_has_lex_re_ref) { _assert_func("lex_re_ref"); }
 TEST(test_has_lex_charclass) { _assert_func("lex_charclass"); }
 TEST(test_has_lex_re_str) { _assert_func("lex_re_str"); }
-TEST(test_has_lex_re_ref) { _assert_func("lex_re_ref"); }
-TEST(test_has_lex_keyword_str) { _assert_func("lex_keyword_str"); }
-TEST(test_has_lex_peg) { _assert_func("lex_peg"); }
+TEST(test_has_lex_peg_str) { _assert_func("lex_peg_str"); }
 
 TEST(test_no_extra_defines) {
   int32_t count = 0;
@@ -80,7 +84,7 @@ TEST(test_no_extra_defines) {
     count++;
     p++;
   }
-  assert(count == 8);
+  assert(count == 12);
 }
 
 // --- IR structure tests ---
@@ -113,12 +117,16 @@ int main(void) {
 
   RUN(test_has_lex_main);
   RUN(test_has_lex_vpa);
+  RUN(test_has_lex_scope);
+  RUN(test_has_lex_lit_scope);
+  RUN(test_has_lex_peg);
+  RUN(test_has_lex_branches);
+  RUN(test_has_lex_peg_tag);
   RUN(test_has_lex_re);
+  RUN(test_has_lex_re_ref);
   RUN(test_has_lex_charclass);
   RUN(test_has_lex_re_str);
-  RUN(test_has_lex_re_ref);
-  RUN(test_has_lex_keyword_str);
-  RUN(test_has_lex_peg);
+  RUN(test_has_lex_peg_str);
   RUN(test_no_extra_defines);
   RUN(test_omits_target_triple);
   RUN(test_has_source_filename);

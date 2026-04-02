@@ -173,12 +173,14 @@ static void _lex_scope(LexCtx* ctx, ScopeId scope_id) {
 
   tc_push(ctx->tree);
   ctx->tree->current->scope_id = scope_id;
+  int32_t chunk_idx = (int32_t)(darray_size(ctx->tree->table) - 1);
+  int32_t scope_cp_start = ctx->it.cp_idx;
 
   int64_t state = 0;
   int32_t last_action = 0;
   int32_t tok_start = ctx->it.cp_idx;
 
-  while (ctx->it.cp_idx < ctx->cp_count || last_action != 0) {
+  while (!parse_has_error(ctx->ps) && (ctx->it.cp_idx < ctx->cp_count || last_action != 0)) {
     int32_t saved = ctx->it.cp_idx;
     LexResult r = cfg.lex_fn(state, _next_cp(ctx));
 
@@ -192,13 +194,14 @@ static void _lex_scope(LexCtx* ctx, ScopeId scope_id) {
     if (last_action == ACTION_END) {
       break;
     } else if (last_action == ACTION_UNPARSE_END) {
-      ctx->it.cp_idx = saved;
+      ustr_iter_init(&ctx->it, ctx->ps->src, tok_start);
       break;
     } else if (last_action == ACTION_IGNORE) {
       // skip
     } else if (last_action == ACTION_SET_QUOTE_BEGIN) {
       ctx->shared.last_quote_cp = ustr_cp_at(ctx->ps->src, tok_start);
-      _lex_scope(ctx, scope_id == SCOPE_PEG || scope_id == SCOPE_BRANCHES ? SCOPE_PEG_STR : SCOPE_RE_STR);
+      int32_t child_scope = scope_id == SCOPE_PEG || scope_id == SCOPE_BRANCHES ? SCOPE_PEG_STR : SCOPE_RE_STR;
+      _lex_scope(ctx, child_scope);
     } else if (last_action == ACTION_STR_CHECK_END) {
       if (ustr_cp_at(ctx->ps->src, tok_start) == ctx->shared.last_quote_cp) {
         break;
@@ -234,8 +237,13 @@ static void _lex_scope(LexCtx* ctx, ScopeId scope_id) {
     } else if (last_action >= LIT_START) {
       tc_add(ctx->tree->current, (Token){.tok_id = last_action, .cp_start = tok_start, .cp_size = saved - tok_start});
     } else if (last_action == 0) {
-      fprintf(stderr, "lex error at cp %d\n", saved);
-      abort();
+      if (saved >= ctx->cp_count) {
+        break;
+      }
+      if (scope_id == SCOPE_MAIN) {
+        _error_at(ctx->ps, NULL, "unexpected character at position %d", saved);
+      }
+      break;
     }
 
     if (saved >= ctx->cp_count) {
@@ -248,6 +256,10 @@ static void _lex_scope(LexCtx* ctx, ScopeId scope_id) {
 
   TokenChunk* chunk = ctx->tree->current;
   tc_pop(ctx->tree);
+  if (ctx->tree->current->scope_id != SCOPE_START) {
+    tc_add(ctx->tree->current, (Token){.tok_id = scope_id, .cp_start = scope_cp_start,
+                                       .cp_size = ctx->it.cp_idx - scope_cp_start, .chunk_id = chunk_idx});
+  }
   if (cfg.parse_fn) {
     cfg.parse_fn(ctx->ps, chunk);
   }
@@ -368,9 +380,9 @@ static ReIr _emit_shorthand(ReIr ir, int32_t tok_id) {
 }
 
 static bool _is_re_unit(int32_t id) {
-  return id == LIT_LPAREN || id == SCOPE_CHARCLASS || id == TOK_RE_DOT || id == TOK_RE_SPACE_CLASS ||
-         id == TOK_RE_WORD_CLASS || id == TOK_RE_DIGIT_CLASS || id == TOK_RE_HEX_CLASS || id == TOK_RE_BOF ||
-         id == TOK_RE_EOF || id == TOK_RE_REF || _is_str_char(id);
+  return id == LIT_LPAREN || id == SCOPE_CHARCLASS || id == SCOPE_RE_REF || id == TOK_RE_DOT ||
+         id == TOK_RE_SPACE_CLASS || id == TOK_RE_WORD_CLASS || id == TOK_RE_DIGIT_CLASS || id == TOK_RE_HEX_CLASS ||
+         id == TOK_RE_BOF || id == TOK_RE_EOF || _is_str_char(id);
 }
 
 // re_unit = [ "(" re ")" | charclass | shorthand | @re_bof | @re_eof | @re_ref | char_token ]
@@ -412,9 +424,16 @@ static ReIr _parse_re_unit(ParseState* ps, TokenChunk* chunk, int32_t* tpos, ReI
   case TOK_RE_EOF:
     _next(chunk, tpos);
     return re_ir_emit_ch(ir, LEX_CP_EOF);
-  case TOK_RE_REF:
+  case SCOPE_RE_REF: {
     _next(chunk, tpos);
-    return re_ir_emit(ir, RE_IR_FRAG_REF, t->cp_start, t->cp_size);
+    TokenChunk* ref_chunk = _scope_chunk(ps, t);
+    for (int32_t i = 0; i < (int32_t)darray_size(ref_chunk->tokens); i++) {
+      if (ref_chunk->tokens[i].tok_id == TOK_RE_REF) {
+        return re_ir_emit(ir, RE_IR_FRAG_REF, ref_chunk->tokens[i].cp_start, ref_chunk->tokens[i].cp_size);
+      }
+    }
+    return ir;
+  }
   case TOK_CHAR:
   case TOK_CODEPOINT:
   case TOK_C_ESCAPE:
@@ -770,8 +789,19 @@ static bool _parse_vpa_rule(ParseState* ps, TokenChunk* chunk, int32_t* tpos) {
 
   Token* t = _peek(chunk, *tpos);
   if (!t) {
-    _error_at(ps, name, "expected pattern");
+    _error_at(ps, name, "expected pattern or scope");
     return false;
+  }
+
+  // bare scope: only "main" can omit the regex pattern
+  if (t->tok_id == SCOPE_SCOPE) {
+    if (strcmp(rule->name, "main") != 0) {
+      _error_at(ps, name, "only 'main' can use bare scope");
+      return false;
+    }
+    _next(chunk, tpos);
+    rule->is_scope = true;
+    return _parse_scope(ps, _scope_chunk(ps, t), rule);
   }
 
   VpaUnit u = {0};
@@ -996,6 +1026,15 @@ static bool _parse_branch_line(ParseState* ps, TokenChunk* chunk, int32_t* tpos,
   }
   if (_at(chunk, *tpos, TOK_TAG_ID)) {
     b->tag = _tok_str(ps, _next(chunk, tpos));
+  } else if (_at(chunk, *tpos, SCOPE_PEG_TAG)) {
+    Token* sc = _next(chunk, tpos);
+    TokenChunk* tag_chunk = _scope_chunk(ps, sc);
+    for (int32_t i = 0; i < (int32_t)darray_size(tag_chunk->tokens); i++) {
+      if (tag_chunk->tokens[i].tok_id == TOK_TAG_ID) {
+        b->tag = _tok_str(ps, &tag_chunk->tokens[i]);
+        break;
+      }
+    }
   }
   return true;
 }

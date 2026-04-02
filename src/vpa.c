@@ -167,10 +167,6 @@ static void _make_parse_scope_symbol(const char* scope_name, char* out, size_t o
   snprintf(out, out_sz, "vpa_parse_%s", scope_name);
 }
 
-static void _make_state_match_symbol(const char* state_name, char* out, size_t out_sz) {
-  snprintf(out, out_sz, "match_%s", state_name);
-}
-
 // --- Resolve scope body into DFA/state patterns ---
 
 static int32_t _resolve_action(ActionRegistry* reg, ScopeInfo* scope, VpaUnit* unit, const char* default_tok_name,

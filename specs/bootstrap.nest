@@ -130,7 +130,7 @@ re = /(b|i|ib|bi)?\// .set_re_mode .begin {
 }
 
 re_ref = /\\\{/ .begin {
-  ID @re_ref
+  /[A-Z]\w*/ @re_ref
   /\}/ .end
 }
 
@@ -152,7 +152,7 @@ re_str = /["']/ .set_quote .begin {
   *chars
 }
 
-// same as re_str, but the parsing process is different so we create different scope
+# same as re_str, but the parsing process is different so we create different scope
 peg_str = /["']/ .set_quote .begin {
   /["']/ .str_check_end # may emit char or terminate matching
   *chars

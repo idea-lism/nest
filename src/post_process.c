@@ -119,7 +119,6 @@ static VpaRule* _find_macro(ParseState* ps, const char* name) {
 static VpaUnit _clone_vpa_unit(VpaUnit* src) {
   VpaUnit dst = *src;
   dst.name = src->name ? strdup(src->name) : NULL;
-  dst.state_name = src->state_name ? strdup(src->state_name) : NULL;
   dst.user_hook = src->user_hook ? strdup(src->user_hook) : NULL;
   dst.re = re_ir_clone(src->re);
   if ((int32_t)darray_size(src->children) > 0) {
@@ -141,7 +140,6 @@ static void _add_vpa_unit(VpaRule* rule, VpaUnit unit) {
 static void _free_vpa_unit(VpaUnit* unit) {
   re_ir_free(unit->re);
   free(unit->name);
-  free(unit->state_name);
   free(unit->user_hook);
   for (int32_t i = 0; i < (int32_t)darray_size(unit->children); i++) {
     _free_vpa_unit(&unit->children[i]);
@@ -241,7 +239,7 @@ static void _collect_emit_set(ParseState* ps, VpaUnit* units, char*** set, char*
   for (int32_t i = 0; i < (int32_t)darray_size(units); i++) {
     VpaUnit* u = &units[i];
 
-    if (u->kind == VPA_REGEXP || u->kind == VPA_STATE) {
+    if (u->kind == VPA_REGEXP) {
       if (u->name && u->name[0]) {
         _str_set_add(set, u->name);
       }
@@ -255,7 +253,7 @@ static void _collect_emit_set(ParseState* ps, VpaUnit* units, char*** set, char*
             _collect_emit_set(ps, ref->units, set, visited);
             for (int32_t j = 0; j < (int32_t)darray_size(ref->units); j++) {
               VpaUnit* ru = &ref->units[j];
-              if ((ru->kind == VPA_REGEXP || ru->kind == VPA_STATE) && (!ru->name || !ru->name[0])) {
+              if ((ru->kind == VPA_REGEXP) && (!ru->name || !ru->name[0])) {
                 _str_set_add(set, ref->name);
               }
             }
@@ -269,7 +267,7 @@ static void _collect_emit_set(ParseState* ps, VpaUnit* units, char*** set, char*
 }
 
 static void _collect_peg_used_set(PegUnit* unit, char*** set, ParseState* ps, char*** visited_rules) {
-  if (unit->kind == PEG_TOK && unit->name) {
+  if ((unit->kind == PEG_TOK || unit->kind == PEG_KEYWORD_TOK) && unit->name) {
     _str_set_add(set, unit->name);
   }
   if (unit->kind == PEG_ID && unit->name) {
@@ -417,6 +415,7 @@ static bool _check_left_rec(ParseState* ps, PegUnit* unit, const char* target, c
     }
     break;
   case PEG_TOK:
+  case PEG_KEYWORD_TOK:
     break;
   case PEG_BRANCHES:
     for (int32_t i = 0; i < (int32_t)darray_size(unit->children); i++) {
@@ -551,27 +550,6 @@ bool pp_validate(ParseState* ps) {
   if (!has_peg_main) {
     parse_error(ps, "'main' rule must exist in [[peg]]");
     return false;
-  }
-
-  for (int32_t i = 0; i < (int32_t)darray_size(ps->vpa_rules); i++) {
-    VpaRule* rule = &ps->vpa_rules[i];
-    for (int32_t j = 0; j < (int32_t)darray_size(rule->units); j++) {
-      VpaUnit* u = &rule->units[j];
-      if (u->kind != VPA_STATE || !u->state_name || !u->state_name[0]) {
-        continue;
-      }
-      bool found = false;
-      for (int32_t s = 0; s < (int32_t)darray_size(ps->states); s++) {
-        if (strcmp(ps->states[s].name, u->state_name) == 0) {
-          found = true;
-          break;
-        }
-      }
-      if (!found) {
-        parse_error(ps, "state '$%s' used in rule '%s' is not declared", u->state_name, rule->name);
-        return false;
-      }
-    }
   }
 
   for (int32_t i = 0; i < (int32_t)darray_size(ps->vpa_rules); i++) {

@@ -588,7 +588,7 @@ static Lex* _build_charclass_scope(void) {
 static Lex* _build_re_ref_scope(void) {
   Lex* l = _lex_new("lex_re_ref", "nest", "");
 
-  _lex_add(l, "[a-z_][a-zA-Z0-9_]*", __LINE__, 15, TOK_RE_REF);
+  _lex_add(l, "[A-Z][a-zA-Z0-9_]*", __LINE__, 15, TOK_RE_REF);
   _lex_add(l, "\\}", __LINE__, 15, ACTION_END);
 
   return l;
