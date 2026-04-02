@@ -857,7 +857,7 @@ static bool _parse_vpa_module_rule(ParseState* ps, TokenChunk* chunk, int32_t* t
   }
   darray_push(ps->vpa_rules, ((VpaRule){0}));
   VpaRule* rule = &ps->vpa_rules[darray_size(ps->vpa_rules) - 1];
-  rule->name = _tok_str(ps, name);
+  rule->name = _tok_str_skip(ps, name, 1);
   rule->is_macro = true;
   rule->is_scope = true;
 

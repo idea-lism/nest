@@ -40,8 +40,6 @@ typedef enum {
 typedef struct {
   PegRule* rules;
   PegGenMode mode;
-  int32_t* token_ids;
-  int32_t n_tokens;
 } PegGenInput;
 
 void peg_gen(PegGenInput* input, HeaderWriter* hw, IrWriter* w);

@@ -3,6 +3,7 @@
 #include "re.h"
 #include "ustr.h"
 
+#include <assert.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -51,17 +52,21 @@ void re_ir_exec(Re* re, ReIr ir, DebugInfo di) {
     ReIrOp* op = &ir[i];
     switch (op->kind) {
     case RE_IR_RANGE_BEGIN:
+      assert(!range);
       range = re_range_new();
       break;
     case RE_IR_RANGE_END:
+      assert(range);
       re_append_range(re, range, di);
       re_range_del(range);
       range = NULL;
       break;
     case RE_IR_RANGE_NEG:
+      assert(range);
       re_range_neg(range);
       break;
     case RE_IR_RANGE_IC:
+      assert(range);
       re_range_ic(range);
       break;
     case RE_IR_APPEND_CH:
@@ -79,18 +84,23 @@ void re_ir_exec(Re* re, ReIr ir, DebugInfo di) {
       }
       break;
     case RE_IR_APPEND_GROUP_S:
+      assert(range);
       re_append_group_s(re, range);
       break;
     case RE_IR_APPEND_GROUP_W:
+      assert(range);
       re_append_group_w(re, range);
       break;
     case RE_IR_APPEND_GROUP_D:
+      assert(range);
       re_append_group_d(re, range);
       break;
     case RE_IR_APPEND_GROUP_H:
+      assert(range);
       re_append_group_h(re, range);
       break;
     case RE_IR_APPEND_GROUP_DOT:
+      assert(range);
       re_append_group_dot(re, range);
       break;
     case RE_IR_APPEND_C_ESCAPE:
@@ -115,4 +125,5 @@ void re_ir_exec(Re* re, ReIr ir, DebugInfo di) {
       break;
     }
   }
+  assert(!range);
 }

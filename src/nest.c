@@ -43,14 +43,18 @@ static const char* const cmdopt_set = "set";
 // --- CLI ---
 
 static const char* _detect_triple(void) {
+#ifdef _WIN32
+  FILE* p = popen("clang --print-target-triple", "r");
+#else
   FILE* p = popen("clang --print-target-triple 2>/dev/null", "r");
+#endif
   if (!p) {
-    return "x86_64-unknown-linux-gnu";
+    return DEFAULT_TRIPLE;
   }
   static char buf[128];
   if (!fgets(buf, sizeof(buf), p)) {
     pclose(p);
-    return "x86_64-unknown-linux-gnu";
+    return DEFAULT_TRIPLE;
   }
   pclose(p);
   size_t len = strlen(buf);
@@ -78,17 +82,17 @@ static void _usage(void) {
   exit(1);
 }
 
-#include "nest_syntax.inc"
+#include "../build/nest_syntax.inc"
 
 static void _cmd_help(void) {
-  fputs((const char*)nest_syntax, stdout);
+  fputs((const char*)NEST_SYNTAX, stdout);
   exit(0);
 }
 
-#include "nest_reference.inc"
+#include "../build/nest_reference.inc"
 
 static void _cmd_reference(void) {
-  fputs((const char*)nest_reference, stdout);
+  fputs((const char*)NEST_REFERENCE, stdout);
   exit(0);
 }
 
@@ -232,6 +236,7 @@ static int32_t _cmd_compile(int32_t argc, char** argv) {
     goto cleanup;
   }
   if (!pp_all_passes(ps)) {
+    fprintf(stderr, "nest: %s\n", parse_get_error(ps));
     ret = -1;
     goto cleanup;
   }

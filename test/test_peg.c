@@ -33,8 +33,6 @@ TEST(test_empty_input) {
   PegGenInput input = {0};
   input.rules = darray_new(sizeof(PegRule), 0);
   input.mode = PEG_MODE_NAIVE;
-  input.token_ids = NULL;
-  input.n_tokens = 0;
 
   FILE* hf = fopen(BUILD_DIR "/test_peg_empty.h", "w");
   FILE* irf = fopen(BUILD_DIR "/test_peg_empty.ll", "w");
@@ -56,8 +54,6 @@ TEST(test_simple_rule_naive) {
   PegGenInput input = {0};
   input.rules = darray_new(sizeof(PegRule), 0);
   input.mode = PEG_MODE_NAIVE;
-  input.token_ids = NULL;
-  input.n_tokens = 0;
 
   PegRule rule = {0};
   rule.name = strdup("expr");
@@ -116,8 +112,6 @@ TEST(test_row_shared_mode) {
   PegGenInput input = {0};
   input.rules = darray_new(sizeof(PegRule), 0);
   input.mode = PEG_MODE_ROW_SHARED;
-  input.token_ids = NULL;
-  input.n_tokens = 0;
 
   PegRule r1 = {0};
   r1.name = strdup("a");

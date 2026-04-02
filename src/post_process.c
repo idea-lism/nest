@@ -148,7 +148,6 @@ static void _free_vpa_unit(VpaUnit* unit) {
 }
 
 bool pp_inline_macros(ParseState* ps) {
-  // TODO: return macro not found error
   for (int32_t r = 0; r < (int32_t)darray_size(ps->vpa_rules); r++) {
     VpaRule* rule = &ps->vpa_rules[r];
     if (rule->is_macro) {
@@ -161,7 +160,8 @@ bool pp_inline_macros(ParseState* ps) {
       }
       VpaRule* macro = _find_macro(ps, unit->name + 1);
       if (!macro) {
-        continue;
+        parse_error(ps, "macro '%s' not found (referenced in rule '%s')", unit->name, rule->name);
+        return false;
       }
 
       int32_t new_count = (int32_t)darray_size(rule->units) - 1 + (int32_t)darray_size(macro->units);
@@ -186,14 +186,11 @@ bool pp_inline_macros(ParseState* ps) {
 }
 
 bool pp_expand_keywords(ParseState* ps) {
-  // TODO: report keyword not found error
-
   for (int32_t k = 0; k < (int32_t)darray_size(ps->keywords); k++) {
     KeywordEntry* kw = &ps->keywords[k];
     char* lit = ustr_slice(ps->src, kw->lit_off, kw->lit_off + kw->lit_len);
 
     char* tok_name = parse_sfmt("%s.%s", kw->group, lit);
-    ustr_del(lit);
     ReIr ir = re_ir_build_literal(ps->src, kw->lit_off, kw->lit_len);
 
     bool added = false;
@@ -224,8 +221,13 @@ bool pp_expand_keywords(ParseState* ps) {
     }
 
     if (!added) {
+      parse_error(ps, "keyword group '%s' not found for literal '%s'", kw->group, lit);
       re_ir_free(ir);
+      ustr_del(lit);
+      free(tok_name);
+      return false;
     }
+    ustr_del(lit);
     free(tok_name);
   }
 

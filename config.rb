@@ -12,7 +12,6 @@ MODE = (ARGV[0] || "debug").freeze
 $libs = []
 $exes = []
 $amalgamates = []
-$dist_headers = []
 $mode_cflags = {}
 $extra_ninja = ""
 $extra_defaults = []
@@ -26,12 +25,8 @@ def exe(name, srcs:, deps: [], ext_libs: [], extra_objs: [])
   $exes << { name: name, srcs: srcs, deps: deps, ext_libs: ext_libs, extra_objs: extra_objs }
 end
 
-def amalgamate(input:, output:, include_dirs: [])
-  $amalgamates << { input: input, output: output, include_dirs: include_dirs }
-end
-
-def dist_header(src, to:)
-  $dist_headers << { src: src, to: to }
+def amalgamate(name, input:, include_dirs: [])
+  $amalgamates << { input: input, output: name, include_dirs: include_dirs }
 end
 
 def debug(cflags:)
@@ -47,7 +42,11 @@ def coverage(cflags:)
 end
 
 def ninja_raw(text)
-  $extra_ninja += text + "\n"
+  $extra_ninja << "#{text}\n"
+end
+
+def gen_str_header dst, from:
+  $extra_ninja << "build #{dst}: gen_str_header #{from}\n"
 end
 
 def sh *cmd, **opts
@@ -84,28 +83,45 @@ end
 CC = ENV["CC"] || (RUBY_PLATFORM =~ /darwin/ ? "xcrun clang" : "clang")
 AR = ENV["AR"] || "ar"
 CLANG_FORMAT = RUBY_PLATFORM =~ /darwin/ ? "xcrun clang-format" : "clang-format"
+ALL_SRCS = Dir.glob '{src,test}/**/*.{c,h}'
 
 ARCH_CFLAGS = RUBY_PLATFORM =~ /x86_64|amd64/ ? "-mavx2" : ""
-# iso C doesn't include a lot of posix functions in std lib, define the _POSIX_C_SOURCE macro to ensure inclusion
-BASE_CFLAGS = "-std=c23 -D_POSIX_C_SOURCE=200809L -Wall -Wextra -Werror -fvisibility=hidden #{ARCH_CFLAGS}".strip
-EXTRA_CFLAGS = $mode_cflags.fetch(MODE, "")
-CFLAGS = "#{BASE_CFLAGS} #{EXTRA_CFLAGS}".strip
+
+def default_host_triple
+  triple_cmd =
+    if IS_WINDOWS
+      "#{CC} --print-target-triple 2>nul"
+    else
+      "#{CC} --print-target-triple 2>/dev/null"
+    end
+  t = `#{triple_cmd}`.strip
+  return t unless t.empty?
+
+  case RUBY_PLATFORM
+  when /darwin/
+    arch = `uname -m`.strip
+    arch == "arm64" ? "arm64-apple-darwin" : "x86_64-apple-darwin"
+  when /mingw|mswin|cygwin/
+    "x86_64-pc-windows-msvc"
+  when /linux/
+    arch = `uname -m`.strip
+    arch = "x86_64" if arch.empty?
+    "#{arch}-unknown-linux-gnu"
+  else
+    "x86_64-unknown-linux-gnu"
+  end
+end
+
+DEFAULT_HOST_TRIPLE = default_host_triple
+
+BASE_CFLAGS = "-std=c23 -D_POSIX_C_SOURCE=200809L -DDEFAULT_TRIPLE=\\\"#{DEFAULT_HOST_TRIPLE}\\\" -Wall -Wextra -Werror -fvisibility=hidden #{ARCH_CFLAGS}".strip
 
 BUILDDIR = "build/#{MODE}"
 
 require_relative "config.in.rb"
 
-def gen_str_header src, dst
-  d = File.read src
-  File.write "build/#{dst}.inc", <<-C
-// Generated from #{src} by config.rb -- do not edit
-static const unsigned char #{dst}[] = {#{(d.unpack 'C*').join ','}, 0};
-C
-end
-
-FileUtils.mkdir_p "build"
-gen_str_header "specs/nest_syntax.md", "nest_syntax"
-gen_str_header "specs/bootstrap.nest", "nest_reference"
+EXTRA_CFLAGS = $mode_cflags.fetch(MODE, "")
+CFLAGS = "#{BASE_CFLAGS} #{EXTRA_CFLAGS}".strip
 
 # --- Ensure amalgamate tool is available ---
 
@@ -168,6 +184,16 @@ rule gen_nest_lex
 rule ll_cc
   command = #{CC} -c $in -o $out
   description = LLCC $in
+
+rule gen_str_header
+  command = ruby scripts/gen_str_header.rb $in $out
+  description = GEN_STR_HEADER $out
+
+rule format
+  command = #{CLANG_FORMAT} -i $in
+  description = FORMAT"
+
+build format: format #{ALL_SRCS}"
 
 build #{BUILDDIR}/nest_lex.ll: gen_nest_lex #{BUILDDIR}/parse_gen
 build #{BUILDDIR}/nest_lex.o: ll_cc #{BUILDDIR}/nest_lex.ll
@@ -233,38 +259,14 @@ build #{BUILDDIR}/nest_lex.o: ll_cc #{BUILDDIR}/nest_lex.ll
     end
   end
 
-  # Dist headers
-  unless $dist_headers.empty?
-    f.puts "rule cp"
-    f.puts "  command = cp $in $out"
-    f.puts "  description = CP $out"
-    f.puts ""
-    $dist_headers.each do |dh|
-      f.puts "build #{dh[:to]}: cp #{dh[:src]}"
-    end
-    f.puts ""
-  end
-
   # Extra ninja rules from config.in.rb
   f.puts $extra_ninja unless $extra_ninja.empty?
 
   # Default: build everything
   all = $exes.map { |e| "#{BUILDDIR}/#{e[:name]}" }
   all += $amalgamates.map { |am| am[:output] }
-  all += $dist_headers.map { |dh| dh[:to] }
   all += $extra_defaults
   f.puts "default #{all.join(' ')}"
-  f.puts ""
-
-  # Format
-  all_srcs = ($libs.flat_map { |l| l[:srcs] } + $exes.flat_map { |e| e[:srcs] }).uniq
-  all_hdrs = all_srcs.flat_map { |s| [s.sub(/\.c$/, '.h'), s.sub(/\.c$/, '_intern.h')] }.select { |h| File.exist?(h) }
-  fmt_files = (all_srcs + all_hdrs).sort.uniq.join(' ')
-  f.puts "rule format"
-  f.puts "  command = #{CLANG_FORMAT} -i $in"
-  f.puts "  description = FORMAT"
-  f.puts ""
-  f.puts "build format: format #{fmt_files}"
 end
 
 puts "Generated build.ninja (mode=#{MODE}, cc=#{CC})"

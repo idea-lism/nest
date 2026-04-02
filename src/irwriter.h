@@ -1,5 +1,6 @@
 #pragma once
 
+#include <stdarg.h>
 #include <stdint.h>
 #include <stdio.h>
 
@@ -23,6 +24,7 @@ void irwriter_bb_at(IrWriter* w, int32_t label);
 void irwriter_dbg(IrWriter* w, int32_t line, int32_t col);
 
 IrVal irwriter_imm(IrWriter* w, const char* literal);
+IrVal irwriter_imm_int(IrWriter* w, int v);
 IrVal irwriter_binop(IrWriter* w, const char* op, const char* ty, IrVal lhs, IrVal rhs);
 
 IrVal irwriter_icmp(IrWriter* w, const char* pred, const char* ty, IrVal lhs, IrVal rhs);
@@ -42,20 +44,22 @@ IrVal irwriter_extractvalue(IrWriter* w, const char* agg_ty, IrVal agg, int idx)
 
 void irwriter_declare(IrWriter* w, const char* ret_type, const char* name, const char* arg_types);
 
-void irwriter_call_void(IrWriter* w, const char* name);
-void irwriter_call_void_fmt(IrWriter* w, const char* name, const char* args);
-IrVal irwriter_call_ret(IrWriter* w, const char* ret_ty, const char* name, const char* args);
+void irwriter_call_void_fmtf(IrWriter* w, const char* name, const char* args_fmt, ...)
+    __attribute__((format(printf, 3, 4)));
+IrVal irwriter_call_retf(IrWriter* w, const char* ret_ty, const char* name, const char* args_fmt, ...)
+    __attribute__((format(printf, 4, 5)));
 
 IrVal irwriter_alloca(IrWriter* w, const char* ty);
 IrVal irwriter_load(IrWriter* w, const char* ty, IrVal ptr);
 void irwriter_store(IrWriter* w, const char* ty, IrVal val, IrVal ptr);
-IrVal irwriter_gep(IrWriter* w, const char* base_ty, IrVal ptr, const char* indices);
+IrVal irwriter_next_reg(IrWriter* w);
+void irwriter_emit_val(IrWriter* w, IrVal val);
 
 IrVal irwriter_phi2(IrWriter* w, const char* ty, IrVal v1, int32_t bb1, IrVal v2, int32_t bb2);
-IrVal irwriter_select(IrWriter* w, IrVal cond, const char* ty, IrVal true_val, IrVal false_val);
 IrVal irwriter_sext(IrWriter* w, const char* from_ty, IrVal val, const char* to_ty);
 
 void irwriter_type_def(IrWriter* w, const char* name, const char* body);
 
 void irwriter_raw(IrWriter* w, const char* text);
 void irwriter_rawf(IrWriter* w, const char* fmt, ...) __attribute__((format(printf, 2, 3)));
+void irwriter_vrawf(IrWriter* w, const char* fmt, va_list ap);

@@ -1,8 +1,11 @@
 #include "../src/darray.h"
+#include "../src/header_writer.h"
+#include "../src/irwriter.h"
 #include "../src/parse.h"
-#include "../src/token_chunk.h"
+#include "../src/token_tree.h"
 #include "../src/ustr.h"
 #include "../src/vpa.h"
+#include "compat.h"
 #include <assert.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -615,6 +618,232 @@ TEST(test_token_scope_reference) {
   ustr_del(ustr);
 }
 
+// === vpa_gen tests ===
+
+static void _free_gen_input(VpaGenInput* input) {
+  for (int32_t i = 0; i < (int32_t)darray_size(input->rules); i++) {
+    VpaRule* rule = &input->rules[i];
+    for (int32_t j = 0; j < (int32_t)darray_size(rule->units); j++) {
+      VpaUnit* u = &rule->units[j];
+      re_ir_free(u->re);
+      free(u->name);
+      free(u->user_hook);
+      for (int32_t k = 0; k < (int32_t)darray_size(u->children); k++) {
+        re_ir_free(u->children[k].re);
+        free(u->children[k].name);
+        free(u->children[k].user_hook);
+        darray_del(u->children[k].children);
+      }
+      darray_del(u->children);
+    }
+    darray_del(rule->units);
+    free(rule->name);
+  }
+  darray_del(input->rules);
+  darray_del(input->keywords);
+  for (int32_t i = 0; i < (int32_t)darray_size(input->effects); i++) {
+    free(input->effects[i].hook_name);
+    darray_del(input->effects[i].effects);
+  }
+  darray_del(input->effects);
+  darray_del(input->peg_rules);
+}
+
+TEST(test_vpa_gen_empty_rules) {
+  VpaGenInput input = {0};
+  input.rules = darray_new(sizeof(VpaRule), 0);
+  input.keywords = darray_new(sizeof(KeywordEntry), 0);
+  input.effects = darray_new(sizeof(EffectDecl), 0);
+  input.peg_rules = darray_new(sizeof(PegRule), 0);
+  input.src = "";
+
+  FILE* hf = fopen(BUILD_DIR "/test_vpa_gen_empty.h", "w");
+  FILE* irf = fopen(BUILD_DIR "/test_vpa_gen_empty.ll", "w");
+  assert(hf && irf);
+  HeaderWriter* hw = hw_new(hf);
+  IrWriter* w = irwriter_new(irf, NULL);
+
+  irwriter_start(w, "test_vpa.c", ".");
+  vpa_gen(&input, hw, w);
+  irwriter_end(w);
+
+  hw_del(hw);
+  irwriter_del(w);
+  fclose(irf);
+  fclose(hf);
+
+  _free_gen_input(&input);
+}
+
+TEST(test_vpa_gen_single_scope) {
+  VpaGenInput input = {0};
+  input.rules = darray_new(sizeof(VpaRule), 0);
+  input.keywords = darray_new(sizeof(KeywordEntry), 0);
+  input.effects = darray_new(sizeof(EffectDecl), 0);
+  input.peg_rules = darray_new(sizeof(PegRule), 0);
+  input.src = "";
+
+  VpaRule main_rule = {0};
+  main_rule.name = strdup("main");
+  main_rule.units = darray_new(sizeof(VpaUnit), 0);
+  main_rule.is_scope = true;
+
+  VpaUnit u1 = {.kind = VPA_REGEXP, .re = re_ir_new(), .name = strdup("tok_a")};
+  u1.re = re_ir_emit_ch(u1.re, 'a');
+  darray_push(main_rule.units, u1);
+
+  VpaUnit u2 = {.kind = VPA_REGEXP, .re = re_ir_new(), .name = strdup("tok_b")};
+  u2.re = re_ir_emit_ch(u2.re, 'b');
+  darray_push(main_rule.units, u2);
+
+  darray_push(input.rules, main_rule);
+
+  FILE* hf = fopen(BUILD_DIR "/test_vpa_gen_scope.h", "w");
+  FILE* irf = fopen(BUILD_DIR "/test_vpa_gen_scope.ll", "w");
+  assert(hf && irf);
+  HeaderWriter* hw = hw_new(hf);
+  IrWriter* w = irwriter_new(irf, NULL);
+
+  irwriter_start(w, "test_vpa.c", ".");
+  vpa_gen(&input, hw, w);
+  irwriter_end(w);
+
+  hw_del(hw);
+  irwriter_del(w);
+  fclose(irf);
+  fclose(hf);
+
+  char* ir_buf;
+  size_t ir_sz;
+  FILE* ir_read = fopen(BUILD_DIR "/test_vpa_gen_scope.ll", "r");
+  assert(ir_read);
+  fseek(ir_read, 0, SEEK_END);
+  ir_sz = (size_t)ftell(ir_read);
+  rewind(ir_read);
+  ir_buf = malloc(ir_sz + 1);
+  fread(ir_buf, 1, ir_sz, ir_read);
+  ir_buf[ir_sz] = '\0';
+  fclose(ir_read);
+
+  assert(strstr(ir_buf, "define {i64, i64} @lex_main") != NULL);
+  assert(strstr(ir_buf, "@vpa_dispatch") != NULL);
+  assert(strstr(ir_buf, "@vpa_lex") != NULL);
+  free(ir_buf);
+
+  char* h_buf;
+  size_t h_sz;
+  FILE* h_read = fopen(BUILD_DIR "/test_vpa_gen_scope.h", "r");
+  assert(h_read);
+  fseek(h_read, 0, SEEK_END);
+  h_sz = (size_t)ftell(h_read);
+  rewind(h_read);
+  h_buf = malloc(h_sz + 1);
+  fread(h_buf, 1, h_sz, h_read);
+  h_buf[h_sz] = '\0';
+  fclose(h_read);
+
+  assert(strstr(h_buf, "SCOPE_MAIN") != NULL);
+  assert(strstr(h_buf, "TOK_TOK_A") != NULL);
+  assert(strstr(h_buf, "TOK_TOK_B") != NULL);
+  assert(strstr(h_buf, "VpaToken") != NULL);
+  free(h_buf);
+
+  _free_gen_input(&input);
+}
+
+TEST(test_vpa_gen_multi_scope) {
+  VpaGenInput input = {0};
+  input.rules = darray_new(sizeof(VpaRule), 0);
+  input.keywords = darray_new(sizeof(KeywordEntry), 0);
+  input.effects = darray_new(sizeof(EffectDecl), 0);
+  input.peg_rules = darray_new(sizeof(PegRule), 0);
+  input.src = "";
+
+  VpaRule main_rule = {0};
+  main_rule.name = strdup("main");
+  main_rule.units = darray_new(sizeof(VpaUnit), 0);
+  main_rule.is_scope = true;
+
+  VpaUnit u1 = {.kind = VPA_REGEXP, .re = re_ir_new(), .name = strdup("tok_x")};
+  u1.re = re_ir_emit_ch(u1.re, 'x');
+  darray_push(main_rule.units, u1);
+
+  VpaUnit ref = {.kind = VPA_REF, .name = strdup("inner")};
+  darray_push(main_rule.units, ref);
+
+  darray_push(input.rules, main_rule);
+
+  VpaRule inner_rule = {0};
+  inner_rule.name = strdup("inner");
+  inner_rule.units = darray_new(sizeof(VpaUnit), 0);
+  inner_rule.is_scope = false;
+
+  VpaUnit leader = {.kind = VPA_REGEXP, .re = re_ir_new(), .name = strdup("open")};
+  leader.re = re_ir_emit_ch(leader.re, '{');
+  darray_push(inner_rule.units, leader);
+
+  VpaUnit scope_body = {.kind = VPA_SCOPE, .name = strdup("inner_body"), .hook = TOK_HOOK_BEGIN};
+  scope_body.re = re_ir_new();
+  scope_body.re = re_ir_emit_ch(scope_body.re, '{');
+  scope_body.children = darray_new(sizeof(VpaUnit), 0);
+
+  VpaUnit inner_tok = {.kind = VPA_REGEXP, .re = re_ir_new(), .name = strdup("tok_y")};
+  inner_tok.re = re_ir_emit_ch(inner_tok.re, 'y');
+  darray_push(scope_body.children, inner_tok);
+
+  darray_push(inner_rule.units, scope_body);
+  darray_push(input.rules, inner_rule);
+
+  FILE* hf = fopen(BUILD_DIR "/test_vpa_gen_multi.h", "w");
+  FILE* irf = fopen(BUILD_DIR "/test_vpa_gen_multi.ll", "w");
+  assert(hf && irf);
+  HeaderWriter* hw = hw_new(hf);
+  IrWriter* w = irwriter_new(irf, NULL);
+
+  irwriter_start(w, "test_vpa.c", ".");
+  vpa_gen(&input, hw, w);
+  irwriter_end(w);
+
+  hw_del(hw);
+  irwriter_del(w);
+  fclose(irf);
+  fclose(hf);
+
+  char* ir_buf;
+  size_t ir_sz;
+  FILE* ir_read = fopen(BUILD_DIR "/test_vpa_gen_multi.ll", "r");
+  assert(ir_read);
+  fseek(ir_read, 0, SEEK_END);
+  ir_sz = (size_t)ftell(ir_read);
+  rewind(ir_read);
+  ir_buf = malloc(ir_sz + 1);
+  fread(ir_buf, 1, ir_sz, ir_read);
+  ir_buf[ir_sz] = '\0';
+  fclose(ir_read);
+
+  assert(strstr(ir_buf, "lex_main") != NULL);
+  assert(strstr(ir_buf, "lex_inner") != NULL);
+  free(ir_buf);
+
+  char* h_buf;
+  size_t h_sz;
+  FILE* h_read = fopen(BUILD_DIR "/test_vpa_gen_multi.h", "r");
+  assert(h_read);
+  fseek(h_read, 0, SEEK_END);
+  h_sz = (size_t)ftell(h_read);
+  rewind(h_read);
+  h_buf = malloc(h_sz + 1);
+  fread(h_buf, 1, h_sz, h_read);
+  h_buf[h_sz] = '\0';
+  fclose(h_read);
+
+  assert(strstr(h_buf, "SCOPE_MAIN") != NULL);
+  assert(strstr(h_buf, "SCOPE_INNER") != NULL);
+  free(h_buf);
+
+  _free_gen_input(&input);
+}
+
 // === Binary mode flag ===
 
 TEST(test_vpa_unit_binary_mode) {
@@ -668,6 +897,10 @@ int main(void) {
   RUN(test_token_scope_reference);
 
   RUN(test_vpa_unit_binary_mode);
+
+  RUN(test_vpa_gen_empty_rules);
+  RUN(test_vpa_gen_single_scope);
+  RUN(test_vpa_gen_multi_scope);
 
   printf("all ok\n");
   return 0;

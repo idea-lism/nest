@@ -1,5 +1,6 @@
-#include "../src/re_ir.h"
 #include "../src/darray.h"
+#include "../src/re_ir.h"
+#include "../src/ustr.h"
 #include <assert.h>
 #include <stdio.h>
 #include <string.h>
@@ -16,8 +17,11 @@
 
 // Run fn in a forked child; return true if child crashed (signal death).
 static bool crashes(void (*fn)(void)) {
+  fflush(stdout);
+  fflush(stderr);
   pid_t pid = fork();
   if (pid == 0) {
+    fclose(stderr);
     fn();
     _exit(0);
   }
@@ -35,9 +39,7 @@ TEST(test_new_empty) {
   re_ir_free(ir);
 }
 
-TEST(test_free_null) {
-  re_ir_free(NULL);
-}
+TEST(test_free_null) { re_ir_free(NULL); }
 
 // --- Emit ---
 
@@ -154,7 +156,8 @@ TEST(test_clone_independence) {
 // --- Build literal ---
 
 TEST(test_build_literal_ascii) {
-  ReIr ir = re_ir_build_literal("hello", 0, 5);
+  char* s = ustr_new(5, "hello");
+  ReIr ir = re_ir_build_literal(s, 0, 5);
   assert(darray_size(ir) == 5);
   assert(ir[0].kind == RE_IR_APPEND_CH);
   assert(ir[0].start == 'h');
@@ -163,51 +166,63 @@ TEST(test_build_literal_ascii) {
   assert(ir[3].start == 'l');
   assert(ir[4].start == 'o');
   re_ir_free(ir);
+  ustr_del(s);
 }
 
 TEST(test_build_literal_multibyte) {
   // "café" = 63 61 66 C3 A9 — 4 codepoints
-  ReIr ir = re_ir_build_literal("caf\xC3\xA9", 0, 4);
+  char* s = ustr_new(5, "caf\xC3\xA9");
+  ReIr ir = re_ir_build_literal(s, 0, 4);
   assert(darray_size(ir) == 4);
   assert(ir[0].start == 'c');
   assert(ir[1].start == 'a');
   assert(ir[2].start == 'f');
   assert(ir[3].start == 0xE9);
   re_ir_free(ir);
+  ustr_del(s);
 }
 
 TEST(test_build_literal_4byte) {
   // U+1F600 = F0 9F 98 80
-  ReIr ir = re_ir_build_literal("\xF0\x9F\x98\x80", 0, 1);
+  char* s = ustr_new(4, "\xF0\x9F\x98\x80");
+  ReIr ir = re_ir_build_literal(s, 0, 1);
   assert(darray_size(ir) == 1);
   assert(ir[0].kind == RE_IR_APPEND_CH);
   assert(ir[0].start == 0x1F600);
   re_ir_free(ir);
+  ustr_del(s);
 }
 
 TEST(test_build_literal_offset) {
   // "hello" — skip 2 codepoints, take 2
-  ReIr ir = re_ir_build_literal("hello", 2, 2);
+  char* s = ustr_new(5, "hello");
+  ReIr ir = re_ir_build_literal(s, 2, 2);
   assert(darray_size(ir) == 2);
   assert(ir[0].start == 'l');
   assert(ir[1].start == 'l');
   re_ir_free(ir);
+  ustr_del(s);
 }
 
 TEST(test_build_literal_offset_multibyte) {
   // "aé€b" = 61 C3A9 E282AC 62 — skip 1, take 2
-  ReIr ir = re_ir_build_literal("a\xC3\xA9\xE2\x82\xAC""b", 1, 2);
+  char* s = ustr_new(7, "a\xC3\xA9\xE2\x82\xAC"
+                        "b");
+  ReIr ir = re_ir_build_literal(s, 1, 2);
   assert(darray_size(ir) == 2);
   assert(ir[0].start == 0xE9);
   assert(ir[1].start == 0x20AC);
   re_ir_free(ir);
+  ustr_del(s);
 }
 
 TEST(test_build_literal_empty) {
-  ReIr ir = re_ir_build_literal("hello", 0, 0);
+  char* s = ustr_new(5, "hello");
+  ReIr ir = re_ir_build_literal(s, 0, 0);
   assert(ir != NULL);
   assert(darray_size(ir) == 0);
   re_ir_free(ir);
+  ustr_del(s);
 }
 
 // --- IR op sequences (valid patterns) ---
@@ -340,10 +355,12 @@ TEST(test_exec_literal) {
   Aut* aut = aut_new("test", "test.re");
   Re* re = re_new(aut);
 
-  ReIr ir = re_ir_build_literal("abc", 0, 3);
+  char* s = ustr_new(3, "abc");
+  ReIr ir = re_ir_build_literal(s, 0, 3);
   re_ir_exec(re, ir, (DebugInfo){0, 0});
 
   re_ir_free(ir);
+  ustr_del(s);
   re_del(re);
   aut_del(aut);
 }
@@ -403,11 +420,13 @@ TEST(test_exec_groups) {
   Re* re = re_new(aut);
 
   ReIr ir = re_ir_new();
+  ir = re_ir_emit(ir, RE_IR_RANGE_BEGIN, 0, 0);
   ir = re_ir_emit(ir, RE_IR_APPEND_GROUP_S, 0, 0);
   ir = re_ir_emit(ir, RE_IR_APPEND_GROUP_W, 0, 0);
   ir = re_ir_emit(ir, RE_IR_APPEND_GROUP_D, 0, 0);
   ir = re_ir_emit(ir, RE_IR_APPEND_GROUP_H, 0, 0);
   ir = re_ir_emit(ir, RE_IR_APPEND_GROUP_DOT, 0, 0);
+  ir = re_ir_emit(ir, RE_IR_RANGE_END, 0, 0);
   re_ir_exec(re, ir, (DebugInfo){0, 0});
 
   re_ir_free(ir);
@@ -509,9 +528,13 @@ TEST(test_exec_complex) {
   ir = re_ir_emit(ir, RE_IR_APPEND_CH, 'a', 'z');
   ir = re_ir_emit(ir, RE_IR_RANGE_END, 0, 0);
   ir = re_ir_emit(ir, RE_IR_FORK, 0, 0);
+  ir = re_ir_emit(ir, RE_IR_RANGE_BEGIN, 0, 0);
   ir = re_ir_emit(ir, RE_IR_APPEND_GROUP_D, 0, 0);
+  ir = re_ir_emit(ir, RE_IR_RANGE_END, 0, 0);
   ir = re_ir_emit(ir, RE_IR_RPAREN, 0, 0);
+  ir = re_ir_emit(ir, RE_IR_RANGE_BEGIN, 0, 0);
   ir = re_ir_emit(ir, RE_IR_APPEND_GROUP_W, 0, 0);
+  ir = re_ir_emit(ir, RE_IR_RANGE_END, 0, 0);
   ir = re_ir_emit(ir, RE_IR_RPAREN, 0, 0);
   ir = re_ir_emit(ir, RE_IR_ACTION, 1, 0);
   re_ir_exec(re, ir, (DebugInfo){0, 0});
@@ -534,9 +557,7 @@ static void malformed_range_end_no_begin(void) {
   aut_del(aut);
 }
 
-TEST(test_exec_malformed_range_end_no_begin) {
-  assert(crashes(malformed_range_end_no_begin));
-}
+TEST(test_exec_malformed_range_end_no_begin) { assert(crashes(malformed_range_end_no_begin)); }
 
 static void malformed_range_neg_no_begin(void) {
   Aut* aut = aut_new("test", "test.re");
@@ -549,9 +570,7 @@ static void malformed_range_neg_no_begin(void) {
   aut_del(aut);
 }
 
-TEST(test_exec_malformed_range_neg_no_begin) {
-  assert(crashes(malformed_range_neg_no_begin));
-}
+TEST(test_exec_malformed_range_neg_no_begin) { assert(crashes(malformed_range_neg_no_begin)); }
 
 static void malformed_range_ic_no_begin(void) {
   Aut* aut = aut_new("test", "test.re");
@@ -564,9 +583,7 @@ static void malformed_range_ic_no_begin(void) {
   aut_del(aut);
 }
 
-TEST(test_exec_malformed_range_ic_no_begin) {
-  assert(crashes(malformed_range_ic_no_begin));
-}
+TEST(test_exec_malformed_range_ic_no_begin) { assert(crashes(malformed_range_ic_no_begin)); }
 
 static void malformed_nested_range_begin(void) {
   Aut* aut = aut_new("test", "test.re");
@@ -580,9 +597,7 @@ static void malformed_nested_range_begin(void) {
   aut_del(aut);
 }
 
-TEST(test_exec_malformed_nested_range_begin) {
-  assert(crashes(malformed_nested_range_begin));
-}
+TEST(test_exec_malformed_nested_range_begin) { assert(crashes(malformed_nested_range_begin)); }
 
 static void malformed_unclosed_range(void) {
   Aut* aut = aut_new("test", "test.re");
@@ -597,9 +612,7 @@ static void malformed_unclosed_range(void) {
   aut_del(aut);
 }
 
-TEST(test_exec_malformed_unclosed_range) {
-  assert(crashes(malformed_unclosed_range));
-}
+TEST(test_exec_malformed_unclosed_range) { assert(crashes(malformed_unclosed_range)); }
 
 int main(void) {
   printf("test_re_ir:\n");

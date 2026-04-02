@@ -258,9 +258,8 @@ static DfaPattern* _resolve_body(ScopeInfo* scope, VpaUnit* body, VpaRule* rules
 // --- Build DFA from resolved patterns ---
 
 static void _gen_scope_dfa(ScopeInfo* scope, DfaPattern* patterns, IrWriter* w) {
-  int32_t fn_len = snprintf(NULL, 0, "lex_%s", scope->name) + 1;
-  char func_name[fn_len];
-  snprintf(func_name, (size_t)fn_len, "lex_%s", scope->name);
+  char func_name[128];
+  snprintf(func_name, sizeof(func_name), "lex_%s", scope->name);
 
   int32_t n_regex = 0;
   for (int32_t i = 0; i < (int32_t)darray_size(patterns); i++) {
@@ -327,24 +326,13 @@ static void _gen_parse_scope_bridges_ir(ActionRegistry* reg, IrWriter* w) {
     }
 
     const char* scope_name = reg->entries[i].parse_scope_name;
-    int32_t helper_len = snprintf(NULL, 0, "vpa_parse_%s", scope_name) + 1;
-    char helper_name[helper_len];
-    _make_parse_scope_symbol(scope_name, helper_name, sizeof(helper_name));
 
-    int32_t parse_len = snprintf(NULL, 0, "parse_%s", scope_name) + 1;
-    char parse_name[parse_len];
-    snprintf(parse_name, sizeof(parse_name), "parse_%s", scope_name);
-
-    int32_t col_type_len = snprintf(NULL, 0, "%%Col.%s", scope_name) + 1;
-    char col_type[col_type_len];
-    snprintf(col_type, sizeof(col_type), "%%Col.%s", scope_name);
-
-    irwriter_rawf(w, "define internal void @%s(ptr %%tt) {\n", helper_name);
+    irwriter_rawf(w, "define internal void @vpa_parse_%s(ptr %%tt) {\n", scope_name);
     irwriter_raw(w, "entry:\n");
     irwriter_raw(w, "  %ncols0 = call i32 @vpa_rt_current_chunk_len(ptr %tt)\n");
     irwriter_raw(w, "  %ncols1 = add i32 %ncols0, 1\n");
     irwriter_raw(w, "  %ncols64 = sext i32 %ncols1 to i64\n");
-    irwriter_rawf(w, "  %%elt_end = getelementptr %s, ptr null, i32 1\n", col_type);
+    irwriter_rawf(w, "  %%elt_end = getelementptr %%Col.%s, ptr null, i32 1\n", scope_name);
     irwriter_raw(w, "  %elt_size = ptrtoint ptr %elt_end to i64\n");
     irwriter_raw(w, "  %table_size = mul i64 %ncols64, %elt_size\n");
     irwriter_raw(w, "  call void @vpa_rt_begin_parse(ptr %tt)\n");
@@ -353,7 +341,7 @@ static void _gen_parse_scope_bridges_ir(ActionRegistry* reg, IrWriter* w) {
     irwriter_raw(w, "  br i1 %table_ok, label %Lparse_init, label %Lparse_done\n\n");
     irwriter_raw(w, "Lparse_init:\n");
     irwriter_raw(w, "  call void @llvm.memset.p0.i64(ptr %table, i8 -1, i64 %table_size, i1 false)\n");
-    irwriter_rawf(w, "  %%parse_len = call i32 @%s(ptr %%table, i32 0)\n", parse_name);
+    irwriter_rawf(w, "  %%parse_len = call i32 @parse_%s(ptr %%table, i32 0)\n", scope_name);
     irwriter_raw(w, "  call void @free(ptr %table)\n");
     irwriter_raw(w, "  br label %Lparse_done\n\n");
     irwriter_raw(w, "Lparse_done:\n");
@@ -644,11 +632,37 @@ static void _gen_action_dispatch_ir(ActionRegistry* reg, IrWriter* w) {
 
   irwriter_raw(w, "define void @vpa_dispatch(ptr %tt, i32 %action_id, i32 %cp_start, i32 %cp_size) {\n");
   irwriter_raw(w, "entry:\n");
-  irwriter_raw(w, "  switch i32 %action_id, label %Ldefault [\n");
-  for (int32_t i = 0; i < n; i++) {
-    irwriter_rawf(w, "    i32 %d, label %%Lact_%d\n", i + 1, i + 1);
+
+  if (n == 0) {
+    irwriter_raw(w, "  ret void\n");
+    irwriter_raw(w, "}\n\n");
+    return;
   }
-  irwriter_raw(w, "  ]\n");
+
+  irwriter_raw(w, "  %idx = sub i32 %action_id, 1\n");
+  irwriter_rawf(w, "  %%valid = icmp ult i32 %%idx, %d\n", n);
+  irwriter_raw(w, "  br i1 %valid, label %Ljump, label %Ldefault\n");
+
+  irwriter_raw(w, "Ljump:\n");
+  irwriter_rawf(w, "  %%labels = alloca [%d x ptr]\n", n);
+  irwriter_rawf(w, "  store [%d x ptr] [", n);
+  for (int32_t i = 0; i < n; i++) {
+    if (i > 0) {
+      irwriter_raw(w, ", ");
+    }
+    irwriter_rawf(w, "ptr blockaddress(@vpa_dispatch, %%Lact_%d)", i + 1);
+  }
+  irwriter_raw(w, "], ptr %labels\n");
+  irwriter_rawf(w, "  %%addr_ptr = getelementptr [%d x ptr], ptr %%labels, i32 0, i32 %%idx\n", n);
+  irwriter_raw(w, "  %addr = load ptr, ptr %addr_ptr\n");
+  irwriter_raw(w, "  indirectbr ptr %addr, [");
+  for (int32_t i = 0; i < n; i++) {
+    if (i > 0) {
+      irwriter_raw(w, ", ");
+    }
+    irwriter_rawf(w, "label %%Lact_%d", i + 1);
+  }
+  irwriter_raw(w, "]\n");
 
   irwriter_raw(w, "Ldefault:\n  ret void\n");
 
@@ -698,7 +712,6 @@ static void _gen_lex_loop_ir(ScopeInfo* scopes, IrWriter* w) {
   irwriter_raw(w, "define void @vpa_lex(ptr %src, i32 %len, ptr %tt) {\n");
   irwriter_raw(w, "entry:\n");
 
-  // Mutable state via alloca
   irwriter_raw(w, "  %cp_off = alloca i32\n");
   irwriter_raw(w, "  %state = alloca i32\n");
   irwriter_raw(w, "  %tok_start = alloca i32\n");
@@ -706,59 +719,19 @@ static void _gen_lex_loop_ir(ScopeInfo* scopes, IrWriter* w) {
   irwriter_raw(w, "  %last_off = alloca i32\n");
   irwriter_raw(w, "  %new_state = alloca i32\n");
   irwriter_raw(w, "  %act_id = alloca i32\n");
-  irwriter_raw(w, "  %state_act = alloca i32\n");
-  irwriter_raw(w, "  %state_off = alloca i32\n");
-  irwriter_raw(w, "  %state_ready = alloca i32\n");
-  irwriter_raw(w, "  %cand_act = alloca i32\n");
-  irwriter_raw(w, "  %cand_off = alloca i32\n");
 
   irwriter_raw(w, "  store i32 0, ptr %cp_off\n");
   irwriter_raw(w, "  store i32 0, ptr %state\n");
   irwriter_raw(w, "  store i32 0, ptr %tok_start\n");
   irwriter_raw(w, "  store i32 0, ptr %last_act\n");
   irwriter_raw(w, "  store i32 0, ptr %last_off\n");
-  irwriter_raw(w, "  store i32 0, ptr %state_act\n");
-  irwriter_raw(w, "  store i32 0, ptr %state_off\n");
-  irwriter_raw(w, "  store i32 0, ptr %state_ready\n");
   irwriter_raw(w, "  br label %Lloop\n\n");
 
-  // --- Lloop: check if we reached the end ---
   irwriter_raw(w, "Lloop:\n");
   irwriter_raw(w, "  %off.0 = load i32, ptr %cp_off\n");
   irwriter_raw(w, "  %at_end = icmp sge i32 %off.0, %len\n");
-  irwriter_raw(w, "  br i1 %at_end, label %Lflush, label %Lstate_check\n\n");
+  irwriter_raw(w, "  br i1 %at_end, label %Lflush, label %Lfeed\n\n");
 
-  irwriter_raw(w, "Lstate_check:\n");
-  irwriter_raw(w, "  %state_ready_val = load i32, ptr %state_ready\n");
-  irwriter_raw(w, "  %need_state = icmp eq i32 %state_ready_val, 0\n");
-  irwriter_raw(w, "  br i1 %need_state, label %Lstate_eval, label %Lfeed\n\n");
-
-  irwriter_raw(w, "Lstate_eval:\n");
-  irwriter_raw(w, "  %scope_sm = call i32 @vpa_rt_get_scope(ptr %tt)\n");
-  irwriter_raw(w, "  %sm_off_in = load i32, ptr %cp_off\n");
-  irwriter_raw(w, "  switch i32 %scope_sm, label %Lstate_done [\n");
-  for (int32_t i = 0; i < n; i++) {
-    irwriter_rawf(w, "    i32 %d, label %%Lstate_call_%d\n", scopes[i].scope_id, scopes[i].scope_id);
-  }
-  irwriter_raw(w, "  ]\n\n");
-
-  for (int32_t i = 0; i < n; i++) {
-    int32_t sid = scopes[i].scope_id;
-    irwriter_rawf(w, "Lstate_call_%d:\n", sid);
-    irwriter_rawf(w, "  %%sm_res_%d = call {i32, i32} @state_%s(ptr %%src, i32 %%sm_off_in, ptr %%tt)\n", sid,
-                  scopes[i].name);
-    irwriter_rawf(w, "  %%sm_act_%d = extractvalue {i32, i32} %%sm_res_%d, 0\n", sid, sid);
-    irwriter_rawf(w, "  %%sm_off_%d = extractvalue {i32, i32} %%sm_res_%d, 1\n", sid, sid);
-    irwriter_rawf(w, "  store i32 %%sm_act_%d, ptr %%state_act\n", sid);
-    irwriter_rawf(w, "  store i32 %%sm_off_%d, ptr %%state_off\n", sid);
-    irwriter_raw(w, "  br label %Lstate_done\n\n");
-  }
-
-  irwriter_raw(w, "Lstate_done:\n");
-  irwriter_raw(w, "  store i32 1, ptr %state_ready\n");
-  irwriter_raw(w, "  br label %Lfeed\n\n");
-
-  // --- Lfeed: read codepoint, call DFA for current scope ---
   irwriter_raw(w, "Lfeed:\n");
   irwriter_raw(w, "  %off.1 = load i32, ptr %cp_off\n");
   irwriter_raw(w, "  %cp = call i32 @vpa_rt_read_cp(ptr %src, i32 %off.1)\n");
@@ -767,14 +740,12 @@ static void _gen_lex_loop_ir(ScopeInfo* scopes, IrWriter* w) {
   irwriter_raw(w, "  %st64 = sext i32 %st to i64\n");
   irwriter_raw(w, "  %cp64 = sext i32 %cp to i64\n");
 
-  // Switch on scope to call the right lex_ function
   irwriter_raw(w, "  switch i32 %scope, label %Ldone [\n");
   for (int32_t i = 0; i < n; i++) {
     irwriter_rawf(w, "    i32 %d, label %%Lcall_%d\n", scopes[i].scope_id, scopes[i].scope_id);
   }
   irwriter_raw(w, "  ]\n\n");
 
-  // Per-scope call blocks: call lex_<name>, extract results, store into allocas, jump to Lresult
   for (int32_t i = 0; i < n; i++) {
     int32_t sid = scopes[i].scope_id;
     irwriter_rawf(w, "Lcall_%d:\n", sid);
@@ -788,22 +759,16 @@ static void _gen_lex_loop_ir(ScopeInfo* scopes, IrWriter* w) {
     irwriter_raw(w, "  br label %Lresult\n\n");
   }
 
-  // --- Lresult: check DFA output ---
-  // action_id > 0 → we have an accepting transition, record it
-  // action_id == 0 → valid transition but no action yet, keep going
-  // action_id == -2 → DFA rejected, flush last accept
   irwriter_raw(w, "Lresult:\n");
   irwriter_raw(w, "  %ns = load i32, ptr %new_state\n");
   irwriter_raw(w, "  %ai = load i32, ptr %act_id\n");
   irwriter_raw(w, "  %is_reject = icmp eq i32 %ai, -2\n");
   irwriter_raw(w, "  br i1 %is_reject, label %Lreject, label %Laccept_check\n\n");
 
-  // --- Laccept_check: action_id > 0 means accepting state ---
   irwriter_raw(w, "Laccept_check:\n");
   irwriter_raw(w, "  %is_action = icmp sgt i32 %ai, 0\n");
   irwriter_raw(w, "  br i1 %is_action, label %Lrecord, label %Ladvance\n\n");
 
-  // --- Lrecord: record last accepting position ---
   irwriter_raw(w, "Lrecord:\n");
   irwriter_raw(w, "  store i32 %ai, ptr %last_act\n");
   irwriter_raw(w, "  %off.2 = load i32, ptr %cp_off\n");
@@ -811,7 +776,6 @@ static void _gen_lex_loop_ir(ScopeInfo* scopes, IrWriter* w) {
   irwriter_raw(w, "  store i32 %off.3, ptr %last_off\n");
   irwriter_raw(w, "  br label %Ladvance\n\n");
 
-  // --- Ladvance: move to next codepoint ---
   irwriter_raw(w, "Ladvance:\n");
   irwriter_raw(w, "  store i32 %ns, ptr %state\n");
   irwriter_raw(w, "  %off.4 = load i32, ptr %cp_off\n");
@@ -819,55 +783,23 @@ static void _gen_lex_loop_ir(ScopeInfo* scopes, IrWriter* w) {
   irwriter_raw(w, "  store i32 %off.5, ptr %cp_off\n");
   irwriter_raw(w, "  br label %Lloop\n\n");
 
-  // --- Lreject: DFA rejected, dispatch last accept ---
   irwriter_raw(w, "Lreject:\n");
   irwriter_raw(w, "  %la = load i32, ptr %last_act\n");
-  irwriter_raw(w, "  %lo = load i32, ptr %last_off\n");
-  irwriter_raw(w, "  store i32 %la, ptr %cand_act\n");
-  irwriter_raw(w, "  store i32 %lo, ptr %cand_off\n");
-  irwriter_raw(w, "  %sa = load i32, ptr %state_act\n");
-  irwriter_raw(w, "  %so = load i32, ptr %state_off\n");
-  irwriter_raw(w, "  %state_has = icmp sgt i32 %sa, 0\n");
-  irwriter_raw(w, "  br i1 %state_has, label %Lreject_cmp, label %Lreject_after_cmp\n\n");
-
-  irwriter_raw(w, "Lreject_cmp:\n");
-  irwriter_raw(w, "  %la_empty = icmp eq i32 %la, 0\n");
-  irwriter_raw(w, "  %so_gt = icmp sgt i32 %so, %lo\n");
-  irwriter_raw(w, "  %so_eq = icmp eq i32 %so, %lo\n");
-  irwriter_raw(w, "  %sa_lt = icmp slt i32 %sa, %la\n");
-  irwriter_raw(w, "  %reject_tie = and i1 %so_eq, %sa_lt\n");
-  irwriter_raw(w, "  %reject_cmp_a = or i1 %la_empty, %so_gt\n");
-  irwriter_raw(w, "  %reject_use_state = or i1 %reject_cmp_a, %reject_tie\n");
-  irwriter_raw(w, "  br i1 %reject_use_state, label %Lreject_take_state, label %Lreject_after_cmp\n\n");
-
-  irwriter_raw(w, "Lreject_take_state:\n");
-  irwriter_raw(w, "  store i32 %sa, ptr %cand_act\n");
-  irwriter_raw(w, "  store i32 %so, ptr %cand_off\n");
-  irwriter_raw(w, "  br label %Lreject_after_cmp\n\n");
-
-  irwriter_raw(w, "Lreject_after_cmp:\n");
-  irwriter_raw(w, "  %ca = load i32, ptr %cand_act\n");
-  irwriter_raw(w, "  %has_accept = icmp sgt i32 %ca, 0\n");
+  irwriter_raw(w, "  %has_accept = icmp sgt i32 %la, 0\n");
   irwriter_raw(w, "  br i1 %has_accept, label %Ldispatch, label %Lskip\n\n");
 
-  // --- Ldispatch: call vpa_dispatch, reset DFA, continue ---
   irwriter_raw(w, "Ldispatch:\n");
   irwriter_raw(w, "  %ts = load i32, ptr %tok_start\n");
-  irwriter_raw(w, "  %co = load i32, ptr %cand_off\n");
-  irwriter_raw(w, "  %sz = sub i32 %co, %ts\n");
-  irwriter_raw(w, "  call void @vpa_dispatch(ptr %tt, i32 %ca, i32 %ts, i32 %sz)\n");
-  // Reset: cp_off = last_off, state = 0, tok_start = last_off, clear last_act
-  irwriter_raw(w, "  store i32 %co, ptr %cp_off\n");
+  irwriter_raw(w, "  %lo = load i32, ptr %last_off\n");
+  irwriter_raw(w, "  %sz = sub i32 %lo, %ts\n");
+  irwriter_raw(w, "  call void @vpa_dispatch(ptr %tt, i32 %la, i32 %ts, i32 %sz)\n");
+  irwriter_raw(w, "  store i32 %lo, ptr %cp_off\n");
   irwriter_raw(w, "  store i32 0, ptr %state\n");
-  irwriter_raw(w, "  store i32 %co, ptr %tok_start\n");
+  irwriter_raw(w, "  store i32 %lo, ptr %tok_start\n");
   irwriter_raw(w, "  store i32 0, ptr %last_act\n");
   irwriter_raw(w, "  store i32 0, ptr %last_off\n");
-  irwriter_raw(w, "  store i32 0, ptr %state_act\n");
-  irwriter_raw(w, "  store i32 0, ptr %state_off\n");
-  irwriter_raw(w, "  store i32 0, ptr %state_ready\n");
   irwriter_raw(w, "  br label %Lloop\n\n");
 
-  // --- Lskip: no accepting state, skip one codepoint ---
   irwriter_raw(w, "Lskip:\n");
   irwriter_raw(w, "  %off.6 = load i32, ptr %tok_start\n");
   irwriter_raw(w, "  %off.7 = add i32 %off.6, 1\n");
@@ -876,47 +808,18 @@ static void _gen_lex_loop_ir(ScopeInfo* scopes, IrWriter* w) {
   irwriter_raw(w, "  store i32 0, ptr %state\n");
   irwriter_raw(w, "  store i32 0, ptr %last_act\n");
   irwriter_raw(w, "  store i32 0, ptr %last_off\n");
-  irwriter_raw(w, "  store i32 0, ptr %state_act\n");
-  irwriter_raw(w, "  store i32 0, ptr %state_off\n");
-  irwriter_raw(w, "  store i32 0, ptr %state_ready\n");
   irwriter_raw(w, "  br label %Lloop\n\n");
 
-  // --- Lflush: end of input, dispatch any pending accept ---
   irwriter_raw(w, "Lflush:\n");
   irwriter_raw(w, "  %la2 = load i32, ptr %last_act\n");
-  irwriter_raw(w, "  %lo2 = load i32, ptr %last_off\n");
-  irwriter_raw(w, "  store i32 %la2, ptr %cand_act\n");
-  irwriter_raw(w, "  store i32 %lo2, ptr %cand_off\n");
-  irwriter_raw(w, "  %sa2 = load i32, ptr %state_act\n");
-  irwriter_raw(w, "  %so2 = load i32, ptr %state_off\n");
-  irwriter_raw(w, "  %state_has2 = icmp sgt i32 %sa2, 0\n");
-  irwriter_raw(w, "  br i1 %state_has2, label %Lflush_cmp, label %Lflush_after_cmp\n\n");
-
-  irwriter_raw(w, "Lflush_cmp:\n");
-  irwriter_raw(w, "  %la2_empty = icmp eq i32 %la2, 0\n");
-  irwriter_raw(w, "  %so2_gt = icmp sgt i32 %so2, %lo2\n");
-  irwriter_raw(w, "  %so2_eq = icmp eq i32 %so2, %lo2\n");
-  irwriter_raw(w, "  %sa2_lt = icmp slt i32 %sa2, %la2\n");
-  irwriter_raw(w, "  %flush_tie = and i1 %so2_eq, %sa2_lt\n");
-  irwriter_raw(w, "  %flush_cmp_a = or i1 %la2_empty, %so2_gt\n");
-  irwriter_raw(w, "  %flush_use_state = or i1 %flush_cmp_a, %flush_tie\n");
-  irwriter_raw(w, "  br i1 %flush_use_state, label %Lflush_take_state, label %Lflush_after_cmp\n\n");
-
-  irwriter_raw(w, "Lflush_take_state:\n");
-  irwriter_raw(w, "  store i32 %sa2, ptr %cand_act\n");
-  irwriter_raw(w, "  store i32 %so2, ptr %cand_off\n");
-  irwriter_raw(w, "  br label %Lflush_after_cmp\n\n");
-
-  irwriter_raw(w, "Lflush_after_cmp:\n");
-  irwriter_raw(w, "  %ca2 = load i32, ptr %cand_act\n");
-  irwriter_raw(w, "  %has2 = icmp sgt i32 %ca2, 0\n");
+  irwriter_raw(w, "  %has2 = icmp sgt i32 %la2, 0\n");
   irwriter_raw(w, "  br i1 %has2, label %Lflush_dispatch, label %Ldone\n\n");
 
   irwriter_raw(w, "Lflush_dispatch:\n");
   irwriter_raw(w, "  %ts2 = load i32, ptr %tok_start\n");
-  irwriter_raw(w, "  %co2 = load i32, ptr %cand_off\n");
-  irwriter_raw(w, "  %sz2 = sub i32 %co2, %ts2\n");
-  irwriter_raw(w, "  call void @vpa_dispatch(ptr %tt, i32 %ca2, i32 %ts2, i32 %sz2)\n");
+  irwriter_raw(w, "  %lo2 = load i32, ptr %last_off\n");
+  irwriter_raw(w, "  %sz2 = sub i32 %lo2, %ts2\n");
+  irwriter_raw(w, "  call void @vpa_dispatch(ptr %tt, i32 %la2, i32 %ts2, i32 %sz2)\n");
   irwriter_raw(w, "  br label %Ldone\n\n");
 
   irwriter_raw(w, "Ldone:\n");

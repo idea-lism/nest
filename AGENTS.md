@@ -74,7 +74,7 @@ Build modes from `config.in.rb`:
 - `build/<mode>/test_*`
 - `build/<mode>/bench_*`
 - `out/libre.a`
-- `out/re_rt.h`
+- `out/rt.h`
 
 ## Test And Benchmark Commands
 

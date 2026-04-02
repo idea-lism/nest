@@ -99,14 +99,11 @@ struct Col {
 };
 ```
 
-Each slot:
-- if rule is sequence rule, stores match length of the rule (some rule can be 0-sized so 0 is a value).
-- if rule is branch rule, store the chosen branch id.
-- if rule is chainable (a+), store the offset to next token.
+Each slot stores the token size of the matching rule. All slots initialized to `-1`: means we don't know the match yet.
 
 # `row_shared` mode
 
-Rule IDs can share a slot storage when 2 rules do not co-exist at one matching position.
+Rule IDs can share a slot storage when 2 rules do not co-exist at one matching position. We need extra bits to denote what the slot means.
 
 ### Exclusiveness analysis
 
@@ -133,11 +130,11 @@ After graph coloring, we have shared-groups (sets of peg rule ids).
 
 Then we use reverse-bitset representation to denote what each slot means:
 - the bit map co-lives with cache slots in one single struct:
-  - `struct Col { int32_t bits[nseg_groups]; int32_t slots[slot_size]; }`
+  - `struct Col { int32_t bits[nseg_groups]; int32_t slots[slot_size]; int32_t aux[slot_size]; }`
 - init state: set all bits & slots to 1 `memset(peg_table, -1 /* 0xFF */, table_bytes)`
 - for a rule, we know:
   - the segment it belongs to: `segment_bits = bits[segment_index] & segment_mask`
-  - check the bit `segment_bits & rule_bit`
+  - check the bit `rule_bit = segment_bits & rule_bit_mask`
     - if rule bit is `1`, it may match, then we:
       - check the slot, if not `-1`, then the rule matches.
       - else do the real parse and write cache:
@@ -145,7 +142,25 @@ Then we use reverse-bitset representation to denote what each slot means:
         - else deny the rule bit, set it to `0`.
     - if rule bit is `0`, it means previous tries cached the failure, rule does not match.
 
+`aux[slot_index]` stores additional data for different kinds of rules:
+- For a branch rule, it stores the `child_scoped_rule_id`
+- If in definition this rule can repeat, it stores `next_offset` or `-1`
+  - for example `a = b*<c>`, then `b`'s `next_offset` can help calculate next b in the chain, `c`'s `next_offset` can help calculate next `c` in the chain.
+  - for a more complex example `a = b @c b* @d b`, then the first `b`, `b*` and the third `b` are all chained together by `next_offset`.
+
 For performance of generated code, same-group bitset should be segmented by 32. see coloring.md for more details.
+
+After analysis, we have these information for a rule in a scope (different in other scope because per-scope numbering):
+
+```c
+struct ScopedRule {
+  uint32_t scoped_rule_id; // unique in a scope closure
+  uint32_t segment_index; // check Col.bits[segment_index]
+  uint32_t segment_mask;
+  uint32_t rule_bit_mask; // single bit in segment_mask
+  uint32_t slot_index;    // Col.slots[slot_index] is the matched token size
+};
+```
 
 # Code gen
 
@@ -154,6 +169,22 @@ For performance of generated code, same-group bitset should be segmented by 32. 
 - when vpa pops, we know how many columns the table needs and allocate the chunk and invoke the corresponding peg parser on the table segment
 - util functions like memoize table alloc, should be in C header, write with header_writer
 - AST node management should also be in the C header
+
+Memoize table ops
+
+- Read memoize table slot
+  - `table->col[%col].slots[%slot_index]`
+- Write memoize table slot
+  - `table->col[%col].slots[%slot_index] = val`
+
+`row_shared` mode only
+
+- `define internal @bit_test(seg_idx, rule_bit, col)`: Test rule's bit in the segment. Returns `i1` (1 = may match, 0 = proven fail).
+  - LLVM: `getelementptr` + `load` + `and i32 %bits, %rule_bit` + `icmp ne i32 ..., 0`
+- `define internal @bit_deny(seg_idx, rule_bit, col)`: Clear rule's bit (cache failure).
+  - LLVM: `getelementptr` + `load` + `and i32 %bits, ~%rule_bit` + `store`
+- `define internal @bit_exclude(seg_idx, rule_bit, col)`: Keep only this rule's bit, zero out others in segment (cache exclusive match).
+  - LLVM: `getelementptr` + `load` + `and i32 %bits, %rule_bit` + `store`
 
 # Parse tree representation
 
@@ -190,3 +221,4 @@ Note that `load_xxx` works on defined rules, no need to generate loaders for bro
 
 - end-to-end test: create a token list (you can mimic json, for example), use generated code, to parse the list, and produce a memoize table, by the parsed memoize table, we can use the generated `load_xxx()` function to retrieve/drill-down the nodes, and the loading doesn't allocate heap memory at all.
 - resulting memoize tables: assume there are 5 rules in scope A, 6 rules in scope B, resulting memoize tables should have rows 5 and 6 in each, not full row heights each.
+- resulting load_xxx MUST NOT call parse_xxx functions, just decode from memoize table.

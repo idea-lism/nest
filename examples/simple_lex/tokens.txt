@@ -1,0 +1,6 @@
+if
+else
+while
+[a-zA-Z_]\w*
+\d+
+\s+

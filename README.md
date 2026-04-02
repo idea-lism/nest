@@ -56,10 +56,28 @@ nest c grammar.nest -o parser.ll
 
 This produces `parser.ll` and `parser.h`.
 
-## Example
+## Examples
+
+### Standalone lexer (`examples/simple_lex`)
+
+Generates a longest-match lexer from plain regex patterns.
 
 ```
-cd example
+cd examples/simple_lex
+./build.sh
+./main "if x while 42"
+```
+
+### Full parser (`examples/simple_nest`)
+
+Compiles a `.nest` grammar (VPA lexer + PEG parser) supporting C-like integer
+arithmetic with `if`/`else`/`while` control structures.
+
+```
+cd examples/simple_nest
 ./build.sh
 ./main "while (x + 1) { y = 42; }"
 ```
+
+Both build scripts default to the debug build of `nest`. Override with
+`NEST=path/to/nest`, `CC`, or `CFLAGS` environment variables.

@@ -100,7 +100,7 @@ typedef enum {
 } TokenId;
 
 #include "peg.h"
-#include "token_chunk.h"
+#include "token_tree.h"
 #include "vpa.h"
 
 typedef struct {

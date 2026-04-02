@@ -1,6 +1,7 @@
 #include "aut.h"
 #include "bitset.h"
 #include "darray.h"
+#include "irwriter.h"
 
 #include <assert.h>
 #include <stdio.h>
@@ -496,12 +497,6 @@ int32_t aut_dfa_nstates(Aut* a) {
   return (int32_t)darray_size(a->dfa_states);
 }
 
-static IrVal _imm_int(IrWriter* w, int v) {
-  char buf[16];
-  snprintf(buf, sizeof(buf), "%d", v);
-  return irwriter_imm(w, buf);
-}
-
 void aut_gen_dfa(Aut* a, IrWriter* w, bool debug_mode) {
   if (!a->optimized) {
     _simple_determinize(a);
@@ -638,8 +633,8 @@ void aut_gen_dfa(Aut* a, IrWriter* w, bool debug_mode) {
 
         int has_next_range = (range_idx + 1 < nranges);
 
-        IrVal lo_n = irwriter_icmp(w, "sge", "i32", cp_val, _imm_int(w, dt->cp_start));
-        IrVal hi_n = irwriter_icmp(w, "sle", "i32", cp_val, _imm_int(w, dt->cp_end));
+        IrVal lo_n = irwriter_icmp(w, "sge", "i32", cp_val, irwriter_imm_int(w, dt->cp_start));
+        IrVal hi_n = irwriter_icmp(w, "sle", "i32", cp_val, irwriter_imm_int(w, dt->cp_end));
         if (has_next_range) {
           irwriter_br_cond(w, irwriter_binop(w, "and", "i1", lo_n, hi_n), trans_bbs[t], rck_bbs[range_idx + 1]);
           irwriter_bb_at(w, rck_bbs[range_idx + 1]);
@@ -663,8 +658,8 @@ void aut_gen_dfa(Aut* a, IrWriter* w, bool debug_mode) {
         irwriter_dbg(w, dt->line, dt->col);
       }
 
-      IrVal v0 = irwriter_insertvalue(w, ret_ty, -1, "i32", _imm_int(w, dt->to), 0);
-      IrVal v1 = irwriter_insertvalue(w, ret_ty, v0, "i32", _imm_int(w, dt->action_id), 1);
+      IrVal v0 = irwriter_insertvalue(w, ret_ty, -1, "i32", irwriter_imm_int(w, dt->to), 0);
+      IrVal v1 = irwriter_insertvalue(w, ret_ty, v0, "i32", irwriter_imm_int(w, dt->action_id), 1);
       irwriter_ret(w, ret_ty, v1);
     }
 
@@ -683,7 +678,7 @@ void aut_gen_dfa(Aut* a, IrWriter* w, bool debug_mode) {
   irwriter_bb_at(w, dead_bb);
   {
     if (debug_mode) {
-      irwriter_call_void(w, "llvm.debugtrap");
+      irwriter_call_void_fmtf(w, "llvm.debugtrap", "");
     }
     IrVal state_val = irwriter_imm(w, "%state");
     IrVal v0 = irwriter_insertvalue(w, ret_ty, -1, "i32", state_val, 0);

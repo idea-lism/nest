@@ -1,8 +1,12 @@
+#include "../src/darray.h"
 #include "../src/parse.h"
 #include "../src/post_process.h"
+#include "../src/re_ir.h"
 #include "../src/ustr.h"
+#include "../src/vpa.h"
 #include <assert.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 
 #define TEST(name) static void name(void)
@@ -13,65 +17,443 @@
     printf("ok\n");                                                                                                    \
   } while (0)
 
-static bool _parse(ParseState* ps, const char* cstr) {
-  if (!cstr) {
-    return parse_nest(ps, NULL);
-  }
-  size_t len = strlen(cstr);
-  char* u = ustr_new(len, cstr);
-  bool ok = parse_nest(ps, u);
-  ustr_del(u);
-  return ok;
-}
+// ============================================================================
+// pp_inline_macros
+// ============================================================================
 
-// --- Duplicate tags ---
-
-static const char DUP_TAG_NEST[] = "[[vpa]]\n"
-                                   "%ignore @space @comment\n"
-                                   "main = { /[a-z]+/ @tok_a /[0-9]+/ @tok_b *noise }\n"
-                                   "*noise = { /[ \\t\\n]+/ @space /#[^\\n]*/ @comment /\\n+/ @nl }\n"
-                                   "[[peg]]\n"
-                                   "main = item+\n"
-                                   "item = [\n"
-                                   "  @tok_a : dup\n"
-                                   "  @tok_b : dup\n"
-                                   "]\n";
-
-TEST(test_duplicate_tag_error) {
+TEST(test_inline_macros) {
   ParseState* ps = parse_state_new();
-  bool ok = _parse(ps, DUP_TAG_NEST);
+  ps->vpa_rules = darray_new(sizeof(VpaRule), 0);
+
+  // main = { /a/ @word *ws }
+  VpaRule main_rule = {.name = strdup("main"), .is_scope = true};
+  main_rule.units = darray_new(sizeof(VpaUnit), 0);
+  VpaUnit word_u = {.kind = VPA_REGEXP, .re = re_ir_new(), .name = strdup("word")};
+  word_u.re = re_ir_emit_ch(word_u.re, 'a');
+  darray_push(main_rule.units, word_u);
+  VpaUnit ws_ref = {.kind = VPA_REF, .name = strdup("*ws")};
+  darray_push(main_rule.units, ws_ref);
+  darray_push(ps->vpa_rules, main_rule);
+
+  // *ws = { /[ ]/ @space /\n/ @nl }
+  VpaRule ws_macro = {.name = strdup("ws"), .is_scope = true, .is_macro = true};
+  ws_macro.units = darray_new(sizeof(VpaUnit), 0);
+  VpaUnit sp_u = {.kind = VPA_REGEXP, .re = re_ir_new(), .name = strdup("space")};
+  sp_u.re = re_ir_emit_ch(sp_u.re, ' ');
+  darray_push(ws_macro.units, sp_u);
+  VpaUnit nl_u = {.kind = VPA_REGEXP, .re = re_ir_new(), .name = strdup("nl")};
+  nl_u.re = re_ir_emit_ch(nl_u.re, '\n');
+  darray_push(ws_macro.units, nl_u);
+  darray_push(ps->vpa_rules, ws_macro);
+
+  bool ok = pp_inline_macros(ps);
   assert(ok);
-  ok = pp_auto_tag_branches(ps) && pp_check_duplicate_tags(ps);
-  assert(!ok);
-  assert(parse_has_error(ps));
-  assert(strstr(parse_get_error(ps), "dup") != NULL);
+
+  bool found_space = false;
+  bool found_nl = false;
+  VpaRule* mr = &ps->vpa_rules[0];
+  for (int32_t j = 0; j < (int32_t)darray_size(mr->units); j++) {
+    VpaUnit* u = &mr->units[j];
+    if (u->kind == VPA_REGEXP && u->name) {
+      if (strcmp(u->name, "space") == 0) {
+        found_space = true;
+      }
+      if (strcmp(u->name, "nl") == 0) {
+        found_nl = true;
+      }
+    }
+  }
+  assert(found_space);
+  assert(found_nl);
+
   parse_state_del(ps);
 }
 
-// --- Missing PEG main ---
-
-static const char NO_PEG_MAIN_NEST[] = "[[vpa]]\n"
-                                       "%ignore @space @comment\n"
-                                       "main = { *noise }\n"
-                                       "*noise = { /[ \\t\\n]+/ @space /#[^\\n]*/ @comment /\\n+/ @nl }\n"
-                                       "[[peg]]\n"
-                                       "helper = @nl*\n";
-
-TEST(test_missing_peg_main) {
+TEST(test_inline_macros_missing) {
   ParseState* ps = parse_state_new();
-  bool ok = _parse(ps, NO_PEG_MAIN_NEST);
-  assert(ok);
-  ok = pp_validate(ps);
+  ps->vpa_rules = darray_new(sizeof(VpaRule), 0);
+
+  VpaRule rule = {.name = strdup("main"), .is_scope = true};
+  rule.units = darray_new(sizeof(VpaUnit), 0);
+  VpaUnit ref = {.kind = VPA_REF, .name = strdup("*nonexistent")};
+  darray_push(rule.units, ref);
+  darray_push(ps->vpa_rules, rule);
+
+  bool ok = pp_inline_macros(ps);
   assert(!ok);
   assert(parse_has_error(ps));
+  assert(strstr(parse_get_error(ps), "not found") != NULL);
+
+  parse_state_del(ps);
+}
+
+// ============================================================================
+// pp_auto_tag_branches
+// ============================================================================
+
+TEST(test_auto_tag_branches) {
+  ParseState* ps = parse_state_new();
+  ps->peg_rules = darray_new(sizeof(PegRule), 0);
+
+  // item = [ @id  |  @num ]   (no explicit tags)
+  PegRule rule = {.name = strdup("item"), .seq = {.kind = PEG_SEQ}};
+  rule.seq.children = darray_new(sizeof(PegUnit), 0);
+
+  PegUnit branches = {.kind = PEG_BRANCHES};
+  branches.children = darray_new(sizeof(PegUnit), 0);
+
+  PegUnit b1 = {.kind = PEG_SEQ};
+  b1.children = darray_new(sizeof(PegUnit), 0);
+  PegUnit t1 = {.kind = PEG_TOK, .name = strdup("id")};
+  darray_push(b1.children, t1);
+  darray_push(branches.children, b1);
+
+  PegUnit b2 = {.kind = PEG_SEQ};
+  b2.children = darray_new(sizeof(PegUnit), 0);
+  PegUnit t2 = {.kind = PEG_TOK, .name = strdup("num")};
+  darray_push(b2.children, t2);
+  darray_push(branches.children, b2);
+
+  darray_push(rule.seq.children, branches);
+  darray_push(ps->peg_rules, rule);
+
+  bool ok = pp_auto_tag_branches(ps);
+  assert(ok);
+
+  PegUnit* br = &ps->peg_rules[0].seq.children[0];
+  assert(br->kind == PEG_BRANCHES);
+  assert(br->children[0].tag && strcmp(br->children[0].tag, "id") == 0);
+  assert(br->children[1].tag && strcmp(br->children[1].tag, "num") == 0);
+
+  parse_state_del(ps);
+}
+
+// ============================================================================
+// pp_check_duplicate_tags
+// ============================================================================
+
+TEST(test_duplicate_tag_error) {
+  ParseState* ps = parse_state_new();
+  ps->peg_rules = darray_new(sizeof(PegRule), 0);
+
+  // item = [ @tok_a : dup  |  @tok_b : dup ]
+  PegRule rule = {.name = strdup("item"), .seq = {.kind = PEG_SEQ}};
+  rule.seq.children = darray_new(sizeof(PegUnit), 0);
+
+  PegUnit branches = {.kind = PEG_BRANCHES};
+  branches.children = darray_new(sizeof(PegUnit), 0);
+
+  PegUnit b1 = {.kind = PEG_SEQ, .tag = strdup("dup")};
+  b1.children = darray_new(sizeof(PegUnit), 0);
+  PegUnit t1 = {.kind = PEG_TOK, .name = strdup("tok_a")};
+  darray_push(b1.children, t1);
+  darray_push(branches.children, b1);
+
+  PegUnit b2 = {.kind = PEG_SEQ, .tag = strdup("dup")};
+  b2.children = darray_new(sizeof(PegUnit), 0);
+  PegUnit t2 = {.kind = PEG_TOK, .name = strdup("tok_b")};
+  darray_push(b2.children, t2);
+  darray_push(branches.children, b2);
+
+  darray_push(rule.seq.children, branches);
+  darray_push(ps->peg_rules, rule);
+
+  bool ok = pp_check_duplicate_tags(ps);
+  assert(!ok);
+  assert(parse_has_error(ps));
+  assert(strstr(parse_get_error(ps), "dup") != NULL);
+
+  parse_state_del(ps);
+}
+
+TEST(test_no_duplicate_tags) {
+  ParseState* ps = parse_state_new();
+  ps->peg_rules = darray_new(sizeof(PegRule), 0);
+
+  PegRule rule = {.name = strdup("item"), .seq = {.kind = PEG_SEQ}};
+  rule.seq.children = darray_new(sizeof(PegUnit), 0);
+
+  PegUnit branches = {.kind = PEG_BRANCHES};
+  branches.children = darray_new(sizeof(PegUnit), 0);
+
+  PegUnit b1 = {.kind = PEG_SEQ, .tag = strdup("alpha")};
+  b1.children = darray_new(sizeof(PegUnit), 0);
+  darray_push(branches.children, b1);
+
+  PegUnit b2 = {.kind = PEG_SEQ, .tag = strdup("beta")};
+  b2.children = darray_new(sizeof(PegUnit), 0);
+  darray_push(branches.children, b2);
+
+  darray_push(rule.seq.children, branches);
+  darray_push(ps->peg_rules, rule);
+
+  bool ok = pp_check_duplicate_tags(ps);
+  assert(ok);
+
+  parse_state_del(ps);
+}
+
+// ============================================================================
+// pp_detect_left_recursions
+// ============================================================================
+
+static void _make_left_rec_peg(ParseState* ps) {
+  ps->peg_rules = darray_new(sizeof(PegRule), 0);
+
+  // main = expr
+  PegRule main_rule = {.name = strdup("main"), .seq = {.kind = PEG_SEQ}};
+  main_rule.seq.children = darray_new(sizeof(PegUnit), 0);
+  PegUnit expr_ref = {.kind = PEG_ID, .name = strdup("expr")};
+  darray_push(main_rule.seq.children, expr_ref);
+  darray_push(ps->peg_rules, main_rule);
+
+  // expr = [ @id : id | expr @id : binop ]
+  PegRule expr_rule = {.name = strdup("expr"), .seq = {.kind = PEG_SEQ}};
+  expr_rule.seq.children = darray_new(sizeof(PegUnit), 0);
+
+  PegUnit branches = {.kind = PEG_BRANCHES};
+  branches.children = darray_new(sizeof(PegUnit), 0);
+
+  PegUnit branch1 = {.kind = PEG_SEQ, .tag = strdup("id")};
+  branch1.children = darray_new(sizeof(PegUnit), 0);
+  PegUnit tok_id1 = {.kind = PEG_TOK, .name = strdup("id")};
+  darray_push(branch1.children, tok_id1);
+  darray_push(branches.children, branch1);
+
+  PegUnit branch2 = {.kind = PEG_SEQ, .tag = strdup("binop")};
+  branch2.children = darray_new(sizeof(PegUnit), 0);
+  PegUnit self_ref = {.kind = PEG_ID, .name = strdup("expr")};
+  darray_push(branch2.children, self_ref);
+  PegUnit tok_id2 = {.kind = PEG_TOK, .name = strdup("id")};
+  darray_push(branch2.children, tok_id2);
+  darray_push(branches.children, branch2);
+
+  darray_push(expr_rule.seq.children, branches);
+  darray_push(ps->peg_rules, expr_rule);
+}
+
+TEST(test_detect_left_recursion) {
+  ParseState* ps = parse_state_new();
+  _make_left_rec_peg(ps);
+
+  bool ok = pp_detect_left_recursions(ps);
+  assert(!ok);
+  assert(parse_has_error(ps));
+  assert(strstr(parse_get_error(ps), "left recursion") != NULL);
+
+  parse_state_del(ps);
+}
+
+TEST(test_no_left_recursion) {
+  ParseState* ps = parse_state_new();
+  ps->peg_rules = darray_new(sizeof(PegRule), 0);
+
+  // main = @id+ @num?
+  PegRule main_rule = {.name = strdup("main"), .seq = {.kind = PEG_SEQ}};
+  main_rule.seq.children = darray_new(sizeof(PegUnit), 0);
+  PegUnit tok1 = {.kind = PEG_TOK, .name = strdup("id"), .multiplier = '+'};
+  darray_push(main_rule.seq.children, tok1);
+  PegUnit tok2 = {.kind = PEG_TOK, .name = strdup("num"), .multiplier = '?'};
+  darray_push(main_rule.seq.children, tok2);
+  darray_push(ps->peg_rules, main_rule);
+
+  bool ok = pp_detect_left_recursions(ps);
+  assert(ok);
+
+  parse_state_del(ps);
+}
+
+// ============================================================================
+// pp_expand_keywords
+// ============================================================================
+
+TEST(test_expand_keywords) {
+  ParseState* ps = parse_state_new();
+
+  ps->src = ustr_new(15, "\"if\"  \"else\"  ");
+  ps->src_len = 15;
+
+  ps->vpa_rules = darray_new(sizeof(VpaRule), 0);
+
+  VpaRule main_rule = {.name = strdup("main"), .is_scope = true};
+  main_rule.units = darray_new(sizeof(VpaUnit), 0);
+  VpaUnit tok_u = {.kind = VPA_REGEXP, .re = re_ir_new(), .name = strdup("id")};
+  tok_u.re = re_ir_emit_ch(tok_u.re, 'a');
+  darray_push(main_rule.units, tok_u);
+  VpaUnit kw_ref = {.kind = VPA_REF, .name = strdup("kw")};
+  darray_push(main_rule.units, kw_ref);
+  darray_push(ps->vpa_rules, main_rule);
+
+  VpaRule kw_rule = {.name = strdup("kw"), .is_scope = false, .is_macro = false};
+  kw_rule.units = darray_new(sizeof(VpaUnit), 0);
+  darray_push(ps->vpa_rules, kw_rule);
+
+  ps->keywords = darray_new(sizeof(KeywordEntry), 0);
+  KeywordEntry kw1 = {.group = strdup("kw"), .lit_off = 1, .lit_len = 2, .src = ps->src};
+  darray_push(ps->keywords, kw1);
+  KeywordEntry kw2 = {.group = strdup("kw"), .lit_off = 7, .lit_len = 4, .src = ps->src};
+  darray_push(ps->keywords, kw2);
+
+  ps->peg_rules = darray_new(sizeof(PegRule), 0);
+  ps->effects = darray_new(sizeof(EffectDecl), 0);
+  ps->ignores.names = darray_new(sizeof(char*), 0);
+
+  bool ok = pp_expand_keywords(ps);
+  assert(ok);
+
+  bool found_kw_if = false;
+  bool found_kw_else = false;
+  for (int32_t i = 0; i < (int32_t)darray_size(ps->vpa_rules); i++) {
+    VpaRule* rule = &ps->vpa_rules[i];
+    for (int32_t j = 0; j < (int32_t)darray_size(rule->units); j++) {
+      VpaUnit* u = &rule->units[j];
+      if (u->kind == VPA_REGEXP && u->name) {
+        if (strstr(u->name, "kw.if")) {
+          found_kw_if = true;
+        }
+        if (strstr(u->name, "kw.else")) {
+          found_kw_else = true;
+        }
+      }
+    }
+  }
+  assert(found_kw_if);
+  assert(found_kw_else);
+
+  parse_state_del(ps);
+}
+
+// ============================================================================
+// pp_validate
+// ============================================================================
+
+TEST(test_validate_missing_vpa_main) {
+  ParseState* ps = parse_state_new();
+  ps->vpa_rules = darray_new(sizeof(VpaRule), 0);
+  ps->peg_rules = darray_new(sizeof(PegRule), 0);
+
+  VpaRule rule = {.name = strdup("other"), .is_scope = true};
+  rule.units = darray_new(sizeof(VpaUnit), 0);
+  darray_push(ps->vpa_rules, rule);
+
+  PegRule pr = {.name = strdup("main"), .seq = {.kind = PEG_SEQ}};
+  pr.seq.children = darray_new(sizeof(PegUnit), 0);
+  darray_push(ps->peg_rules, pr);
+
+  bool ok = pp_validate(ps);
+  assert(!ok);
+  assert(strstr(parse_get_error(ps), "main") != NULL);
+  assert(strstr(parse_get_error(ps), "vpa") != NULL);
+
+  parse_state_del(ps);
+}
+
+TEST(test_validate_missing_peg_main) {
+  ParseState* ps = parse_state_new();
+  ps->vpa_rules = darray_new(sizeof(VpaRule), 0);
+  ps->peg_rules = darray_new(sizeof(PegRule), 0);
+
+  VpaRule rule = {.name = strdup("main"), .is_scope = true};
+  rule.units = darray_new(sizeof(VpaUnit), 0);
+  darray_push(ps->vpa_rules, rule);
+
+  PegRule pr = {.name = strdup("helper"), .seq = {.kind = PEG_SEQ}};
+  pr.seq.children = darray_new(sizeof(PegUnit), 0);
+  darray_push(ps->peg_rules, pr);
+
+  bool ok = pp_validate(ps);
+  assert(!ok);
+  assert(strstr(parse_get_error(ps), "main") != NULL);
+  assert(strstr(parse_get_error(ps), "peg") != NULL);
+
+  parse_state_del(ps);
+}
+
+TEST(test_validate_token_set_mismatch) {
+  ParseState* ps = parse_state_new();
+  ps->vpa_rules = darray_new(sizeof(VpaRule), 0);
+  ps->peg_rules = darray_new(sizeof(PegRule), 0);
+  ps->effects = darray_new(sizeof(EffectDecl), 0);
+  ps->ignores.names = darray_new(sizeof(char*), 0);
+
+  // VPA main emits @id only
+  VpaRule vr = {.name = strdup("main"), .is_scope = true};
+  vr.units = darray_new(sizeof(VpaUnit), 0);
+  VpaUnit u = {.kind = VPA_REGEXP, .re = re_ir_new(), .name = strdup("id")};
+  u.re = re_ir_emit_ch(u.re, 'a');
+  darray_push(vr.units, u);
+  darray_push(ps->vpa_rules, vr);
+
+  // PEG main uses @id and @num (num not emitted by VPA)
+  PegRule pr = {.name = strdup("main"), .seq = {.kind = PEG_SEQ}};
+  pr.seq.children = darray_new(sizeof(PegUnit), 0);
+  PegUnit t1 = {.kind = PEG_TOK, .name = strdup("id")};
+  darray_push(pr.seq.children, t1);
+  PegUnit t2 = {.kind = PEG_TOK, .name = strdup("num")};
+  darray_push(pr.seq.children, t2);
+  darray_push(ps->peg_rules, pr);
+
+  bool ok = pp_validate(ps);
+  assert(!ok);
+  assert(strstr(parse_get_error(ps), "num") != NULL);
+
+  parse_state_del(ps);
+}
+
+TEST(test_validate_ok) {
+  ParseState* ps = parse_state_new();
+  ps->vpa_rules = darray_new(sizeof(VpaRule), 0);
+  ps->peg_rules = darray_new(sizeof(PegRule), 0);
+  ps->effects = darray_new(sizeof(EffectDecl), 0);
+  ps->ignores.names = darray_new(sizeof(char*), 0);
+
+  // VPA main emits @id, @num, @space; %ignore @space
+  VpaRule vr = {.name = strdup("main"), .is_scope = true};
+  vr.units = darray_new(sizeof(VpaUnit), 0);
+  VpaUnit u1 = {.kind = VPA_REGEXP, .re = re_ir_new(), .name = strdup("id")};
+  u1.re = re_ir_emit_ch(u1.re, 'a');
+  darray_push(vr.units, u1);
+  VpaUnit u2 = {.kind = VPA_REGEXP, .re = re_ir_new(), .name = strdup("num")};
+  u2.re = re_ir_emit_ch(u2.re, '0');
+  darray_push(vr.units, u2);
+  VpaUnit u3 = {.kind = VPA_REGEXP, .re = re_ir_new(), .name = strdup("space")};
+  u3.re = re_ir_emit_ch(u3.re, ' ');
+  darray_push(vr.units, u3);
+  darray_push(ps->vpa_rules, vr);
+
+  char* ign = strdup("space");
+  darray_push(ps->ignores.names, ign);
+
+  // PEG main uses @id and @num
+  PegRule pr = {.name = strdup("main"), .seq = {.kind = PEG_SEQ}};
+  pr.seq.children = darray_new(sizeof(PegUnit), 0);
+  PegUnit t1 = {.kind = PEG_TOK, .name = strdup("id")};
+  darray_push(pr.seq.children, t1);
+  PegUnit t2 = {.kind = PEG_TOK, .name = strdup("num")};
+  darray_push(pr.seq.children, t2);
+  darray_push(ps->peg_rules, pr);
+
+  bool ok = pp_validate(ps);
+  assert(ok);
+
   parse_state_del(ps);
 }
 
 int main(void) {
   printf("test_post_process:\n");
 
+  RUN(test_inline_macros);
+  RUN(test_inline_macros_missing);
+  RUN(test_auto_tag_branches);
   RUN(test_duplicate_tag_error);
-  RUN(test_missing_peg_main);
+  RUN(test_no_duplicate_tags);
+  RUN(test_detect_left_recursion);
+  RUN(test_no_left_recursion);
+  RUN(test_expand_keywords);
+  RUN(test_validate_missing_vpa_main);
+  RUN(test_validate_missing_peg_main);
+  RUN(test_validate_token_set_mismatch);
+  RUN(test_validate_ok);
 
   printf("all ok\n");
   return 0;
