@@ -3,6 +3,7 @@
 #include "header_writer.h"
 #include "irwriter.h"
 
+#include <stdbool.h>
 #include <stdint.h>
 
 // PEG unit kinds
@@ -32,14 +33,8 @@ typedef struct {
   char* scope; // (owned, may be NULL) - if NULL, uses "main"
 } PegRule;
 
-typedef enum {
-  PEG_MODE_NAIVE,
-  PEG_MODE_ROW_SHARED,
-} PegGenMode;
-
 typedef struct {
   PegRule* rules;
-  PegGenMode mode;
 } PegGenInput;
 
-void peg_gen(PegGenInput* input, HeaderWriter* hw, IrWriter* w);
+void peg_gen(PegGenInput* input, HeaderWriter* hw, IrWriter* w, bool compress_memoize);

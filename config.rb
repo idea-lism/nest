@@ -83,7 +83,7 @@ end
 CC = ENV["CC"] || (RUBY_PLATFORM =~ /darwin/ ? "xcrun clang" : "clang")
 AR = ENV["AR"] || "ar"
 CLANG_FORMAT = RUBY_PLATFORM =~ /darwin/ ? "xcrun clang-format" : "clang-format"
-ALL_SRCS = Dir.glob '{src,test}/**/*.{c,h}'
+ALL_SRCS = (Dir.glob '{src,test}/**/*.{c,h}').join ' '
 
 ARCH_CFLAGS = RUBY_PLATFORM =~ /x86_64|amd64/ ? "-mavx2" : ""
 
@@ -191,9 +191,9 @@ rule gen_str_header
 
 rule format
   command = #{CLANG_FORMAT} -i $in
-  description = FORMAT"
+  description = FORMAT
 
-build format: format #{ALL_SRCS}"
+build format: format #{ALL_SRCS}
 
 build #{BUILDDIR}/nest_lex.ll: gen_nest_lex #{BUILDDIR}/parse_gen
 build #{BUILDDIR}/nest_lex.o: ll_cc #{BUILDDIR}/nest_lex.ll

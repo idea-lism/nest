@@ -54,7 +54,12 @@ typedef struct {
 TokenTree* tc_tree_new(ustr);
 void tc_tree_del(TokenTree*);
 struct {line, col} tc_locate(TokenTree* tree, int32_t cp_offset);
-tc_add(TokenChunk* c, Token t);
-TokenChunk* tc_push(TokenTree* tree); // updates current
-TokenChunk* tc_pop(TokenTree* tree);  // returns new current
+tc_add(TokenTree* tree, int32_t tok_id, int32_t cp_start, int32_t cp_size, int32_t chunk_id);
+TokenChunk* tc_push(TokenTree* tree, int32_t scope_id);
+TokenChunk* tc_pop(TokenTree* tree);
+int32_t tc_size(TokenTree* tree);     // current chunk token count
+int32_t tc_scope(TokenTree* tree);    // current chunk scope_id
+void tc_parse_begin(TokenTree* tree); // set parse chunk = current
+void tc_parse_end(void);              // clear parse chunk
+int32_t match_tok(int32_t tok_id, int32_t col); // PEG token matcher
 ```

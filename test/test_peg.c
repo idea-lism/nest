@@ -32,7 +32,6 @@ static void _compile_test(const char* h_file, const char* ir_file) {
 TEST(test_empty_input) {
   PegGenInput input = {0};
   input.rules = darray_new(sizeof(PegRule), 0);
-  input.mode = PEG_MODE_NAIVE;
 
   FILE* hf = fopen(BUILD_DIR "/test_peg_empty.h", "w");
   FILE* irf = fopen(BUILD_DIR "/test_peg_empty.ll", "w");
@@ -40,7 +39,7 @@ TEST(test_empty_input) {
   IrWriter* w = irwriter_new(irf, NULL);
 
   irwriter_start(w, "test.c", ".");
-  peg_gen(&input, hw, w);
+  peg_gen(&input, hw, w, false);
   irwriter_end(w);
 
   hw_del(hw);
@@ -53,7 +52,6 @@ TEST(test_empty_input) {
 TEST(test_simple_rule_naive) {
   PegGenInput input = {0};
   input.rules = darray_new(sizeof(PegRule), 0);
-  input.mode = PEG_MODE_NAIVE;
 
   PegRule rule = {0};
   rule.name = strdup("expr");
@@ -73,7 +71,7 @@ TEST(test_simple_rule_naive) {
   IrWriter* w = irwriter_new(irf, NULL);
 
   irwriter_start(w, "test.c", ".");
-  peg_gen(&input, hw, w);
+  peg_gen(&input, hw, w, false);
   irwriter_end(w);
 
   hw_del(hw);
@@ -111,7 +109,6 @@ TEST(test_simple_rule_naive) {
 TEST(test_row_shared_mode) {
   PegGenInput input = {0};
   input.rules = darray_new(sizeof(PegRule), 0);
-  input.mode = PEG_MODE_ROW_SHARED;
 
   PegRule r1 = {0};
   r1.name = strdup("a");
@@ -139,7 +136,7 @@ TEST(test_row_shared_mode) {
   IrWriter* w = irwriter_new(irf, NULL);
 
   irwriter_start(w, "test.c", ".");
-  peg_gen(&input, hw, w);
+  peg_gen(&input, hw, w, true);
   irwriter_end(w);
 
   hw_del(hw);
@@ -173,7 +170,6 @@ TEST(test_branch_rule) {
   // Rule: foo = [ @A :tag1 | @B :tag2 ]
   PegGenInput input = {0};
   input.rules = darray_new(sizeof(PegRule), 0);
-  input.mode = PEG_MODE_NAIVE;
 
   PegRule rule = {0};
   rule.name = strdup("foo");
@@ -211,7 +207,7 @@ TEST(test_branch_rule) {
   IrWriter* w = irwriter_new(irf, NULL);
 
   irwriter_start(w, "test.c", ".");
-  peg_gen(&input, hw, w);
+  peg_gen(&input, hw, w, false);
   irwriter_end(w);
 
   hw_del(hw);
@@ -251,7 +247,6 @@ TEST(test_per_scope_col) {
   // Two rules in different scopes should get different Col types
   PegGenInput input = {0};
   input.rules = darray_new(sizeof(PegRule), 0);
-  input.mode = PEG_MODE_NAIVE;
 
   PegRule r1 = {0};
   r1.name = strdup("a");
@@ -288,7 +283,7 @@ TEST(test_per_scope_col) {
   IrWriter* w = irwriter_new(irf, NULL);
 
   irwriter_start(w, "test.c", ".");
-  peg_gen(&input, hw, w);
+  peg_gen(&input, hw, w, false);
   irwriter_end(w);
 
   hw_del(hw);
@@ -326,7 +321,6 @@ TEST(test_per_scope_col) {
 TEST(test_row_shared_per_scope_compact) {
   PegGenInput input = {0};
   input.rules = darray_new(sizeof(PegRule), 0);
-  input.mode = PEG_MODE_ROW_SHARED;
 
   PegRule r1 = {0};
   r1.name = strdup("a");
@@ -360,7 +354,7 @@ TEST(test_row_shared_per_scope_compact) {
   IrWriter* w = irwriter_new(irf, NULL);
 
   irwriter_start(w, "test.c", ".");
-  peg_gen(&input, hw, w);
+  peg_gen(&input, hw, w, true);
   irwriter_end(w);
 
   hw_del(hw);
@@ -393,7 +387,6 @@ TEST(test_row_shared_per_scope_compact) {
 TEST(test_scope_refs_not_expanded_in_sets) {
   PegGenInput input = {0};
   input.rules = darray_new(sizeof(PegRule), 0);
-  input.mode = PEG_MODE_ROW_SHARED;
 
   PegRule start = {0};
   start.name = strdup("start");
@@ -425,7 +418,7 @@ TEST(test_scope_refs_not_expanded_in_sets) {
   IrWriter* w = irwriter_new(irf, NULL);
 
   irwriter_start(w, "test.c", ".");
-  peg_gen(&input, hw, w);
+  peg_gen(&input, hw, w, true);
   irwriter_end(w);
 
   hw_del(hw);

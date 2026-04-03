@@ -2,7 +2,7 @@
 #include <stdio.h>
 #include <string.h>
 
-#define VPA_IMPLEMENTATION
+#define NEST_RT_IMPLEMENTATION
 #include "grammar.h"
 
 int32_t vpa_rt_read_cp(void* src, int32_t cp_off) { return ((const unsigned char*)src)[cp_off]; }
@@ -67,21 +67,26 @@ int main(int argc, char** argv) {
   const char* input = argv[1];
   int32_t len = (int32_t)strlen(input);
 
-  TokenTree* tt = tt_new(len);
+  char* ustr = ustr_new(len, input);
+  TokenTree* tt = tc_tree_new(ustr);
   vpa_lex((int64_t)(intptr_t)input, (int64_t)len, (int64_t)(intptr_t)tt);
 
-  printf("%d chunk(s), %d token(s) in root\n", tt->chunk_table.count, tt->root->count);
-  for (int32_t c = 0; c < tt->chunk_table.count; c++) {
-    TokenChunk* chunk = &tt->chunk_table.chunks[c];
+  int32_t n_chunks = (int32_t)darray_size(tt->table);
+  int32_t n_root = (int32_t)darray_size(tt->root->tokens);
+  printf("%d chunk(s), %d token(s) in root\n", n_chunks, n_root);
+  for (int32_t c = 0; c < n_chunks; c++) {
+    TokenChunk* chunk = &tt->table[c];
     if (c > 0) {
       printf("--- scope %d ---\n", chunk->scope_id);
     }
-    for (int32_t i = 0; i < chunk->count; i++) {
-      VpaToken* tok = &chunk->tokens[i];
+    int32_t n_tokens = (int32_t)darray_size(chunk->tokens);
+    for (int32_t i = 0; i < n_tokens; i++) {
+      Token* tok = &chunk->tokens[i];
       printf("  %-10s (id=%2d) \"%.*s\"\n", tok_name(tok->tok_id), tok->tok_id, tok->cp_size, input + tok->cp_start);
     }
   }
 
-  tt_del(tt);
+  tc_tree_del(tt);
+  ustr_del(ustr);
   return 0;
 }

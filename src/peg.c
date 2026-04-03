@@ -446,7 +446,8 @@ static void _define_col_type_ir(IrWriter* w, ScopeCtx* scope) {
 
 // --- Load function generation ---
 
-static void _emit_child_load(HeaderWriter* hw, PegUnit* child, const char* cur_var, int32_t indent) {
+static void _emit_child_load(HeaderWriter* hw, PegUnit* child, const char* cur_var, int32_t indent, PegRule* all_rules,
+                             RuleInfo* all_rule_infos, int32_t n_rules) {
   const char* sp = indent >= 2 ? "    " : "  ";
   const char* inner = indent >= 2 ? "      " : "    ";
   const char* var = (child->name && child->name[0]) ? child->name : NULL;
@@ -456,24 +457,22 @@ static void _emit_child_load(HeaderWriter* hw, PegUnit* child, const char* cur_v
   }
 
   if (child->kind == PEG_ID) {
-    if (var) {
-      hw_fmt(hw, "%s{ int32_t l = parse_%s((void*)table, %s);\n", sp, var, cur_var);
-      hw_fmt(hw, "%sif (l < 0) l = 0;\n", inner);
-      if (child->multiplier == '+' || child->multiplier == '*') {
-        hw_fmt(hw, "%snode.%s.next_col = %s + l;\n", inner, var, cur_var);
-      }
-      hw_fmt(hw, "%s%s += l; }\n", inner, cur_var);
-    } else {
-      hw_fmt(hw, "%s{ int32_t l = parse_%s((void*)table, %s);\n", sp, child->name, cur_var);
-      hw_fmt(hw, "%sif (l < 0) l = 0;\n", inner);
-      hw_fmt(hw, "%s%s += l; }\n", inner, cur_var);
+    const char* ref_name = child->name;
+    int32_t ref_idx = _rule_index_by_name(all_rules, n_rules, ref_name);
+    int32_t slot = (ref_idx >= 0) ? all_rule_infos[ref_idx].slot_idx : 0;
+    hw_fmt(hw, "%s{ int32_t l = table[%s].slots[%d];\n", sp, cur_var, slot);
+    hw_fmt(hw, "%sif (l < 0) l = 0;\n", inner);
+    if (var && (child->multiplier == '+' || child->multiplier == '*')) {
+      hw_fmt(hw, "%snode.%s.next_col = %s + l;\n", inner, var, cur_var);
     }
+    hw_fmt(hw, "%s%s += l; }\n", inner, cur_var);
   } else if (child->kind == PEG_TOK) {
     hw_fmt(hw, "%s%s += 1;\n", sp, cur_var);
   }
 }
 
-static void _gen_load_impl(HeaderWriter* hw, PegRule* rule, RuleInfo* ri, ScopeCtx* scopes) {
+static void _gen_load_impl(HeaderWriter* hw, PegRule* rule, RuleInfo* ri, ScopeCtx* scopes, PegRule* all_rules,
+                           RuleInfo* all_rule_infos, int32_t n_rules) {
   char struct_name[128];
   _make_struct_name(rule, struct_name, sizeof(struct_name));
   const char* col_type = scopes[ri->scope_idx].hdr_col_type;
@@ -514,18 +513,18 @@ static void _gen_load_impl(HeaderWriter* hw, PegRule* rule, RuleInfo* ri, ScopeC
           hw_fmt(hw, "  if (branch_id == %d) {\n", bid);
           hw_fmt(hw, "    int32_t bcur = cur;\n");
           for (int32_t j = 0; j < (int32_t)darray_size(branch->children); j++) {
-            _emit_child_load(hw, &branch->children[j], "bcur", 2);
+            _emit_child_load(hw, &branch->children[j], "bcur", 2, all_rules, all_rule_infos, n_rules);
           }
           hw_fmt(hw, "  }\n");
         }
         branch_idx += bn;
       } else {
-        _emit_child_load(hw, child, "cur", 1);
+        _emit_child_load(hw, child, "cur", 1, all_rules, all_rule_infos, n_rules);
       }
     }
   } else {
     for (int32_t i = 0; i < (int32_t)darray_size(rule->seq.children); i++) {
-      _emit_child_load(hw, &rule->seq.children[i], "cur", 1);
+      _emit_child_load(hw, &rule->seq.children[i], "cur", 1, all_rules, all_rule_infos, n_rules);
     }
   }
 
@@ -640,7 +639,7 @@ static void _gen_rule_shared(PegRule* rule, RuleInfo* ri, ScopeCtx* scope, IrWri
 
 // --- Public API ---
 
-void peg_gen(PegGenInput* input, HeaderWriter* hw, IrWriter* w) {
+void peg_gen(PegGenInput* input, HeaderWriter* hw, IrWriter* w, bool compress_memoize) {
   PegRule* rules = input->rules;
   int32_t n_rules = (int32_t)darray_size(rules);
 
@@ -649,7 +648,9 @@ void peg_gen(PegGenInput* input, HeaderWriter* hw, IrWriter* w) {
   }
 
   Symtab analysis_symbols = {0};
+  symtab_init(&analysis_symbols);
   Symtab tokens = {0};
+  symtab_init(&tokens);
   ScopeCtx* scopes = _gather_scope_closures(rules, n_rules);
   AnalysisRule* analysis_rules = _build_analysis_rules(rules, n_rules);
 
@@ -684,7 +685,7 @@ void peg_gen(PegGenInput* input, HeaderWriter* hw, IrWriter* w) {
   hw_blank(hw);
 
   // --- Assign per-scope slot indices and build Col types ---
-  if (input->mode == PEG_MODE_NAIVE) {
+  if (!compress_memoize) {
     for (int32_t si = 0; si < (int32_t)darray_size(scopes); si++) {
       ScopeCtx* scope = &scopes[si];
       scope->n_bits = 0;
@@ -758,14 +759,14 @@ void peg_gen(PegGenInput* input, HeaderWriter* hw, IrWriter* w) {
            scope->hdr_col_type);
   }
 
-  // --- Header: parse function declarations (before load impls that call them) ---
+  // --- Header: parse function declarations ---
   for (int32_t i = 0; i < n_rules; i++) {
     hw_fmt(hw, "int32_t parse_%s(void* table, int32_t col);\n", rules[i].name);
   }
   hw_blank(hw);
 
   for (int32_t i = 0; i < n_rules; i++) {
-    _gen_load_impl(hw, &rules[i], &rule_infos[i], scopes);
+    _gen_load_impl(hw, &rules[i], &rule_infos[i], scopes, rules, rule_infos, n_rules);
   }
 
   // --- IR: extern declarations and backtrack stack definitions ---
@@ -778,7 +779,7 @@ void peg_gen(PegGenInput* input, HeaderWriter* hw, IrWriter* w) {
   }
 
   // --- IR: rule functions ---
-  if (input->mode == PEG_MODE_NAIVE) {
+  if (!compress_memoize) {
     for (int32_t i = 0; i < n_rules; i++) {
       const char* sn = _scope_name(&rules[i]);
       int32_t si = _scope_index(scopes, sn);

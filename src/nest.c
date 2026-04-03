@@ -4,6 +4,7 @@
 #include "re.h"
 #include "ustr.h"
 
+#include <stdbool.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -241,7 +242,8 @@ static int32_t _cmd_compile(int32_t argc, char** argv) {
     goto cleanup;
   }
 
-  peg_gen(&(PegGenInput){.rules = ps->peg_rules}, hw, w);
+  bool compress_memoize = !(arg_k && strcmp(arg_k, "false") == 0);
+  peg_gen(&(PegGenInput){.rules = ps->peg_rules}, hw, w, compress_memoize);
   vpa_gen(
       &(VpaGenInput){
           .rules = ps->vpa_rules,

@@ -129,6 +129,7 @@ static void _emit_rule_body_leaf(IrWriter* w) {
   darray_push(seq.children, tok);
 
   Symtab tokens = {0};
+  symtab_init(&tokens);
   IrVal result = peg_ir_gen_rule_body(w, &seq, &tokens, "%Col.test", 0, fail_label);
   irwriter_ret(w, "i32", result);
 
@@ -184,6 +185,7 @@ static void _emit_rule_body_branches(IrWriter* w) {
   darray_push(seq.children, branches);
 
   Symtab tokens = {0};
+  symtab_init(&tokens);
   IrVal result = peg_ir_gen_rule_body(w, &seq, &tokens, "%Col.test", 1, fail_label);
   irwriter_ret(w, "i32", result);
 
@@ -232,6 +234,7 @@ TEST(test_peg_ir_compile) {
   darray_push(seq.children, tok);
 
   Symtab tokens = {0};
+  symtab_init(&tokens);
   IrVal r = peg_ir_gen_rule_body(w, &seq, &tokens, "%Col.s", 0, fail);
   irwriter_ret(w, "i32", r);
 

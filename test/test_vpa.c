@@ -37,10 +37,8 @@ TEST(test_tree_add_token) {
   char* ustr = ustr_new(3, "abc");
   TokenTree* tree = tc_tree_new(ustr);
 
-  Token t1 = {.tok_id = TOK_CHAR, .cp_start = 0, .cp_size = 1, .chunk_id = -1};
-  Token t2 = {.tok_id = TOK_CHAR, .cp_start = 1, .cp_size = 1, .chunk_id = -1};
-  tc_add(tree->current, t1);
-  tc_add(tree->current, t2);
+  tc_add(tree, TOK_CHAR, 0, 1, -1);
+  tc_add(tree, TOK_CHAR, 1, 1, -1);
 
   assert(darray_size(tree->current->tokens) == 2);
   assert(tree->current->tokens[0].tok_id == TOK_CHAR);
@@ -59,14 +57,13 @@ TEST(test_tree_push_pop) {
   assert(root->parent_id == -1);
 
   // push child scope
-  TokenChunk* child = tc_push(tree);
+  TokenChunk* child = tc_push(tree, 0);
   assert(child != NULL);
   assert(tree->current == child);
   assert(child->parent_id != -1);
 
   // add token in child
-  Token t = {.tok_id = TOK_VPA_ID, .cp_start = 0, .cp_size = 2, .chunk_id = -1};
-  tc_add(child, t);
+  tc_add(tree, TOK_VPA_ID, 0, 2, -1);
   assert(darray_size(child->tokens) == 1);
 
   // pop back to root
@@ -85,11 +82,11 @@ TEST(test_tree_nested_push_pop) {
   TokenChunk* root = tree->current;
 
   // push level 1
-  TokenChunk* l1 = tc_push(tree);
+  TokenChunk* l1 = tc_push(tree, 0);
   assert(tree->current == l1);
 
   // push level 2
-  TokenChunk* l2 = tc_push(tree);
+  TokenChunk* l2 = tc_push(tree, 0);
   assert(tree->current == l2);
 
   // pop level 2 -> level 1
@@ -563,13 +560,11 @@ TEST(test_chunk_scope_ids) {
 
   tree->root->scope_id = SCOPE_MAIN;
 
-  TokenChunk* child = tc_push(tree);
-  child->scope_id = SCOPE_VPA;
+  tc_push(tree, SCOPE_VPA);
 
   assert(tree->current->scope_id == SCOPE_VPA);
 
-  TokenChunk* grandchild = tc_push(tree);
-  grandchild->scope_id = SCOPE_RE;
+  tc_push(tree, SCOPE_RE);
   assert(tree->current->scope_id == SCOPE_RE);
 
   tc_pop(tree);
@@ -589,21 +584,14 @@ TEST(test_token_scope_reference) {
   TokenTree* tree = tc_tree_new(ustr);
 
   // push a child chunk, remember its index
-  TokenChunk* child = tc_push(tree);
-  child->scope_id = SCOPE_VPA;
+  tc_push(tree, SCOPE_VPA);
   int32_t child_chunk_id = (int32_t)(darray_size(tree->table) - 1);
 
   // pop back
   tc_pop(tree);
 
   // add a token in root that references the child chunk
-  Token t = {
-      .tok_id = SCOPE_VPA, // scope id used as tok_id
-      .cp_start = 0,
-      .cp_size = 3,
-      .chunk_id = child_chunk_id,
-  };
-  tc_add(tree->root, t);
+  tc_add(tree, SCOPE_VPA, 0, 3, child_chunk_id);
 
   assert(darray_size(tree->root->tokens) == 1);
   Token stored = tree->root->tokens[0];
@@ -647,6 +635,18 @@ static void _free_gen_input(VpaGenInput* input) {
   }
   darray_del(input->effects);
   darray_del(input->peg_rules);
+}
+
+static void _compile_test(const char* h_file, const char* ir_file) {
+  const char* null_out = compat_devnull_path();
+  char cmd[512];
+  snprintf(cmd, sizeof(cmd), "%s -c -x c %s -o %s 2>&1", compat_llvm_cc(), h_file, null_out);
+  int ret = system(cmd);
+  assert(ret == 0);
+
+  snprintf(cmd, sizeof(cmd), "%s -c %s -o %s 2>&1", compat_llvm_cc(), ir_file, null_out);
+  ret = system(cmd);
+  assert(ret == 0);
 }
 
 TEST(test_vpa_gen_empty_rules) {
@@ -745,8 +745,10 @@ TEST(test_vpa_gen_single_scope) {
   assert(strstr(h_buf, "SCOPE_MAIN") != NULL);
   assert(strstr(h_buf, "TOK_TOK_A") != NULL);
   assert(strstr(h_buf, "TOK_TOK_B") != NULL);
-  assert(strstr(h_buf, "VpaToken") != NULL);
+  assert(strstr(h_buf, "tc_tree_new") != NULL);
   free(h_buf);
+
+  _compile_test(BUILD_DIR "/test_vpa_gen_scope.h", BUILD_DIR "/test_vpa_gen_scope.ll");
 
   _free_gen_input(&input);
 }
@@ -841,6 +843,8 @@ TEST(test_vpa_gen_multi_scope) {
   assert(strstr(h_buf, "SCOPE_INNER") != NULL);
   free(h_buf);
 
+  _compile_test(BUILD_DIR "/test_vpa_gen_multi.h", BUILD_DIR "/test_vpa_gen_multi.ll");
+
   _free_gen_input(&input);
 }
 
@@ -860,6 +864,54 @@ TEST(test_vpa_unit_binary_mode) {
 
   re_ir_free(u.re);
   free(u.name);
+}
+
+// === Execution test: compile + link + run generated VPA lexer ===
+
+TEST(test_vpa_gen_exec) {
+  const char* driver_path = BUILD_DIR "/test_vpa_exec_driver.c";
+  FILE* df = fopen(driver_path, "w");
+  assert(df);
+  fprintf(df, "#include <assert.h>\n"
+              "#include <stdint.h>\n"
+              "#include <string.h>\n"
+              "#define NEST_RT_IMPLEMENTATION\n"
+              "#include \"test_vpa_gen_scope.h\"\n"
+              "\n"
+              "int32_t vpa_rt_read_cp(void* src, int32_t cp_off) {\n"
+              "  return ((const unsigned char*)src)[cp_off];\n"
+              "}\n"
+              "\n"
+              "int main(void) {\n"
+              "  const char* input = \"aabb\";\n"
+              "  int32_t len = 4;\n"
+              "  char* us = ustr_new(len, input);\n"
+              "  TokenTree* tt = tc_tree_new(us);\n"
+              "  vpa_lex((int64_t)(intptr_t)input, (int64_t)len, (int64_t)(intptr_t)tt);\n"
+              "  int32_t n = (int32_t)darray_size(tt->root->tokens);\n"
+              "  assert(n == 4);\n"
+              "  assert(tt->root->tokens[0].tok_id == TOK_TOK_A);\n"
+              "  assert(tt->root->tokens[1].tok_id == TOK_TOK_A);\n"
+              "  assert(tt->root->tokens[2].tok_id == TOK_TOK_B);\n"
+              "  assert(tt->root->tokens[3].tok_id == TOK_TOK_B);\n"
+              "  assert(tt->root->tokens[0].cp_start == 0);\n"
+              "  assert(tt->root->tokens[0].cp_size == 1);\n"
+              "  assert(tt->root->tokens[3].cp_start == 3);\n"
+              "  tc_tree_del(tt);\n"
+              "  ustr_del(us);\n"
+              "  return 0;\n"
+              "}\n");
+  fclose(df);
+
+  char cmd[1024];
+  snprintf(cmd, sizeof(cmd), "%s %s %s -o %s 2>&1", compat_llvm_cc(), driver_path, BUILD_DIR "/test_vpa_gen_scope.ll",
+           BUILD_DIR "/test_vpa_exec");
+  int ret = system(cmd);
+  assert(ret == 0);
+
+  snprintf(cmd, sizeof(cmd), "%s", BUILD_DIR "/test_vpa_exec");
+  ret = system(cmd);
+  assert(ret == 0);
 }
 
 int main(void) {
@@ -900,6 +952,7 @@ int main(void) {
 
   RUN(test_vpa_gen_empty_rules);
   RUN(test_vpa_gen_single_scope);
+  RUN(test_vpa_gen_exec);
   RUN(test_vpa_gen_multi_scope);
 
   printf("all ok\n");

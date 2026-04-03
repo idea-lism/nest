@@ -15,7 +15,7 @@ exe "test_ustr",
   deps: %w[ustr]
 
 exe "test_irwriter",
-  srcs: %w[test/test_irwriter.c test/compat.c src/irwriter.c src/darray.c]
+  srcs: %w[test/test_irwriter.c test/compat.c src/irwriter.c src/symtab.c src/darray.c]
 
 exe "test_bitset",
   srcs: %w[test/test_bitset.c src/bitset.c]
@@ -24,14 +24,14 @@ exe "test_symtab",
   srcs: %w[test/test_symtab.c src/symtab.c src/darray.c]
 
 exe "test_aut",
-  srcs: %w[test/test_aut.c test/compat.c src/aut.c src/irwriter.c src/bitset.c src/darray.c]
+  srcs: %w[test/test_aut.c test/compat.c src/aut.c src/irwriter.c src/symtab.c src/bitset.c src/darray.c]
 
 exe "test_re",
-  srcs: %w[test/test_re.c test/compat.c src/re.c src/aut.c src/irwriter.c src/bitset.c src/darray.c],
+  srcs: %w[test/test_re.c test/compat.c src/re.c src/aut.c src/irwriter.c src/symtab.c src/bitset.c src/darray.c],
   deps: %w[ustr]
 
 exe "test_re_ir",
-  srcs: %w[test/test_re_ir.c src/re.c src/re_ir.c src/aut.c src/irwriter.c src/bitset.c src/darray.c],
+  srcs: %w[test/test_re_ir.c src/re.c src/re_ir.c src/aut.c src/irwriter.c src/symtab.c src/bitset.c src/darray.c],
   deps: %w[ustr]
 
 exe "test_parse_gen",
@@ -79,7 +79,7 @@ exe "nest",
   ext_libs: kissat
 
 exe "parse_gen",
-  srcs: %w[src/parse_gen.c src/re.c src/aut.c src/irwriter.c src/bitset.c src/darray.c],
+  srcs: %w[src/parse_gen.c src/re.c src/aut.c src/irwriter.c src/symtab.c src/bitset.c src/darray.c],
   deps: %w[ustr]
 
 gen_str_header "build/nest_syntax.inc",

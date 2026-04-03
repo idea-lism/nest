@@ -36,7 +36,7 @@ const char* symtab_get(const Symtab* st, int32_t id);           // get string by
 int32_t  symtab_count(const Symtab* st);                        // number of interned strings
 ```
 
-- `symtab_init`: sets both darrays to NULL (zero-initialized struct also works).
+- `symtab_init`: allocates both darrays (must be called before use).
 - `symtab_free`: frees both darrays. Does not free the struct itself.
 - `symtab_intern`: linear scan via offsets; on miss, appends string + `'\0'` to `buf`, appends new offset to `offsets`, returns new 1-based ID.
 - `symtab_find`: like intern but returns 0 on miss.
@@ -47,6 +47,7 @@ int32_t  symtab_count(const Symtab* st);                        // number of int
 
 ```c
 Symtab st = {0};
+symtab_init(&st);
 int32_t id1 = symtab_intern(&st, "foo");   // 1
 int32_t id2 = symtab_intern(&st, "bar");   // 2
 int32_t id3 = symtab_intern(&st, "foo");   // 1 (already interned)

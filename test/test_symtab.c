@@ -14,12 +14,13 @@
 
 TEST(test_init_free) {
   Symtab st = {0};
+  symtab_init(&st);
   assert(symtab_count(&st) == 0);
   symtab_free(&st);
 }
 
 TEST(test_init_fn) {
-  Symtab st;
+  Symtab st = {0};
   symtab_init(&st);
   assert(symtab_count(&st) == 0);
   assert(symtab_find(&st, "x") == 0);
@@ -28,6 +29,7 @@ TEST(test_init_fn) {
 
 TEST(test_intern_single) {
   Symtab st = {0};
+  symtab_init(&st);
   int32_t id = symtab_intern(&st, "foo");
   assert(id == 1);
   assert(symtab_count(&st) == 1);
@@ -37,6 +39,7 @@ TEST(test_intern_single) {
 
 TEST(test_intern_dedup) {
   Symtab st = {0};
+  symtab_init(&st);
   int32_t id1 = symtab_intern(&st, "foo");
   int32_t id2 = symtab_intern(&st, "foo");
   assert(id1 == id2);
@@ -46,6 +49,7 @@ TEST(test_intern_dedup) {
 
 TEST(test_intern_multiple) {
   Symtab st = {0};
+  symtab_init(&st);
   int32_t a = symtab_intern(&st, "alpha");
   int32_t b = symtab_intern(&st, "beta");
   int32_t c = symtab_intern(&st, "gamma");
@@ -61,6 +65,7 @@ TEST(test_intern_multiple) {
 
 TEST(test_find_present) {
   Symtab st = {0};
+  symtab_init(&st);
   symtab_intern(&st, "x");
   symtab_intern(&st, "y");
   assert(symtab_find(&st, "x") == 1);
@@ -70,6 +75,7 @@ TEST(test_find_present) {
 
 TEST(test_find_absent) {
   Symtab st = {0};
+  symtab_init(&st);
   symtab_intern(&st, "x");
   assert(symtab_find(&st, "z") == 0);
   symtab_free(&st);
@@ -77,12 +83,14 @@ TEST(test_find_absent) {
 
 TEST(test_find_empty) {
   Symtab st = {0};
+  symtab_init(&st);
   assert(symtab_find(&st, "anything") == 0);
   symtab_free(&st);
 }
 
 TEST(test_intern_empty_string) {
   Symtab st = {0};
+  symtab_init(&st);
   int32_t id = symtab_intern(&st, "");
   assert(id == 1);
   assert(strcmp(symtab_get(&st, 1), "") == 0);
@@ -93,6 +101,7 @@ TEST(test_intern_empty_string) {
 
 TEST(test_prefixed_keys) {
   Symtab st = {0};
+  symtab_init(&st);
   int32_t t1 = symtab_intern(&st, "tok:NUM");
   int32_t t2 = symtab_intern(&st, "scope:main");
   int32_t t3 = symtab_intern(&st, "tok:IDENT");
@@ -107,6 +116,7 @@ TEST(test_prefixed_keys) {
 
 TEST(test_many_entries) {
   Symtab st = {0};
+  symtab_init(&st);
   char buf[32];
   for (int32_t i = 0; i < 200; i++) {
     snprintf(buf, sizeof(buf), "sym_%d", i);
@@ -124,6 +134,7 @@ TEST(test_many_entries) {
 
 TEST(test_get_stable_after_growth) {
   Symtab st = {0};
+  symtab_init(&st);
   symtab_intern(&st, "first");
   for (int32_t i = 0; i < 100; i++) {
     char buf[32];
@@ -136,6 +147,7 @@ TEST(test_get_stable_after_growth) {
 
 TEST(test_double_free) {
   Symtab st = {0};
+  symtab_init(&st);
   symtab_intern(&st, "x");
   symtab_free(&st);
   symtab_free(&st);

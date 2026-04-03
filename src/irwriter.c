@@ -1,5 +1,6 @@
 #include "irwriter.h"
 #include "darray.h"
+#include "symtab.h"
 #include <stdarg.h>
 #include <stdlib.h>
 #include <string.h>
@@ -30,7 +31,7 @@ struct IrWriter {
   const char* target_triple;
   const char* source_file;
   const char* directory;
-  const char** decls;
+  Symtab decls;
 };
 
 static void _validate_name(const char* s, const char* label) {
@@ -68,6 +69,7 @@ IrWriter* irwriter_new(FILE* out, const char* target_triple) {
   IrWriter* w = calloc(1, sizeof(IrWriter));
   w->out = out;
   w->target_triple = target_triple;
+  symtab_init(&w->decls);
   w->dbg_line = -1;
   w->imms = darray_new(1, 1);
   w->imms[0] = '\0';
@@ -75,10 +77,7 @@ IrWriter* irwriter_new(FILE* out, const char* target_triple) {
 }
 
 void irwriter_del(IrWriter* w) {
-  for (int i = 0; i < (int)darray_size(w->decls); i++) {
-    free((void*)w->decls[i]);
-  }
-  darray_del(w->decls);
+  symtab_free(&w->decls);
   darray_del(w->locs);
   darray_del(w->imms);
   free(w->entry_prologue);
@@ -363,15 +362,10 @@ IrVal irwriter_extractvalue(IrWriter* w, const char* agg_ty, IrVal agg, int idx)
 }
 
 void irwriter_declare(IrWriter* w, const char* ret_type, const char* name, const char* arg_types) {
-  for (int i = 0; i < (int)darray_size(w->decls); i++) {
-    if (strcmp(w->decls[i], name) == 0) {
-      return;
-    }
+  if (symtab_find(&w->decls, name)) {
+    return;
   }
-  if (!w->decls) {
-    w->decls = darray_new(sizeof(const char*), 0);
-  }
-  darray_push(w->decls, strdup(name));
+  symtab_intern(&w->decls, name);
   fprintf(w->out, "declare %s @%s(%s)\n\n", ret_type, name, arg_types);
 }
 

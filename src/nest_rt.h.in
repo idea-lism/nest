@@ -1,14 +1,16 @@
 #pragma once
 
-#include "ustr.h"
+#include "darray.h"
 #include "token_tree.h"
+#include "ustr.h"
 
 #ifdef NEST_RT_IMPLEMENTATION
 
-#include "ustr_intern.h"
+#include "darray.c"
+#include "token_tree.c"
 #include "ustr.c"
 #include "ustr_avx.c"
+#include "ustr_intern.h"
 #include "ustr_neon.c"
-#include "token_tree.c"
 
 #endif

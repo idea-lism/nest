@@ -8,6 +8,8 @@
 #include <stdlib.h>
 #include <string.h>
 
+#include "../build/nest_rt.inc"
+
 // --- Action registry ---
 
 typedef struct {
@@ -77,10 +79,8 @@ static void _free_action_registry(ActionRegistry* reg) {
 typedef struct {
   char* name;
   int32_t scope_id;
-  VpaUnit* body;  // NOT owned
-  ReIr leader_re; // NOT owned
-  int32_t leader_hook;
-  char* leader_user_hook;
+  VpaUnit* body;       // NOT owned
+  VpaUnit* rule_units; // NOT owned, full rule units (leader regex + hooks accessible here)
 } ScopeInfo;
 
 // --- DFA pattern ---
@@ -148,23 +148,6 @@ static bool _is_first_user_hook(ActionRegistry* reg, int32_t idx) {
 static void _make_user_hook_symbol(const char* user_hook, char* out, size_t out_sz) {
   const char* hook_name = user_hook[0] == '.' ? user_hook + 1 : user_hook;
   snprintf(out, out_sz, "vpa_hook_%s", hook_name);
-}
-
-static bool _is_first_parse_scope(ActionRegistry* reg, int32_t idx) {
-  if (!_has_parse_scope(&reg->entries[idx])) {
-    return false;
-  }
-  for (int32_t i = 0; i < idx; i++) {
-    if (_has_parse_scope(&reg->entries[i]) &&
-        strcmp(reg->entries[i].parse_scope_name, reg->entries[idx].parse_scope_name) == 0) {
-      return false;
-    }
-  }
-  return true;
-}
-
-static void _make_parse_scope_symbol(const char* scope_name, char* out, size_t out_sz) {
-  snprintf(out, out_sz, "vpa_parse_%s", scope_name);
 }
 
 // --- Resolve scope body into DFA/state patterns ---
@@ -301,235 +284,12 @@ static void _gen_scope_dfa(ScopeInfo* scope, DfaPattern* patterns, IrWriter* w) 
   aut_del(aut);
 }
 
-static void _gen_parse_scope_bridges_ir(ActionRegistry* reg, IrWriter* w) {
-  bool has_parse = false;
-  for (int32_t i = 0; i < (int32_t)darray_size(reg->entries); i++) {
-    if (_is_first_parse_scope(reg, i)) {
-      has_parse = true;
-      break;
-    }
-  }
-  if (!has_parse) {
-    return;
-  }
-
-  irwriter_declare(w, "i32", "vpa_rt_current_chunk_len", "ptr");
-  irwriter_declare(w, "void", "vpa_rt_begin_parse", "ptr");
-  irwriter_declare(w, "void", "vpa_rt_end_parse", "ptr");
-  irwriter_declare(w, "ptr", "malloc", "i64");
-  irwriter_declare(w, "void", "free", "ptr");
-  irwriter_raw(w, "declare void @llvm.memset.p0.i64(ptr, i8, i64, i1)\n\n");
-
-  for (int32_t i = 0; i < (int32_t)darray_size(reg->entries); i++) {
-    if (!_is_first_parse_scope(reg, i)) {
-      continue;
-    }
-
-    const char* scope_name = reg->entries[i].parse_scope_name;
-
-    irwriter_rawf(w, "define internal void @vpa_parse_%s(ptr %%tt) {\n", scope_name);
-    irwriter_raw(w, "entry:\n");
-    irwriter_raw(w, "  %ncols0 = call i32 @vpa_rt_current_chunk_len(ptr %tt)\n");
-    irwriter_raw(w, "  %ncols1 = add i32 %ncols0, 1\n");
-    irwriter_raw(w, "  %ncols64 = sext i32 %ncols1 to i64\n");
-    irwriter_rawf(w, "  %%elt_end = getelementptr %%Col.%s, ptr null, i32 1\n", scope_name);
-    irwriter_raw(w, "  %elt_size = ptrtoint ptr %elt_end to i64\n");
-    irwriter_raw(w, "  %table_size = mul i64 %ncols64, %elt_size\n");
-    irwriter_raw(w, "  call void @vpa_rt_begin_parse(ptr %tt)\n");
-    irwriter_raw(w, "  %table = call ptr @malloc(i64 %table_size)\n");
-    irwriter_raw(w, "  %table_ok = icmp ne ptr %table, null\n");
-    irwriter_raw(w, "  br i1 %table_ok, label %Lparse_init, label %Lparse_done\n\n");
-    irwriter_raw(w, "Lparse_init:\n");
-    irwriter_raw(w, "  call void @llvm.memset.p0.i64(ptr %table, i8 -1, i64 %table_size, i1 false)\n");
-    irwriter_rawf(w, "  %%parse_len = call i32 @parse_%s(ptr %%table, i32 0)\n", scope_name);
-    irwriter_raw(w, "  call void @free(ptr %table)\n");
-    irwriter_raw(w, "  br label %Lparse_done\n\n");
-    irwriter_raw(w, "Lparse_done:\n");
-    irwriter_raw(w, "  call void @vpa_rt_end_parse(ptr %tt)\n");
-    irwriter_raw(w, "  ret void\n");
-    irwriter_raw(w, "}\n\n");
-  }
-}
-
 // --- Header generation ---
 
-static void _gen_runtime_types(HeaderWriter* hw) {
+static void _gen_runtime(HeaderWriter* hw) {
+  hw_raw(hw, (const char*)NEST_RT);
   hw_blank(hw);
-  hw_raw(hw, "#include <stdint.h>\n");
-  hw_raw(hw, "#include <stdlib.h>\n");
-  hw_raw(hw, "#include <string.h>\n");
-  hw_blank(hw);
-
-  hw_comment(hw, "Token (16 bytes)");
-  hw_struct_begin(hw, "VpaToken");
-  hw_field(hw, "int32_t", "tok_id");
-  hw_field(hw, "int32_t", "cp_start");
-  hw_field(hw, "int32_t", "cp_size");
-  hw_field(hw, "int32_t", "chunk_id");
-  hw_struct_end(hw);
-  hw_raw(hw, " VpaToken;\n\n");
-
-  hw_comment(hw, "TokenChunk");
-  hw_struct_begin(hw, "TokenChunk");
-  hw_field(hw, "int32_t", "chunk_id");
-  hw_field(hw, "int32_t", "scope_id");
-  hw_field(hw, "int32_t", "count");
-  hw_field(hw, "int32_t", "capacity");
-  hw_field(hw, "VpaToken*", "tokens");
-  hw_struct_end(hw);
-  hw_raw(hw, " TokenChunk;\n\n");
-
-  hw_comment(hw, "ChunkTable");
-  hw_struct_begin(hw, "ChunkTable");
-  hw_field(hw, "int32_t", "count");
-  hw_field(hw, "int32_t", "capacity");
-  hw_field(hw, "TokenChunk*", "chunks");
-  hw_struct_end(hw);
-  hw_raw(hw, " ChunkTable;\n\n");
-
-  hw_comment(hw, "TokenTree");
-  hw_struct_begin(hw, "TokenTree");
-  hw_field(hw, "uint64_t*", "newline_map");
-  hw_field(hw, "uint64_t*", "token_end_map");
-  hw_field(hw, "int32_t", "newline_map_size");
-  hw_field(hw, "int32_t", "token_end_map_size");
-  hw_field(hw, "ChunkTable", "chunk_table");
-  hw_field(hw, "TokenChunk*", "root");
-  hw_field(hw, "TokenChunk*", "current");
-  hw_field(hw, "TokenChunk*", "parse_chunk");
-  hw_field(hw, "int32_t", "scope_stack[64]");
-  hw_field(hw, "int32_t", "sp");
-  hw_struct_end(hw);
-  hw_raw(hw, " TokenTree;\n\n");
-}
-
-static void _gen_runtime_helpers(HeaderWriter* hw) {
-  hw_blank(hw);
-  hw_comment(hw, "TokenTree helpers");
-
-  hw_raw(hw, "static inline TokenChunk* tt_alloc_chunk(TokenTree* tt, int32_t scope_id) {\n"
-             "  ChunkTable* ct = &tt->chunk_table;\n"
-             "  if (ct->count >= ct->capacity) {\n"
-             "    ct->capacity = ct->capacity ? ct->capacity * 2 : 16;\n"
-             "    ct->chunks = (TokenChunk*)realloc(ct->chunks, sizeof(TokenChunk) * ct->capacity);\n"
-             "  }\n"
-             "  TokenChunk* c = &ct->chunks[ct->count];\n"
-             "  c->chunk_id = ct->count++;\n"
-             "  c->scope_id = scope_id;\n"
-             "  c->count = 0;\n"
-             "  c->capacity = 32;\n"
-             "  c->tokens = (VpaToken*)malloc(sizeof(VpaToken) * 32);\n"
-             "  return c;\n"
-             "}\n\n");
-
-  hw_raw(hw, "static inline void tt_add_token(TokenChunk* chunk, int32_t tok_id,\n"
-             "                                int32_t cp_start, int32_t cp_size) {\n"
-             "  if (chunk->count >= chunk->capacity) {\n"
-             "    chunk->capacity *= 2;\n"
-             "    chunk->tokens = (VpaToken*)realloc(chunk->tokens, sizeof(VpaToken) * chunk->capacity);\n"
-             "  }\n"
-             "  chunk->tokens[chunk->count++] = (VpaToken){tok_id, cp_start, cp_size, -1};\n"
-             "}\n\n");
-
-  hw_raw(hw, "static inline TokenTree* tt_new(int32_t cp_count) {\n"
-             "  TokenTree* tt = (TokenTree*)calloc(1, sizeof(TokenTree));\n"
-             "  int32_t map_words = (cp_count + 63) / 64;\n"
-             "  tt->newline_map_size = map_words;\n"
-             "  tt->token_end_map_size = map_words;\n"
-             "  tt->newline_map = (uint64_t*)calloc(map_words, sizeof(uint64_t));\n"
-             "  tt->token_end_map = (uint64_t*)calloc(map_words, sizeof(uint64_t));\n"
-             "  tt->root = tt_alloc_chunk(tt, 0);\n"
-             "  tt->current = tt->root;\n"
-             "  tt->parse_chunk = NULL;\n"
-             "  tt->sp = 0;\n"
-             "  tt->scope_stack[0] = 0;\n"
-             "  return tt;\n"
-             "}\n\n");
-
-  hw_raw(hw, "static inline void tt_del(TokenTree* tt) {\n"
-             "  if (!tt) return;\n"
-             "  for (int32_t i = 0; i < tt->chunk_table.count; i++) {\n"
-             "    free(tt->chunk_table.chunks[i].tokens);\n"
-             "  }\n"
-             "  free(tt->chunk_table.chunks);\n"
-             "  free(tt->newline_map);\n"
-             "  free(tt->token_end_map);\n"
-             "  free(tt);\n"
-             "}\n\n");
-
-  hw_raw(hw, "static inline void tt_mark_newline(TokenTree* tt, int32_t cp_off) {\n"
-             "  tt->newline_map[cp_off / 64] |= (uint64_t)1 << (cp_off % 64);\n"
-             "}\n\n");
-
-  hw_raw(hw, "static inline void tt_mark_token_end(TokenTree* tt, int32_t cp_off) {\n"
-             "  tt->token_end_map[cp_off / 64] |= (uint64_t)1 << (cp_off % 64);\n"
-             "}\n\n");
-
-  hw_comment(hw, "Runtime hooks");
   hw_raw(hw, "int32_t vpa_rt_read_cp(void* src, int32_t cp_off);\n");
-  hw_raw(hw, "\n");
-  hw_raw(hw, "#ifndef VPA_IMPLEMENTATION\n");
-  hw_raw(hw, "void vpa_rt_emit_token(void* tt, int32_t tok_id, int32_t cp_start, int32_t cp_size);\n");
-  hw_raw(hw, "void vpa_rt_push_scope(void* tt, int32_t scope_id);\n");
-  hw_raw(hw, "void vpa_rt_pop_scope(void* tt);\n");
-  hw_raw(hw, "int32_t vpa_rt_get_scope(void* tt);\n");
-  hw_raw(hw, "int32_t vpa_rt_current_chunk_len(void* tt);\n");
-  hw_raw(hw, "void vpa_rt_begin_parse(void* tt);\n");
-  hw_raw(hw, "void vpa_rt_end_parse(void* tt);\n");
-  hw_raw(hw, "int32_t match_tok(int32_t tok_id, int32_t col);\n");
-  hw_raw(hw, "#else\n");
-  hw_raw(hw, "static TokenTree* _vpa_parse_tt = NULL;\n\n");
-  hw_raw(hw, "void vpa_rt_emit_token(void* tt, int32_t tok_id, int32_t cp_start, int32_t cp_size) {\n"
-             "  TokenTree* tree = (TokenTree*)tt;\n"
-             "  if (!tree || !tree->current) return;\n"
-             "  tt_add_token(tree->current, tok_id, cp_start, cp_size);\n"
-             "  if (cp_size > 0) {\n"
-             "    tt_mark_token_end(tree, cp_start + cp_size - 1);\n"
-             "  }\n"
-             "}\n\n");
-  hw_raw(hw, "void vpa_rt_push_scope(void* tt, int32_t scope_id) {\n"
-             "  TokenTree* tree = (TokenTree*)tt;\n"
-             "  if (!tree || tree->sp >= 63) return;\n"
-             "  TokenChunk* child = tt_alloc_chunk(tree, scope_id);\n"
-             "  tree->scope_stack[++tree->sp] = child->chunk_id;\n"
-             "  tree->current = child;\n"
-             "}\n\n");
-  hw_raw(hw, "void vpa_rt_pop_scope(void* tt) {\n"
-             "  TokenTree* tree = (TokenTree*)tt;\n"
-             "  if (!tree || tree->sp <= 0) return;\n"
-             "  tree->sp--;\n"
-             "  tree->current = &tree->chunk_table.chunks[tree->scope_stack[tree->sp]];\n"
-             "}\n\n");
-  hw_raw(hw, "int32_t vpa_rt_get_scope(void* tt) {\n"
-             "  TokenTree* tree = (TokenTree*)tt;\n"
-             "  return (tree && tree->current) ? tree->current->scope_id : 0;\n"
-             "}\n\n");
-  hw_raw(hw, "int32_t vpa_rt_current_chunk_len(void* tt) {\n"
-             "  TokenTree* tree = (TokenTree*)tt;\n"
-             "  return (tree && tree->current) ? tree->current->count : 0;\n"
-             "}\n\n");
-  hw_raw(hw, "void vpa_rt_begin_parse(void* tt) {\n"
-             "  TokenTree* tree = (TokenTree*)tt;\n"
-             "  _vpa_parse_tt = tree;\n"
-             "  if (tree) {\n"
-             "    tree->parse_chunk = tree->current;\n"
-             "  }\n"
-             "}\n\n");
-  hw_raw(hw, "void vpa_rt_end_parse(void* tt) {\n"
-             "  TokenTree* tree = (TokenTree*)tt;\n"
-             "  if (tree) {\n"
-             "    tree->parse_chunk = NULL;\n"
-             "  }\n"
-             "  if (_vpa_parse_tt == tree) {\n"
-             "    _vpa_parse_tt = NULL;\n"
-             "  }\n"
-             "}\n\n");
-  hw_raw(hw, "int32_t match_tok(int32_t tok_id, int32_t col) {\n"
-             "  if (!_vpa_parse_tt || !_vpa_parse_tt->parse_chunk) return -1;\n"
-             "  if (col < 0 || col >= _vpa_parse_tt->parse_chunk->count) return -1;\n"
-             "  return _vpa_parse_tt->parse_chunk->tokens[col].tok_id == tok_id ? 1 : -1;\n"
-             "}\n");
-  hw_raw(hw, "#endif\n\n");
 }
 
 static void _gen_user_hook_header(ActionRegistry* reg, HeaderWriter* hw) {
@@ -616,9 +376,26 @@ static void _gen_action_table_header(ActionRegistry* reg, ScopeInfo* scopes, Hea
 // switch on action_id -> per-action label blocks with micro-ops
 
 static void _gen_action_dispatch_ir(ActionRegistry* reg, IrWriter* w) {
-  irwriter_declare(w, "void", "vpa_rt_emit_token", "ptr, i32, i32, i32");
-  irwriter_declare(w, "void", "vpa_rt_push_scope", "ptr, i32");
-  irwriter_declare(w, "void", "vpa_rt_pop_scope", "ptr");
+  irwriter_declare(w, "void", "tc_add", "ptr, i32, i32, i32, i32");
+  irwriter_declare(w, "ptr", "tc_push", "ptr, i32");
+  irwriter_declare(w, "ptr", "tc_pop", "ptr");
+
+  bool has_parse = false;
+  for (int32_t i = 0; i < (int32_t)darray_size(reg->entries); i++) {
+    if (_has_parse_scope(&reg->entries[i])) {
+      has_parse = true;
+      break;
+    }
+  }
+  if (has_parse) {
+    irwriter_declare(w, "i32", "tc_size", "ptr");
+    irwriter_declare(w, "void", "tc_parse_begin", "ptr");
+    irwriter_declare(w, "void", "tc_parse_end", "");
+    irwriter_declare(w, "ptr", "malloc", "i64");
+    irwriter_declare(w, "void", "free", "ptr");
+    irwriter_raw(w, "declare void @llvm.memset.p0.i64(ptr, i8, i64, i1)\n\n");
+  }
+
   for (int32_t i = 0; i < (int32_t)darray_size(reg->entries); i++) {
     if (!_is_first_user_hook(reg, i)) {
       continue;
@@ -668,7 +445,8 @@ static void _gen_action_dispatch_ir(ActionRegistry* reg, IrWriter* w) {
 
   for (int32_t i = 0; i < n; i++) {
     ActionEntry* e = &reg->entries[i];
-    irwriter_rawf(w, "Lact_%d:\n", i + 1);
+    int32_t aid = i + 1;
+    irwriter_rawf(w, "Lact_%d:\n", aid);
     if (_has_user_hook(e)) {
       int32_t sym_len = snprintf(NULL, 0, "vpa_hook_%s", e->user_hook + 1) + 1;
       char symbol[sym_len];
@@ -676,19 +454,29 @@ static void _gen_action_dispatch_ir(ActionRegistry* reg, IrWriter* w) {
       irwriter_rawf(w, "  call void @%s(ptr %%tt, i32 %%cp_start, i32 %%cp_size)\n", symbol);
     }
     if (e->tok_id > 0) {
-      irwriter_rawf(w, "  call void @vpa_rt_emit_token(ptr %%tt, i32 %d, i32 %%cp_start, i32 %%cp_size)\n", e->tok_id);
+      irwriter_rawf(w, "  call void @tc_add(ptr %%tt, i32 %d, i32 %%cp_start, i32 %%cp_size, i32 -1)\n", e->tok_id);
     }
     if (e->push_scope_id >= 0) {
-      irwriter_rawf(w, "  call void @vpa_rt_push_scope(ptr %%tt, i32 %d)\n", e->push_scope_id);
+      irwriter_rawf(w, "  call ptr @tc_push(ptr %%tt, i32 %d)\n", e->push_scope_id);
     }
     if (e->pop_scope) {
       if (_has_parse_scope(e)) {
-        int32_t sym_len = snprintf(NULL, 0, "vpa_parse_%s", e->parse_scope_name) + 1;
-        char symbol[sym_len];
-        _make_parse_scope_symbol(e->parse_scope_name, symbol, sizeof(symbol));
-        irwriter_rawf(w, "  call void @%s(ptr %%tt)\n", symbol);
+        irwriter_rawf(w, "  %%ncols0_%d = call i32 @tc_size(ptr %%tt)\n", aid);
+        irwriter_rawf(w, "  %%ncols1_%d = add i32 %%ncols0_%d, 1\n", aid, aid);
+        irwriter_rawf(w, "  %%ncols64_%d = sext i32 %%ncols1_%d to i64\n", aid, aid);
+        irwriter_rawf(w, "  %%elt_end_%d = getelementptr %%Col.%s, ptr null, i32 1\n", aid, e->parse_scope_name);
+        irwriter_rawf(w, "  %%elt_size_%d = ptrtoint ptr %%elt_end_%d to i64\n", aid, aid);
+        irwriter_rawf(w, "  %%table_size_%d = mul i64 %%ncols64_%d, %%elt_size_%d\n", aid, aid, aid);
+        irwriter_rawf(w, "  call void @tc_parse_begin(ptr %%tt)\n");
+        irwriter_rawf(w, "  %%table_%d = call ptr @malloc(i64 %%table_size_%d)\n", aid, aid);
+        irwriter_rawf(w, "  call void @llvm.memset.p0.i64(ptr %%table_%d, i8 -1, i64 %%table_size_%d, i1 false)\n", aid,
+                      aid);
+        irwriter_rawf(w, "  %%parse_len_%d = call i32 @parse_%s(ptr %%table_%d, i32 0)\n", aid, e->parse_scope_name,
+                      aid);
+        irwriter_rawf(w, "  call void @free(ptr %%table_%d)\n", aid);
+        irwriter_raw(w, "  call void @tc_parse_end()\n");
       }
-      irwriter_raw(w, "  call void @vpa_rt_pop_scope(ptr %tt)\n");
+      irwriter_raw(w, "  call ptr @tc_pop(ptr %tt)\n");
     }
     irwriter_raw(w, "  ret void\n");
   }
@@ -705,7 +493,7 @@ static void _gen_action_dispatch_ir(ActionRegistry* reg, IrWriter* w) {
 
 static void _gen_lex_loop_ir(ScopeInfo* scopes, IrWriter* w) {
   irwriter_declare(w, "i32", "vpa_rt_read_cp", "ptr, i32");
-  irwriter_declare(w, "i32", "vpa_rt_get_scope", "ptr");
+  irwriter_declare(w, "i32", "tc_scope", "ptr");
 
   int32_t n = (int32_t)darray_size(scopes);
 
@@ -735,7 +523,7 @@ static void _gen_lex_loop_ir(ScopeInfo* scopes, IrWriter* w) {
   irwriter_raw(w, "Lfeed:\n");
   irwriter_raw(w, "  %off.1 = load i32, ptr %cp_off\n");
   irwriter_raw(w, "  %cp = call i32 @vpa_rt_read_cp(ptr %src, i32 %off.1)\n");
-  irwriter_raw(w, "  %scope = call i32 @vpa_rt_get_scope(ptr %tt)\n");
+  irwriter_raw(w, "  %scope = call i32 @tc_scope(ptr %tt)\n");
   irwriter_raw(w, "  %st = load i32, ptr %state\n");
   irwriter_raw(w, "  %st64 = sext i32 %st to i64\n");
   irwriter_raw(w, "  %cp64 = sext i32 %cp to i64\n");
@@ -839,27 +627,21 @@ static ScopeInfo* _collect_scopes(VpaRule* rules) {
     }
 
     if (rule->is_scope) {
-      // Bare braced scope: name = { body }
       ScopeInfo s = {
           .name = strdup(rule->name),
           .scope_id = (int32_t)darray_size(scopes),
           .body = rule->units,
-          .leader_re = NULL,
-          .leader_hook = 0,
-          .leader_user_hook = NULL,
+          .rule_units = rule->units,
       };
       darray_push(scopes, s);
     } else {
-      // Check if any unit is VPA_SCOPE (leader + body)
       VpaUnit* su = _find_scope_unit(rule);
       if (su) {
         ScopeInfo s = {
             .name = strdup(rule->name),
             .scope_id = (int32_t)darray_size(scopes),
             .body = su->children,
-            .leader_re = su->re,
-            .leader_hook = su->hook,
-            .leader_user_hook = su->user_hook ? strdup(su->user_hook) : NULL,
+            .rule_units = rule->units,
         };
         darray_push(scopes, s);
       }
@@ -894,8 +676,7 @@ void vpa_gen(VpaGenInput* input, HeaderWriter* hw, IrWriter* w) {
 
   ScopeInfo* scopes = _collect_scopes(rules);
 
-  _gen_runtime_types(hw);
-  _gen_runtime_helpers(hw);
+  _gen_runtime(hw);
   _gen_scope_ids(scopes, hw);
 
   for (int32_t i = 0; i < (int32_t)darray_size(scopes); i++) {
@@ -907,7 +688,6 @@ void vpa_gen(VpaGenInput* input, HeaderWriter* hw, IrWriter* w) {
     darray_del(patterns);
   }
 
-  _gen_parse_scope_bridges_ir(&reg, w);
   _gen_action_dispatch_ir(&reg, w);
   _gen_lex_loop_ir(scopes, w);
 
@@ -918,7 +698,6 @@ void vpa_gen(VpaGenInput* input, HeaderWriter* hw, IrWriter* w) {
 
   for (int32_t i = 0; i < (int32_t)darray_size(scopes); i++) {
     free(scopes[i].name);
-    free(scopes[i].leader_user_hook);
   }
   darray_del(scopes);
   _free_action_registry(&reg);

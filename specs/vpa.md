@@ -36,7 +36,39 @@ Note that the automata's `action_id` is not token_id or scope id. each action_id
 
 generated header defines interface to interact with the LLVM-IR defined parser.
 
-- user must define `.` hooks for lexing
+Assume there are 2 hooks `.foo` and `.bar` in lexer definition, generated header should have this interface
+
+```c
+typedef void (*LexHook)(void* userdata, Token* token, const char* token_str_start);
+
+struct LexerContext {
+  void* userdata;
+  LexHook foo;
+  LexHook bar;
+};
+
+void lex_main(LexerContext l);
+```
+
+If a user hook emits some token or some action, it should be defined like this:
+
+```c
+// %effect .my_foo_hook = @bax | .fail
+void my_foo_hook(void* userdata, Token* token, const char* token_str_start) {
+  ...
+  if (...) {
+    lex_emit_token(TOKEN_BAZ);
+  } else {
+    lex_invoke_action(ACTION_FAIL);
+  }
+}
+```
+
+### Interaction with peg parsers
+
+For each scope, PEG parsers generates a `parse_{scope_name}` function, the visibly pushdown machine just invoke the parsing function when a scope ends.
+
+Since the VPA and the PEG share a same LLVM-IR writer, in PEG the parsing functions should be defined as internal, in VPA we can call them directly.
 
 ### Header generating
 

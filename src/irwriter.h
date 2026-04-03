@@ -42,6 +42,7 @@ void irwriter_ret_void(IrWriter* w);
 IrVal irwriter_insertvalue(IrWriter* w, const char* agg_ty, IrVal agg, const char* elem_ty, IrVal elem, int idx);
 IrVal irwriter_extractvalue(IrWriter* w, const char* agg_ty, IrVal agg, int idx);
 
+// declare function, handles repeated decl
 void irwriter_declare(IrWriter* w, const char* ret_type, const char* name, const char* arg_types);
 
 void irwriter_call_void_fmtf(IrWriter* w, const char* name, const char* args_fmt, ...)

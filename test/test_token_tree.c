@@ -35,8 +35,7 @@ TEST(test_tree_new) {
 TEST(test_add_single) {
   char* s = ustr_new(3, "abc");
   TokenTree* tree = tc_tree_new(s);
-  Token t = {.tok_id = 1, .cp_start = 0, .cp_size = 3, .chunk_id = -1};
-  tc_add(tree->root, t);
+  tc_add(tree, 1, 0, 3, -1);
   assert(darray_size(tree->root->tokens) == 1);
   assert(tree->root->tokens[0].tok_id == 1);
   assert(tree->root->tokens[0].cp_start == 0);
@@ -50,8 +49,7 @@ TEST(test_add_multiple) {
   char* s = ustr_new(6, "abcdef");
   TokenTree* tree = tc_tree_new(s);
   for (int i = 0; i < 5; i++) {
-    Token t = {.tok_id = i, .cp_start = i, .cp_size = 1, .chunk_id = -1};
-    tc_add(tree->root, t);
+    tc_add(tree, i, i, 1, -1);
   }
   assert(darray_size(tree->root->tokens) == 5);
   for (int i = 0; i < 5; i++) {
@@ -67,7 +65,7 @@ TEST(test_add_multiple) {
 TEST(test_push) {
   char* s = ustr_new(3, "abc");
   TokenTree* tree = tc_tree_new(s);
-  TokenChunk* child = tc_push(tree);
+  TokenChunk* child = tc_push(tree, 0);
   assert(child != NULL);
   assert(tree->current == child);
   assert(tree->current != tree->root);
@@ -80,9 +78,9 @@ TEST(test_push) {
 TEST(test_push_nested) {
   char* s = ustr_new(3, "abc");
   TokenTree* tree = tc_tree_new(s);
-  tc_push(tree);
+  tc_push(tree, 0);
   assert(tree->current->parent_id == 0);
-  tc_push(tree);
+  tc_push(tree, 0);
   assert(tree->current->parent_id == 1);
   assert(darray_size(tree->table) == 3);
   // grandchild -> child -> root
@@ -97,7 +95,7 @@ TEST(test_push_nested) {
 TEST(test_pop) {
   char* s = ustr_new(3, "abc");
   TokenTree* tree = tc_tree_new(s);
-  tc_push(tree);
+  tc_push(tree, 0);
   assert(tree->current != tree->root);
   TokenChunk* popped = tc_pop(tree);
   assert(popped == tree->current);
@@ -123,15 +121,15 @@ TEST(test_push_pop_sequence) {
   TokenTree* tree = tc_tree_new(s);
 
   // add token to root
-  tc_add(tree->current, (Token){.tok_id = 10, .cp_start = 0, .cp_size = 1, .chunk_id = -1});
+  tc_add(tree, 10, 0, 1, -1);
 
   // push child, add token there
-  tc_push(tree);
-  tc_add(tree->current, (Token){.tok_id = 20, .cp_start = 1, .cp_size = 2, .chunk_id = -1});
+  tc_push(tree, 0);
+  tc_add(tree, 20, 1, 2, -1);
 
   // pop back to root, add another token
   tc_pop(tree);
-  tc_add(tree->current, (Token){.tok_id = 11, .cp_start = 3, .cp_size = 1, .chunk_id = -1});
+  tc_add(tree, 11, 3, 1, -1);
 
   // root has 2 tokens, child has 1
   assert(darray_size(tree->table[0].tokens) == 2);
@@ -219,16 +217,16 @@ TEST(test_tree_structure) {
   TokenTree* tree = tc_tree_new(s);
 
   // root: add a token
-  tc_add(tree->current, (Token){.tok_id = 1, .cp_start = 0, .cp_size = 2, .chunk_id = -1});
+  tc_add(tree, 1, 0, 2, -1);
 
   // push child1, add token, pop
-  tc_push(tree);
-  tc_add(tree->current, (Token){.tok_id = 2, .cp_start = 2, .cp_size = 3, .chunk_id = -1});
+  tc_push(tree, 0);
+  tc_add(tree, 2, 2, 3, -1);
   tc_pop(tree);
 
   // push child2, add token, pop
-  tc_push(tree);
-  tc_add(tree->current, (Token){.tok_id = 3, .cp_start = 5, .cp_size = 5, .chunk_id = -1});
+  tc_push(tree, 0);
+  tc_add(tree, 3, 5, 5, -1);
   tc_pop(tree);
 
   assert(darray_size(tree->table) == 3);
