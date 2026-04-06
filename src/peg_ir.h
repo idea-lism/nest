@@ -3,15 +3,15 @@
 
 #include "irwriter.h"
 #include "peg.h"
-#include "symtab.h"
 
 #include <stdint.h>
 
 // --- Code gen: gen(pattern, col, on_fail) dispatcher ---
-// Generates IR for an entire rule body. For branch rules, stores the slot indicator (scoped_rule_id
-// or packed non-rule marker) via slot_val_ptr. For non-branch rules, stores match_len there.
+// Generates IR for an entire rule body from a ScopedRule graph.
+// For branch rules, stores the slot indicator via slot_val_ptr.
+// For non-branch rules, stores match_len there.
 // Always returns match_len.
-IrVal peg_ir_gen_rule_body(IrWriter* w, PegUnit* seq, Symtab* tokens, const char* col_type, int32_t* branch_ids,
+IrVal peg_ir_gen_rule_body(IrWriter* w, ScopedRule* rules, int32_t root_id, const char* col_type, int32_t* branch_ids,
                            int32_t n_branch_ids, int32_t fail_label, IrVal slot_val_ptr);
 
 // --- Memoize table ops ---

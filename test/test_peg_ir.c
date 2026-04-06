@@ -2,7 +2,6 @@
 #include "../src/irwriter.h"
 #include "../src/peg.h"
 #include "../src/peg_ir.h"
-#include "../src/symtab.h"
 #include "compat.h"
 
 #include <assert.h>
@@ -25,9 +24,7 @@ static char* _capture_ir(void (*emit)(IrWriter*)) {
   assert(f);
   IrWriter* w = irwriter_new(f, NULL);
   irwriter_start(w, "test_peg_ir.c", ".");
-
   emit(w);
-
   irwriter_end(w);
   irwriter_del(w);
   compat_close_memstream(f, &buf, &buf_sz);
@@ -60,8 +57,6 @@ TEST(test_declare_externs) {
 
 // --- peg_ir_memo_get / peg_ir_memo_set ---
 
-static IrWriter* _w_for_memo;
-
 static void _emit_memo_ops(IrWriter* w) {
   const char* arg_types[] = {"ptr", "i32"};
   const char* arg_names[] = {"table", "col"};
@@ -73,7 +68,6 @@ static void _emit_memo_ops(IrWriter* w) {
 
   irwriter_ret(w, "i32", v);
   irwriter_define_end(w);
-  (void)_w_for_memo;
 }
 
 TEST(test_memo_ops) {
@@ -108,7 +102,7 @@ TEST(test_bit_ops) {
   free(ir);
 }
 
-// --- peg_ir_gen_rule_body (simple leaf) ---
+// --- peg_ir_gen_rule_body (simple leaf: SEQ containing a TOK) ---
 
 static void _emit_rule_body_leaf(IrWriter* w) {
   peg_ir_emit_bt_defs(w);
@@ -121,26 +115,21 @@ static void _emit_rule_body_leaf(IrWriter* w) {
 
   int32_t fail_label = irwriter_label(w);
 
-  PegUnit seq = {0};
-  seq.kind = PEG_SEQ;
-  seq.children = darray_new(sizeof(PegUnit), 0);
+  // Build ScopedRule graph: rules[0] = TOK("NUM" -> tok_id=0)
+  // Since it's a single-child seq, breakdown would just return the TOK.
+  ScopedRule* rules = darray_new(sizeof(ScopedRule), 0);
+  ScopedRule tok_rule = {.name = "NUM", .kind = SCOPED_RULE_KIND_TOK, .as.tok = 0};
+  darray_push(rules, tok_rule);
 
-  PegUnit tok = {.kind = PEG_TOK, .name = strdup("NUM")};
-  darray_push(seq.children, tok);
-
-  Symtab tokens = {0};
-  symtab_init(&tokens, 0);
   IrVal slot_val_ptr = irwriter_alloca(w, "i32");
-  IrVal result = peg_ir_gen_rule_body(w, &seq, &tokens, "%Col.test", NULL, 0, fail_label, slot_val_ptr);
+  IrVal result = peg_ir_gen_rule_body(w, rules, 0, "%Col.test", NULL, 0, fail_label, slot_val_ptr);
   irwriter_ret(w, "i32", result);
 
   irwriter_bb_at(w, fail_label);
   irwriter_ret(w, "i32", irwriter_imm(w, "-1"));
   irwriter_define_end(w);
 
-  symtab_free(&tokens);
-  free(seq.children[0].name);
-  darray_del(seq.children);
+  darray_del(rules);
 }
 
 TEST(test_gen_rule_body_leaf) {
@@ -164,45 +153,36 @@ static void _emit_rule_body_branches(IrWriter* w) {
 
   int32_t fail_label = irwriter_label(w);
 
-  PegUnit seq = {0};
-  seq.kind = PEG_SEQ;
-  seq.children = darray_new(sizeof(PegUnit), 0);
+  // Build ScopedRule graph:
+  // rules[0] = TOK(ID, tok_id=0)
+  // rules[1] = TOK(NUM, tok_id=1)
+  // rules[2] = BRANCHES([0, 1])
+  ScopedRule* rules = darray_new(sizeof(ScopedRule), 0);
 
-  PegUnit branches = {.kind = PEG_BRANCHES};
-  branches.children = darray_new(sizeof(PegUnit), 0);
+  ScopedRule tok_id = {.name = "ID", .kind = SCOPED_RULE_KIND_TOK, .as.tok = 0};
+  darray_push(rules, tok_id);
 
-  PegUnit branch1 = {.kind = PEG_SEQ};
-  branch1.children = darray_new(sizeof(PegUnit), 0);
-  PegUnit t1 = {.kind = PEG_TOK, .name = strdup("ID")};
-  darray_push(branch1.children, t1);
-  darray_push(branches.children, branch1);
+  ScopedRule tok_num = {.name = "NUM", .kind = SCOPED_RULE_KIND_TOK, .as.tok = 1};
+  darray_push(rules, tok_num);
 
-  PegUnit branch2 = {.kind = PEG_SEQ};
-  branch2.children = darray_new(sizeof(PegUnit), 0);
-  PegUnit t2 = {.kind = PEG_TOK, .name = strdup("NUM")};
-  darray_push(branch2.children, t2);
-  darray_push(branches.children, branch2);
+  int32_t* branch_children = darray_new(sizeof(int32_t), 0);
+  int32_t c0 = 0, c1 = 1;
+  darray_push(branch_children, c0);
+  darray_push(branch_children, c1);
+  ScopedRule branches = {.name = "branched", .kind = SCOPED_RULE_KIND_BRANCHES, .as.branches = branch_children};
+  darray_push(rules, branches);
 
-  darray_push(seq.children, branches);
-
-  Symtab tokens = {0};
-  symtab_init(&tokens, 0);
   IrVal slot_val_ptr = irwriter_alloca(w, "i32");
   int32_t branch_ids[] = {-1, -2};
-  IrVal result = peg_ir_gen_rule_body(w, &seq, &tokens, "%Col.test", branch_ids, 2, fail_label, slot_val_ptr);
+  IrVal result = peg_ir_gen_rule_body(w, rules, 2, "%Col.test", branch_ids, 2, fail_label, slot_val_ptr);
   irwriter_ret(w, "i32", result);
 
   irwriter_bb_at(w, fail_label);
   irwriter_ret(w, "i32", irwriter_imm(w, "-1"));
   irwriter_define_end(w);
 
-  symtab_free(&tokens);
-  free(seq.children[0].children[0].children[0].name);
-  darray_del(seq.children[0].children[0].children);
-  free(seq.children[0].children[1].children[0].name);
-  darray_del(seq.children[0].children[1].children);
-  darray_del(seq.children[0].children);
-  darray_del(seq.children);
+  darray_del(rules[2].as.branches);
+  darray_del(rules);
 }
 
 TEST(test_gen_rule_body_branches) {
@@ -230,16 +210,13 @@ TEST(test_peg_ir_compile) {
 
   int32_t fail = irwriter_label(w);
 
-  PegUnit seq = {0};
-  seq.kind = PEG_SEQ;
-  seq.children = darray_new(sizeof(PegUnit), 0);
-  PegUnit tok = {.kind = PEG_TOK, .name = strdup("X")};
-  darray_push(seq.children, tok);
+  // Build: rules[0] = TOK("X", tok_id=0)
+  ScopedRule* rules = darray_new(sizeof(ScopedRule), 0);
+  ScopedRule tok_x = {.name = "X", .kind = SCOPED_RULE_KIND_TOK, .as.tok = 0};
+  darray_push(rules, tok_x);
 
-  Symtab tokens = {0};
-  symtab_init(&tokens, 0);
   IrVal slot_val_ptr = irwriter_alloca(w, "i32");
-  IrVal r = peg_ir_gen_rule_body(w, &seq, &tokens, "%Col.s", NULL, 0, fail, slot_val_ptr);
+  IrVal r = peg_ir_gen_rule_body(w, rules, 0, "%Col.s", NULL, 0, fail, slot_val_ptr);
   irwriter_ret(w, "i32", r);
 
   irwriter_bb_at(w, fail);
@@ -256,14 +233,11 @@ TEST(test_peg_ir_compile) {
   int ret = system(cmd);
   assert(ret == 0);
 
-  symtab_free(&tokens);
-  free(seq.children[0].name);
-  darray_del(seq.children);
+  darray_del(rules);
 }
 
 int main(void) {
   printf("test_peg_ir:\n");
-
   RUN(test_bt_defs);
   RUN(test_declare_externs);
   RUN(test_memo_ops);
@@ -271,7 +245,6 @@ int main(void) {
   RUN(test_gen_rule_body_leaf);
   RUN(test_gen_rule_body_branches);
   RUN(test_peg_ir_compile);
-
   printf("all ok\n");
   return 0;
 }
