@@ -61,7 +61,8 @@ typedef struct {
   Symtab* tokens;
   const char* col_type;
   IrVal bt_stack;
-  IrVal branch_id_ptr;
+  IrVal slot_val_ptr;
+  int32_t* branch_ids;
   int32_t branch_offset;
 } GenCtx;
 
@@ -320,8 +321,18 @@ static IrVal _gen_ir(GenCtx* ctx, PegUnit* unit, const char* col_expr, int32_t f
 
       _discard(ctx->w, ctx->bt_stack);
       irwriter_store(ctx->w, "i32", r, result_ptr);
-      if (ctx->branch_id_ptr >= 0) {
-        irwriter_store(ctx->w, "i32", irwriter_imm_int(ctx->w, ctx->branch_offset + i + 1), ctx->branch_id_ptr);
+      if (ctx->slot_val_ptr >= 0 && ctx->branch_ids) {
+        int32_t bid_val = ctx->branch_ids[ctx->branch_offset + i];
+        if (bid_val >= 1) {
+          irwriter_store(ctx->w, "i32", irwriter_imm_int(ctx->w, bid_val), ctx->slot_val_ptr);
+        } else {
+          int32_t branch_idx = -(bid_val + 1);
+          IrVal bi = irwriter_imm_int(ctx->w, branch_idx << 16);
+          IrVal packed = irwriter_binop(ctx->w, "or", "i32", bi, r);
+          IrVal plus3 = irwriter_binop(ctx->w, "add", "i32", packed, irwriter_imm(ctx->w, "3"));
+          IrVal negated = irwriter_binop(ctx->w, "sub", "i32", irwriter_imm(ctx->w, "0"), plus3);
+          irwriter_store(ctx->w, "i32", negated, ctx->slot_val_ptr);
+        }
       }
       irwriter_br(ctx->w, done_bb);
 
@@ -344,33 +355,27 @@ static IrVal _gen_ir(GenCtx* ctx, PegUnit* unit, const char* col_expr, int32_t f
 
 // --- Public: rule body code generation ---
 
-IrVal peg_ir_gen_rule_body(IrWriter* w, PegUnit* seq, Symtab* tokens, const char* col_type, int32_t has_branches,
-                           int32_t fail_label) {
+IrVal peg_ir_gen_rule_body(IrWriter* w, PegUnit* seq, Symtab* tokens, const char* col_type, int32_t* branch_ids,
+                           int32_t n_branch_ids, int32_t fail_label, IrVal slot_val_ptr) {
+  (void)n_branch_ids;
+
   IrVal bt_stack = irwriter_alloca(w, "%BtStack");
   IrVal bt_top_ptr = _gep_raw(w, "%BtStack", bt_stack, "i32 0, i32 1");
   irwriter_store(w, "i32", irwriter_imm(w, "-1"), bt_top_ptr);
-
-  IrVal branch_id_ptr = -1;
-  if (has_branches) {
-    branch_id_ptr = irwriter_alloca(w, "i32");
-    irwriter_store(w, "i32", irwriter_imm(w, "0"), branch_id_ptr);
-  }
 
   GenCtx ctx = {
       .w = w,
       .tokens = tokens,
       .col_type = col_type,
       .bt_stack = bt_stack,
-      .branch_id_ptr = branch_id_ptr,
+      .slot_val_ptr = slot_val_ptr,
+      .branch_ids = branch_ids,
       .branch_offset = 0,
   };
   IrVal match_len = _gen_ir(&ctx, seq, "%col", fail_label);
 
-  if (has_branches) {
-    IrVal bid = irwriter_load(w, "i32", branch_id_ptr);
-    IrVal shifted = irwriter_binop(w, "shl", "i32", bid, irwriter_imm(w, "16"));
-    IrVal masked = irwriter_binop(w, "and", "i32", match_len, irwriter_imm(w, "65535"));
-    return irwriter_binop(w, "or", "i32", shifted, masked);
+  if (!branch_ids && slot_val_ptr >= 0) {
+    irwriter_store(w, "i32", match_len, slot_val_ptr);
   }
   return match_len;
 }

@@ -129,8 +129,9 @@ static void _emit_rule_body_leaf(IrWriter* w) {
   darray_push(seq.children, tok);
 
   Symtab tokens = {0};
-  symtab_init(&tokens);
-  IrVal result = peg_ir_gen_rule_body(w, &seq, &tokens, "%Col.test", 0, fail_label);
+  symtab_init(&tokens, 0);
+  IrVal slot_val_ptr = irwriter_alloca(w, "i32");
+  IrVal result = peg_ir_gen_rule_body(w, &seq, &tokens, "%Col.test", NULL, 0, fail_label, slot_val_ptr);
   irwriter_ret(w, "i32", result);
 
   irwriter_bb_at(w, fail_label);
@@ -185,8 +186,10 @@ static void _emit_rule_body_branches(IrWriter* w) {
   darray_push(seq.children, branches);
 
   Symtab tokens = {0};
-  symtab_init(&tokens);
-  IrVal result = peg_ir_gen_rule_body(w, &seq, &tokens, "%Col.test", 1, fail_label);
+  symtab_init(&tokens, 0);
+  IrVal slot_val_ptr = irwriter_alloca(w, "i32");
+  int32_t branch_ids[] = {-1, -2};
+  IrVal result = peg_ir_gen_rule_body(w, &seq, &tokens, "%Col.test", branch_ids, 2, fail_label, slot_val_ptr);
   irwriter_ret(w, "i32", result);
 
   irwriter_bb_at(w, fail_label);
@@ -205,7 +208,7 @@ static void _emit_rule_body_branches(IrWriter* w) {
 TEST(test_gen_rule_body_branches) {
   char* ir = _capture_ir(_emit_rule_body_branches);
   assert(strstr(ir, "define i32 @parse_branched") != NULL);
-  assert(strstr(ir, "shl i32") != NULL);
+  assert(strstr(ir, "sub i32") != NULL);
   free(ir);
 }
 
@@ -234,8 +237,9 @@ TEST(test_peg_ir_compile) {
   darray_push(seq.children, tok);
 
   Symtab tokens = {0};
-  symtab_init(&tokens);
-  IrVal r = peg_ir_gen_rule_body(w, &seq, &tokens, "%Col.s", 0, fail);
+  symtab_init(&tokens, 0);
+  IrVal slot_val_ptr = irwriter_alloca(w, "i32");
+  IrVal r = peg_ir_gen_rule_body(w, &seq, &tokens, "%Col.s", NULL, 0, fail, slot_val_ptr);
   irwriter_ret(w, "i32", r);
 
   irwriter_bb_at(w, fail);

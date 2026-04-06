@@ -69,7 +69,7 @@ IrWriter* irwriter_new(FILE* out, const char* target_triple) {
   IrWriter* w = calloc(1, sizeof(IrWriter));
   w->out = out;
   w->target_triple = target_triple;
-  symtab_init(&w->decls);
+  symtab_init(&w->decls, 0);
   w->dbg_line = -1;
   w->imms = darray_new(1, 1);
   w->imms[0] = '\0';
@@ -362,7 +362,7 @@ IrVal irwriter_extractvalue(IrWriter* w, const char* agg_ty, IrVal agg, int idx)
 }
 
 void irwriter_declare(IrWriter* w, const char* ret_type, const char* name, const char* arg_types) {
-  if (symtab_find(&w->decls, name)) {
+  if (symtab_find(&w->decls, name) >= 0) {
     return;
   }
   symtab_intern(&w->decls, name);

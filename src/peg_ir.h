@@ -8,10 +8,11 @@
 #include <stdint.h>
 
 // --- Code gen: gen(pattern, col, on_fail) dispatcher ---
-// Generates IR for an entire rule body: inits BtStack, calls gen(), packs branch_id if needed.
-// Returns packed match result (branch_id<<16 | len, or just len).
-IrVal peg_ir_gen_rule_body(IrWriter* w, PegUnit* seq, Symtab* tokens, const char* col_type, int32_t has_branches,
-                           int32_t fail_label);
+// Generates IR for an entire rule body. For branch rules, stores the slot indicator (scoped_rule_id
+// or packed non-rule marker) via slot_val_ptr. For non-branch rules, stores match_len there.
+// Always returns match_len.
+IrVal peg_ir_gen_rule_body(IrWriter* w, PegUnit* seq, Symtab* tokens, const char* col_type, int32_t* branch_ids,
+                           int32_t n_branch_ids, int32_t fail_label, IrVal slot_val_ptr);
 
 // --- Memoize table ops ---
 IrVal peg_ir_memo_get(IrWriter* w, const char* col_type, const char* table, const char* col, int32_t field_idx,
