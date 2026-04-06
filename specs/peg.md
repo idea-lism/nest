@@ -25,21 +25,19 @@ It provides 2 generating options: naive & row_shared (--compress-memoize option 
 - to gather rules for each scope, we recursively walk down the scope's definition, expanding sub rules and sub-sub rules and go on. but we don't expand scopes.
 - the purpose of this closure-finding is to make each scope's parsing table minimum.
 
-The returned structure is:
+Then we will have this info:
 
 ```c
-struct ScopedRule {
-  const char* name;
-  int32_t number; // the numer inside scope, equals to the index in PegScope.rules
-};
-
-struct PegScope {
-  const char* name;
-  ScopedRule* rules;     // darray, access the rule by rule_numbering
+struct ScopeClosure {
+  const char* scope_name;
+  Symtab defined_rules;
+  ...
 };
 ```
 
 ### Breakdown rules
+
+`_breakdown_rules()` will make fine-grained rules.
 
 For example, this composite rule:
 
@@ -68,23 +66,40 @@ One nuance is:
 - if a branch rule calls another branch rule, wrap the child rule in a seq
 - this wrapping ensures an invariance: to find out a branch rule's cached consumed token size, we can first read the slot to get the child rule id (`foo$1$2` for the above example), and read the size from directly -- without the need of further drill-down.
 
-### Rule id analysis
-
-We gather rule closures by scopes first.
+After closure analysis & rule breakdown, we will have the following structure which codegen can use easily:
 
 ```c
-struct Peg {
-  Map<int32_t, PegClosure> pegs; // {scope_id => peg_closure}
-  Map<string, Rule> rules; // {rule_name => definition}
+enum ScopedRuleKind {
+  SCOPED_RULE_KIND_BRANCHES,
+  SCOPED_RULE_KIND_SEQ,
+  SCOPED_RULE_KIND_CALL,
+  SCOPED_RULE_KIND_JOIN,
+  SCOPED_RULE_KIND_TOK,
+  SCOPED_RULE_KIND_EXTERNAL_SCOPE, // calls an external (opaque) scope
 };
 
-struct PegClosure {
-  Map<string, int32_t> rule_ids; // {rule_name => assigned (compact) id in closure}
+struct ScopedRule {
+  const char* name; // for example: "foo$1$2"
+  ScopedRuleKind kind;
+  union {
+    int32_t* branches; // darray of scoped_rule_ids
+    int32_t* seq;      // darray of scoped_rule_ids
+    int32_t call;      // scoped_rule_id
+    {int32_t, int32_t} join; // {lhs, rhs}, maps to lhs*<rhs> / lhs+<rhs>
+    int32_t tok;       // token
+  } as;
+  char multiplier; // ?, *, +
+  DebugInfo di; // maps to source code
+
+  // ... other info
+};
+
+struct ScopeClosure {
+  const char* scope_name;
+  Symtab defined_rules;
+  ScopedRule* rules; // darray of broken down rules
 };
 ```
-
-Rule_id minification
-- in each scope we gather a set of rules, and number them (starting from 1)
 
 # `naive` mode
 
@@ -155,6 +170,8 @@ After analysis, we have these information for a rule in a scope (different in ot
 
 ```c
 struct ScopedRule {
+  ...
+
   uint32_t scoped_rule_id; // unique in a scope closure
   uint32_t segment_index;  // check Col.bits[segment_index]
   uint32_t segment_mask;
