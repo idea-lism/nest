@@ -48,6 +48,12 @@ foo = a [
 - walk down peg rules to detect left recursions -- we don't allow this infinite loop.
   - when analyzing, be ware of the scope boundary: if there is a scope, we don't expand it. for example str is defined `str = str_char*`, but it always takes a slot in token stream so parsing the scope won't result in infinite loop.
 
+### vpa & peg
+
+`bool pp_match_scopes(ParseState* ps)`:
+- for every PEG scope, find related to VPA scope, and update attr `VpaRule.has_parser = true`.
+- For `main` scope, validate `has_parser` must be true.
+
 ### other validations
 
 `bool pp_validate(ParseState* ps);`:

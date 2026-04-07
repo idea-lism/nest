@@ -2,7 +2,8 @@
 
 src/peg.c is a packrat parsing generator.
 
-create `src/peg.c` (`void peg_gen(PegGenInput* input, HeaderWriter* hw, IrWriter* w, bool compress_memoize)`):
+create `src/peg.c` (`void peg_gen(PegGenInput* input, HeaderWriter* hw, IrWriter* w, bool compress_memoize, const char* prefix)`):
+- `prefix` comes from `nest` command arg `-p`.
 - gather scope closures (see below)
 - define generation logic for different PEG constructs, and generate LLVM IR, using Parser's processed-data
 - generation helpers for result C header (reference the "Using the generated code" section below):
@@ -226,23 +227,23 @@ A typical using pattern is:
 
 ```c
 PegRef ref = ...;
-FooNode foo = load_foo(ref);
+FooNode foo = {prefix}_load_foo(ref);
 // foo = [
 //   bar+ : tag1
 //   baz bar : tag2
 // ]
 if (foo.is.tag1) {
   for (elem = foo.bar; has_next(elem); elem = get_next(elem)) {
-    bar = load_bar(elem);
+    bar = {prefix}_load_bar(elem);
     ...
   }
 } else if (foo.is.tag2) {
-  baz = load_baz(foo.baz);
-  bar = load_bar(foo.bar);
+  baz = {prefix}_load_baz(foo.baz);
+  bar = {prefix}_load_bar(foo.bar);
 }
 ```
 
-Note that `load_xxx` works on defined rules, no need to generate loaders for broken-down rules.
+Note that `{prefix}_load_xxx` works on defined rules, no need to generate loaders for broken-down rules.
 
 # Generated functions
 
@@ -254,6 +255,6 @@ TODO: implement cut operator `^`, when no token can match after cut, report cut 
 
 # Acceptance criteria
 
-- end-to-end test: create a token list (you can mimic json, for example), use generated code, to parse the list, and produce a memoize table, by the parsed memoize table, we can use the generated `load_xxx()` function to retrieve/drill-down the nodes, and the loading doesn't allocate heap memory at all.
+- end-to-end test: create a token list (you can mimic json, for example), use generated code, to parse the list, and produce a memoize table, by the parsed memoize table, we can use the generated `{prefix}_load_xxx()` function to retrieve/drill-down the nodes, and the loading doesn't allocate heap memory at all.
 - resulting memoize tables: assume there are 5 rules in scope A, 6 rules in scope B, resulting memoize tables should have rows 5 and 6 in each, not full row heights each.
 - resulting load_xxx MUST NOT call parse_xxx functions, just decode from memoize table.

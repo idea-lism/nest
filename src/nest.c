@@ -243,15 +243,15 @@ static int32_t _cmd_compile(int32_t argc, char** argv) {
   }
 
   bool compress_memoize = !(arg_k && strcmp(arg_k, "false") == 0);
+  const char* main_func_name = arg_m;
   peg_gen(&(PegGenInput){.rules = ps->peg_rules}, hw, w, compress_memoize);
   vpa_gen(
       &(VpaGenInput){
           .rules = ps->vpa_rules,
           .effects = ps->effects,
-          .peg_rules = ps->peg_rules,
           .src = ps->src,
       },
-      hw, w);
+      hw, w, main_func_name);
 
 cleanup:
   irwriter_end(w);

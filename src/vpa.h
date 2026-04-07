@@ -4,6 +4,7 @@
 #include "irwriter.h"
 #include "peg.h"
 #include "re_ir.h"
+#include "symtab.h"
 
 #include <stdbool.h>
 #include <stdint.h>
@@ -33,6 +34,7 @@ typedef struct {
   VpaUnit* units; // darray
   bool is_scope;
   bool is_macro;
+  bool has_parser; // set by pp_match_scopes when a matching PEG rule exists
 } VpaRule;
 
 // Keyword entry
@@ -51,7 +53,7 @@ typedef struct {
 
 // Ignore entry
 typedef struct {
-  char** names; // darray of strdup'd strings
+  Symtab names;
 } IgnoreSet;
 
 // Input to vpa_gen
@@ -59,8 +61,7 @@ typedef struct {
   VpaRule* rules;         // darray
   KeywordEntry* keywords; // darray
   EffectDecl* effects;    // darray
-  PegRule* peg_rules;     // darray
   const char* src;
 } VpaGenInput;
 
-void vpa_gen(VpaGenInput* input, HeaderWriter* hw, IrWriter* w);
+void vpa_gen(VpaGenInput* input, HeaderWriter* hw, IrWriter* w, const char* main_func_name);

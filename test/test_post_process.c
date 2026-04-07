@@ -296,7 +296,8 @@ TEST(test_expand_keywords) {
 
   ps->peg_rules = darray_new(sizeof(PegRule), 0);
   ps->effects = darray_new(sizeof(EffectDecl), 0);
-  ps->ignores.names = darray_new(sizeof(char*), 0);
+  ps->ignores.names = (Symtab){0};
+  symtab_init(&ps->ignores.names, 0);
 
   bool ok = pp_expand_keywords(ps);
   assert(ok);
@@ -374,7 +375,8 @@ TEST(test_validate_token_set_mismatch) {
   ps->vpa_rules = darray_new(sizeof(VpaRule), 0);
   ps->peg_rules = darray_new(sizeof(PegRule), 0);
   ps->effects = darray_new(sizeof(EffectDecl), 0);
-  ps->ignores.names = darray_new(sizeof(char*), 0);
+  ps->ignores.names = (Symtab){0};
+  symtab_init(&ps->ignores.names, 0);
 
   // VPA main emits @id only
   VpaRule vr = {.name = strdup("main"), .is_scope = true};
@@ -405,7 +407,8 @@ TEST(test_validate_ok) {
   ps->vpa_rules = darray_new(sizeof(VpaRule), 0);
   ps->peg_rules = darray_new(sizeof(PegRule), 0);
   ps->effects = darray_new(sizeof(EffectDecl), 0);
-  ps->ignores.names = darray_new(sizeof(char*), 0);
+  ps->ignores.names = (Symtab){0};
+  symtab_init(&ps->ignores.names, 0);
 
   // VPA main emits @id, @num, @space; %ignore @space
   VpaRule vr = {.name = strdup("main"), .is_scope = true};
@@ -421,8 +424,7 @@ TEST(test_validate_ok) {
   darray_push(vr.units, u3);
   darray_push(ps->vpa_rules, vr);
 
-  char* ign = strdup("space");
-  darray_push(ps->ignores.names, ign);
+  symtab_intern(&ps->ignores.names, "space");
 
   // PEG main uses @id and @num
   PegRule pr = {.name = strdup("main"), .seq = {.kind = PEG_SEQ}};

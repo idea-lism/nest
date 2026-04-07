@@ -698,11 +698,12 @@ static bool _parse_ignore_toks(ParseState* ps, TokenChunk* chunk, int32_t* tpos)
   }
   while (_at(chunk, *tpos, TOK_TOK_ID)) {
     Token* t = _next(chunk, tpos);
-    if (!ps->ignores.names) {
-      ps->ignores.names = darray_new(sizeof(char*), 0);
+    if (!ps->ignores.names.offsets) {
+      symtab_init(&ps->ignores.names, 0);
     }
     char* n = _tok_str_skip(ps, t, 1);
-    darray_push(ps->ignores.names, n);
+    symtab_intern(&ps->ignores.names, n);
+    free(n);
   }
   return true;
 }
@@ -1115,10 +1116,7 @@ static void _free_state(ParseState* ps) {
     darray_del(ps->effects[i].effects);
   }
   darray_del(ps->effects);
-  for (int32_t i = 0; i < (int32_t)darray_size(ps->ignores.names); i++) {
-    free(ps->ignores.names[i]);
-  }
-  darray_del(ps->ignores.names);
+  symtab_free(&ps->ignores.names);
 }
 
 ParseState* parse_state_new(void) { return calloc(1, sizeof(ParseState)); }

@@ -13,7 +13,7 @@ All values are `i32`. Convention: negative return = failure.
 
 ### Backtrack stack
 
-At the beginning of lexing, malloc a 1M `i32 * 256K` stack as local variable.
+At the beginning of main vpa loop, malloc a 1M `i32 * 256K` stack as local variable.
 
 And all scope's backtracking can share this same stack.
 

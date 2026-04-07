@@ -1168,10 +1168,6 @@ void peg_gen(PegGenInput* input, HeaderWriter* hw, IrWriter* w, bool compress_me
     hw_fmt(hw, "static inline void peg_free_%s(%s* table) { free(table); }\n\n", cl->scope_name, cl->hdr_col_type);
   }
 
-  // --- Header: parse function declarations ---
-  for (int32_t i = 0; i < n_rules; i++) {
-    hw_fmt(hw, "int32_t parse_%s(void* table, int32_t col, void* bt_stack);\n", rules[i].name);
-  }
   hw_blank(hw);
 
   // --- Header: load functions ---

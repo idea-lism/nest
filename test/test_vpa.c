@@ -259,7 +259,6 @@ static void _free_gen_input(VpaGenInput* input) {
     darray_del(input->effects[i].effects);
   }
   darray_del(input->effects);
-  darray_del(input->peg_rules);
 }
 
 static void _compile_test(const char* h_file, const char* ir_file) {
@@ -295,7 +294,7 @@ static void _run_vpa_gen(VpaGenInput* input, const char* h_path, const char* ir_
   IrWriter* w = irwriter_new(irf, NULL);
 
   irwriter_start(w, "test_vpa.c", ".");
-  vpa_gen(input, hw, w);
+  vpa_gen(input, hw, w, NULL);
   irwriter_end(w);
 
   hw_del(hw);
@@ -309,7 +308,6 @@ static VpaGenInput _empty_input(const char* src) {
   input.rules = darray_new(sizeof(VpaRule), 0);
   input.keywords = darray_new(sizeof(KeywordEntry), 0);
   input.effects = darray_new(sizeof(EffectDecl), 0);
-  input.peg_rules = darray_new(sizeof(PegRule), 0);
   input.src = src;
   return input;
 }

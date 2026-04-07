@@ -1,12 +1,32 @@
 # Visibly pushdown generator
 
-Create `src/vpa.c` (`vpa_gen()`):
+Create `src/vpa.c` (`void vpa_gen(VpaGenInput* input, HeaderWriter* hw, IrWriter* w, const char* prefix)`):
+- `prefix` comes from `nest` command arg `-p`.
 - define functions to generates visibly pushdown automata in LLVM IR, using Parser's processed-data
 - generate helpers for result C header
   1. token id definitions
   2. util functions that the final LLVM IR may need
 
 It iterates the parsed & desugared AST, utilize src/re.h to generate DFA, utilize src/irwriter.h to generate the upper level visibly pushdown machine.
+
+### Input
+
+```c
+typedef struct {
+  char* name;     // (owned)
+  VpaUnit* units; // darray
+  bool is_scope;
+  bool is_macro;
+  bool has_parser;
+} VpaRule;
+
+typedef struct {
+  VpaRule* rules;         // darray
+  KeywordEntry* keywords; // darray
+  EffectDecl* effects;    // darray
+  const char* src;
+} VpaGenInput;
+```
 
 ### Scope handling
 
@@ -47,26 +67,50 @@ struct LexerContext {
   LexHook bar;
 };
 
-void lex_main(LexerContext l);
+struct LexResult {
+  TokenTree* tt;
+  const char* error;
+  void (*cleanup)(LexResult* res); // a static function pointer to release the resources
+};
+
+extern ParseResult {prefix}_parse(LexerContext l, UStr src);
+// TODO: incremental `edit` interface
 ```
 
-If a user hook emits some token or some action, it should be defined like this:
+If a user hook emits some token or some action, user should define it like this:
 
 ```c
 // %effect .my_foo_hook = @bax | .fail
-void my_foo_hook(void* userdata, Token* token, const char* token_str_start) {
+int32_t my_foo_hook(void* userdata, Token* token, const char* token_str_start) {
   ...
   if (...) {
-    lex_emit_token(TOKEN_BAZ);
+    return TOKEN_BAZ;
   } else {
-    lex_invoke_action(ACTION_FAIL);
+    return ACTION_FAIL;
   }
 }
 ```
 
+A typical usage example (the load_xxx functions are defined by [peg](peg.md)):
+
+```c
+struct LexerContext l = { NULL, .foo = my_foo_hook, .bar = my_bar_hook };
+struct ParseResult res = {prefix}_parse(l, src_ustr);
+if (res.error) {
+  fprintf(stderr, "%s", res.error);
+} else {
+  MainNode n = {prefix}_load_main(res.main);
+  ...
+}
+res.cleanup(res);
+```
+
 ### Interaction with peg parsers
 
-For each scope, PEG parsers generates a `parse_{scope_name}` function, the visibly pushdown machine just invoke the parsing function when a scope ends.
+In LLVM-IR: define the main function `bool {prefix}_parse()`.
+
+For each scope, PEG parsers generates a `parse_{scope_name}` function, the visibly pushdown machine just invoke the parsing function when a scope ends (`.end` action).
+- Main scope doesn't have `.end` action, so after all input is consumed in {main_parse_fn_name}, call `parse_main()`
 
 Since the VPA and the PEG share a same LLVM-IR writer, in PEG the parsing functions should be defined as internal, in VPA we can call them directly.
 
@@ -78,5 +122,8 @@ Resulting parser needs:
   - copy `build/nest_rt.inc`, which is string buf from header amalgamated from `src/nest_rt.h.in`
     - includes: input stream handling: use `ustr`
     - includes: token tree representation: use `token_tree`
-- token ids
-- vpa parser main function, wrapped inside `NEST_RT_IMPLEMENTATION`
+- token ids: `TOK_XXX` numbered from [parse](parse.md)'s analysis.
+- primitive action ids: `ACTION_XXX` numbered from [parse](parse.md)'s analysis.
+- declare entrance and cleanup functions
+  - `static ParseResult {prefix}_parse(LexerContext lc)`
+  - `static void {prefix}_cleanup(ParseResult r)`

@@ -79,6 +79,7 @@ static void _free_action_registry(ActionRegistry* reg) {
 typedef struct {
   char* name;
   int32_t scope_id;
+  bool has_parser;
   VpaUnit* body;       // NOT owned
   VpaUnit* rule_units; // NOT owned, full rule units (leader regex + hooks accessible here)
 } ScopeInfo;
@@ -153,18 +154,13 @@ static int32_t _user_hook_symbol(const char* user_hook, char* out, size_t out_sz
 // --- Resolve scope body into DFA/state patterns ---
 
 static int32_t _resolve_action(ActionRegistry* reg, ScopeInfo* scope, VpaUnit* unit, const char* default_tok_name,
-                               EffectDecl* effects, PegRule* peg_rules, bool allow_empty) {
+                               EffectDecl* effects, bool allow_empty) {
   const char* tok_name = (unit->name && unit->name[0]) ? unit->name : default_tok_name;
   int32_t tok_id = tok_name ? _register_token(reg, tok_name) : 0;
   bool pop_scope = unit->hook == TOK_HOOK_END || _hook_has_effect(effects, unit->user_hook, TOK_HOOK_END);
   const char* parse_scope_name = NULL;
-  if (pop_scope) {
-    for (int32_t pi = 0; pi < (int32_t)darray_size(peg_rules); pi++) {
-      if (strcmp(peg_rules[pi].name, scope->name) == 0) {
-        parse_scope_name = scope->name;
-        break;
-      }
-    }
+  if (pop_scope && scope->has_parser) {
+    parse_scope_name = scope->name;
   }
   bool has_user_hook = unit->user_hook && unit->user_hook[0];
   bool needs_action =
@@ -180,14 +176,14 @@ static int32_t _resolve_action(ActionRegistry* reg, ScopeInfo* scope, VpaUnit* u
 }
 
 static DfaPattern* _resolve_body(ScopeInfo* scope, VpaUnit* body, VpaRule* rules, ScopeInfo* scopes,
-                                 ActionRegistry* reg, EffectDecl* effects, PegRule* peg_rules) {
+                                 ActionRegistry* reg, EffectDecl* effects) {
   DfaPattern* patterns = darray_new(sizeof(DfaPattern), 0);
 
   for (int32_t i = 0; i < (int32_t)darray_size(body); i++) {
     VpaUnit* u = &body[i];
 
     if (u->kind == VPA_REGEXP && u->re) {
-      int32_t action_id = _resolve_action(reg, scope, u, NULL, effects, peg_rules, false);
+      int32_t action_id = _resolve_action(reg, scope, u, NULL, effects, false);
       if (action_id == 0) {
         continue;
       }
@@ -218,7 +214,7 @@ static DfaPattern* _resolve_body(ScopeInfo* scope, VpaUnit* body, VpaRule* rules
       for (int32_t j = 0; j < (int32_t)darray_size(ref_rule->units); j++) {
         VpaUnit* ru = &ref_rule->units[j];
         if (ru->kind == VPA_REGEXP && ru->re) {
-          int32_t aid = _resolve_action(reg, scope, ru, ref_rule->name, effects, peg_rules, false);
+          int32_t aid = _resolve_action(reg, scope, ru, ref_rule->name, effects, false);
           if (aid == 0) {
             continue;
           }
@@ -638,7 +634,7 @@ static void _gen_lex_loop_ir(ScopeInfo* scopes, IrWriter* w, bool has_parse) {
 // --- Scope collection ---
 
 static ScopeInfo* _collect_scopes(VpaRule* rules) {
-  ScopeInfo* scopes = darray_new(sizeof(ScopeInfo), 0);
+  ScopeInfo* scopes = darray_new(sizeof(ScopeInfo), darray_size(rules));
 
   for (int32_t i = 0; i < (int32_t)darray_size(rules); i++) {
     VpaRule* rule = &rules[i];
@@ -650,6 +646,7 @@ static ScopeInfo* _collect_scopes(VpaRule* rules) {
       ScopeInfo s = {
           .name = strdup(rule->name),
           .scope_id = (int32_t)darray_size(scopes),
+          .has_parser = rule->has_parser,
           .body = rule->units,
           .rule_units = rule->units,
       };
@@ -660,6 +657,7 @@ static ScopeInfo* _collect_scopes(VpaRule* rules) {
         ScopeInfo s = {
             .name = strdup(rule->name),
             .scope_id = (int32_t)darray_size(scopes),
+            .has_parser = rule->has_parser,
             .body = su->children,
             .rule_units = rule->units,
         };
@@ -671,13 +669,48 @@ static ScopeInfo* _collect_scopes(VpaRule* rules) {
   return scopes;
 }
 
+// --- IR: main parse function wrapper ---
+// define void @{main_func_name}(ptr %src, i32 %len, ptr %tt)
+// Wraps vpa_lex and invokes parse_main afterwards.
+// pp_match_scopes guarantees the main scope has a parser.
+
+static void _gen_main_func_ir(const char* main_func_name, IrWriter* w) {
+  irwriter_rawf(w, "define void @%s(ptr %%src, i32 %%len, ptr %%tt) {\n", main_func_name);
+  irwriter_raw(w, "entry:\n");
+  irwriter_raw(w, "  call void @vpa_lex(ptr %src, i32 %len, ptr %tt)\n");
+  irwriter_raw(w, "  %ncols0 = call i32 @tc_size(ptr %tt)\n");
+  irwriter_raw(w, "  %ncols1 = add i32 %ncols0, 1\n");
+  irwriter_raw(w, "  %ncols64 = sext i32 %ncols1 to i64\n");
+  irwriter_raw(w, "  %elt_end = getelementptr %Col.main, ptr null, i32 1\n");
+  irwriter_raw(w, "  %elt_size = ptrtoint ptr %elt_end to i64\n");
+  irwriter_raw(w, "  %table_size = mul i64 %ncols64, %elt_size\n");
+  irwriter_raw(w, "  %bt_end = getelementptr %BtStack, ptr null, i32 1\n");
+  irwriter_raw(w, "  %bt_size = ptrtoint ptr %bt_end to i64\n");
+  irwriter_raw(w, "  %bt_stack = call ptr @malloc(i64 %bt_size)\n");
+  irwriter_raw(w, "  %bt_top_ptr = getelementptr %BtStack, ptr %bt_stack, i32 0, i32 1\n");
+  irwriter_raw(w, "  store i32 -1, ptr %bt_top_ptr\n");
+  irwriter_raw(w, "  %table = call ptr @malloc(i64 %table_size)\n");
+  irwriter_raw(w, "  call void @llvm.memset.p0.i64(ptr %table, i8 -1, i64 %table_size, i1 false)\n");
+  irwriter_raw(w, "  %parse_len = call i32 @parse_main(ptr %table, i32 0, ptr %bt_stack)\n");
+  irwriter_raw(w, "  call void @free(ptr %table)\n");
+  irwriter_raw(w, "  call void @free(ptr %bt_stack)\n");
+
+  irwriter_raw(w, "  ret void\n");
+  irwriter_raw(w, "}\n\n");
+}
+
+static void _gen_main_func_header(const char* main_func_name, HeaderWriter* hw) {
+  hw_blank(hw);
+  hw_comment(hw, "Main parse function");
+  hw_fmt(hw, "extern void %s(void* src, int32_t len, void* tt);\n", main_func_name);
+}
+
 // --- Public API ---
 
-void vpa_gen(VpaGenInput* input, HeaderWriter* hw, IrWriter* w) {
+void vpa_gen(VpaGenInput* input, HeaderWriter* hw, IrWriter* w, const char* main_func_name) {
   VpaRule* rules = input->rules;
   KeywordEntry* keywords = input->keywords;
   EffectDecl* effects = input->effects;
-  PegRule* peg_rules = input->peg_rules;
 
   ActionRegistry reg = {0};
   reg.entries = darray_new(sizeof(ActionEntry), 0);
@@ -703,7 +736,7 @@ void vpa_gen(VpaGenInput* input, HeaderWriter* hw, IrWriter* w) {
     if (!scopes[i].body) {
       continue;
     }
-    DfaPattern* patterns = _resolve_body(&scopes[i], scopes[i].body, rules, scopes, &reg, effects, peg_rules);
+    DfaPattern* patterns = _resolve_body(&scopes[i], scopes[i].body, rules, scopes, &reg, effects);
     _gen_scope_dfa(&scopes[i], patterns, w);
     darray_del(patterns);
   }
@@ -719,10 +752,18 @@ void vpa_gen(VpaGenInput* input, HeaderWriter* hw, IrWriter* w) {
   _gen_action_dispatch_ir(&reg, w);
   _gen_lex_loop_ir(scopes, w, has_parse);
 
+  if (main_func_name) {
+    _gen_main_func_ir(main_func_name, w);
+  }
+
   _gen_lex_declarations(scopes, hw);
   _gen_user_hook_header(&reg, hw);
   _gen_token_header(&reg, hw);
   _gen_action_table_header(&reg, scopes, hw);
+
+  if (main_func_name) {
+    _gen_main_func_header(main_func_name, hw);
+  }
 
   for (int32_t i = 0; i < (int32_t)darray_size(scopes); i++) {
     free(scopes[i].name);

@@ -293,14 +293,7 @@ static void _collect_peg_used_set(PegUnit* unit, char*** set, ParseState* ps, ch
   }
 }
 
-static bool _is_ignored(ParseState* ps, const char* name) {
-  for (int32_t i = 0; i < (int32_t)darray_size(ps->ignores.names); i++) {
-    if (strcmp(ps->ignores.names[i], name) == 0) {
-      return true;
-    }
-  }
-  return false;
-}
+static bool _is_ignored(ParseState* ps, const char* name) { return symtab_find(&ps->ignores.names, name) >= 0; }
 
 static bool _validate_token_sets(ParseState* ps) {
   for (int32_t v = 0; v < (int32_t)darray_size(ps->vpa_rules); v++) {
@@ -525,6 +518,21 @@ bool pp_check_duplicate_tags(ParseState* ps) {
       }
     }
     darray_del(tags);
+  }
+  return true;
+}
+
+bool pp_match_scopes(ParseState* ps) {
+  for (int32_t p = 0; p < (int32_t)darray_size(ps->peg_rules); p++) {
+    VpaRule* vr = _find_vpa_rule(ps, ps->peg_rules[p].name);
+    if (vr) {
+      vr->has_parser = true;
+    }
+  }
+  VpaRule* main_rule = _find_vpa_rule(ps, "main");
+  if (main_rule && !main_rule->has_parser) {
+    parse_error(ps, "'main' scope must have a parser (missing [[peg]] main rule)");
+    return false;
   }
   return true;
 }
