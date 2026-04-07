@@ -875,7 +875,6 @@ TEST(test_vpa_gen_exec) {
   fprintf(df, "#include <assert.h>\n"
               "#include <stdint.h>\n"
               "#include <string.h>\n"
-              "#define NEST_RT_IMPLEMENTATION\n"
               "#include \"test_vpa_gen_scope.h\"\n"
               "\n"
               "int32_t vpa_rt_read_cp(void* src, int32_t cp_off) {\n"

@@ -76,7 +76,8 @@ exe "nest",
   srcs: base + %w[src/nest.c],
   deps: %w[ustr],
   extra_objs: nest_lex,
-  ext_libs: kissat
+  ext_libs: kissat,
+  order_deps: %w[build/nest_syntax.inc build/nest_reference.inc build/nest_rt.inc]
 
 exe "parse_gen",
   srcs: %w[src/parse_gen.c src/re.c src/aut.c src/irwriter.c src/symtab.c src/bitset.c src/darray.c],

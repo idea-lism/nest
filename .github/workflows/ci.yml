@@ -82,7 +82,6 @@ jobs:
           CC: clang-18
       - name: Test
         run: |
-          export LLVM_CC=clang-18
           mode=debug
           if [ "$IS_TAG" = "true" ]; then
             mode=release
@@ -141,7 +140,6 @@ jobs:
           CC: clang
       - name: Test
         run: |
-          export LLVM_CC=clang
           mode=debug
           if [ "$IS_TAG" = "true" ]; then
             mode=release

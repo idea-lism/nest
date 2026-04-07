@@ -1,4 +1,6 @@
+#ifndef NEST_RT_IMPLEMENTATION
 #pragma once
+#endif
 
 #include "darray.h"
 #include "token_tree.h"

@@ -61,13 +61,5 @@ const char* compat_devnull_path(void) {
 }
 
 const char* compat_llvm_cc(void) {
-  const char* cc = getenv("LLVM_CC");
-  if (cc) {
-    return cc;
-  }
-#ifdef __APPLE__
-  return "xcrun clang";
-#else
-  return "clang";
-#endif
+  return LLVM_CC " -DNEST_RT_IMPLEMENTATION";
 }
