@@ -91,7 +91,7 @@ struct ScopedRule {
   char multiplier; // ?, *, +
   DebugInfo di; // maps to source code
 
-  // ... other info
+  // ... analysis|codegen props, see below
 };
 
 struct ScopeClosure {
@@ -133,7 +133,12 @@ Compute `first_set(R)` and `last_set(R)` for each rule R, expanding references t
 
 Note that if a rule being called is also a scope, we should not expand it in first_set/last_set computation, just add the scope_id to the set.
 
-Two rules A, B are **exclusive** when `first_set(A) ∩ first_set(B) = ∅` or `last_set(A) ∩ last_set(B) = ∅`.
+Two rules A, B are **exclusive** if all the following conditions hold:
+
+- `!nullable(A)` and `!nullable(B)`
+- `first_set(A) ∩ first_set(B) = ∅` or `last_set(A) ∩ last_set(B) = ∅`
+
+Another exclusive check is:
 
 ### Interference graph and coloring
 
@@ -170,7 +175,11 @@ After analysis, we have these information for a rule in a scope (different in ot
 
 ```c
 struct ScopedRule {
-  ...
+  // ... basic props, see above
+
+  bool nullable;    // can the rule match 0-length token?
+  Bitset first_set; // excluding epsilon
+  Bitset last_set;  // excluding epsilon
 
   uint32_t scoped_rule_id; // unique in a scope closure
   uint32_t segment_index;  // check Col.bits[segment_index]

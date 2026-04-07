@@ -33,21 +33,20 @@ static IrVal _tok(IrWriter* w, int32_t token_id, const char* col) {
 }
 
 static IrVal _call(IrWriter* w, const char* rule_name, const char* table, const char* col) {
-  IrVal col_ext = irwriter_sext(w, "i32", irwriter_imm(w, col), "i64");
   IrVal r = irwriter_next_reg(w);
-  irwriter_rawf(w, "  %%r%d = call i32 @parse_%s(ptr %s, i64 %%r%d)\n", (int)r, rule_name, table, (int)col_ext);
+  irwriter_rawf(w, "  %%r%d = call i32 @parse_%s(ptr %s, i32 %s, ptr %%bt_stack)\n", (int)r, rule_name, table, col);
   return r;
 }
 
-static void _save(IrWriter* w, IrVal stack, const char* col) {
-  irwriter_call_void_fmtf(w, "save", "ptr %%r%d, i32 %s", (int)stack, col);
+static void _save(IrWriter* w, const char* stack, const char* col) {
+  irwriter_call_void_fmtf(w, "save", "ptr %s, i32 %s", stack, col);
 }
 
-static IrVal _restore(IrWriter* w, IrVal stack) {
-  return irwriter_call_retf(w, "i32", "restore", "ptr %%r%d", (int)stack);
+static IrVal _restore(IrWriter* w, const char* stack) {
+  return irwriter_call_retf(w, "i32", "restore", "ptr %s", stack);
 }
 
-static void _discard(IrWriter* w, IrVal stack) { irwriter_call_void_fmtf(w, "discard", "ptr %%r%d", (int)stack); }
+static void _discard(IrWriter* w, const char* stack) { irwriter_call_void_fmtf(w, "discard", "ptr %s", stack); }
 
 // --- gen() context ---
 
@@ -55,7 +54,7 @@ typedef struct {
   IrWriter* w;
   ScopedRule* rules;
   const char* col_type;
-  IrVal bt_stack;
+  const char* bt_stack;
   IrVal slot_val_ptr;
   int32_t* branch_ids;
   int32_t branch_offset;
@@ -374,15 +373,11 @@ IrVal peg_ir_gen_rule_body(IrWriter* w, ScopedRule* rules, int32_t root_id, cons
                            int32_t n_branch_ids, int32_t fail_label, IrVal slot_val_ptr) {
   (void)n_branch_ids;
 
-  IrVal bt_stack = irwriter_alloca(w, "%BtStack");
-  IrVal bt_top_ptr = _gep_raw(w, "%BtStack", bt_stack, "i32 0, i32 1");
-  irwriter_store(w, "i32", irwriter_imm(w, "-1"), bt_top_ptr);
-
   GenCtx ctx = {
       .w = w,
       .rules = rules,
       .col_type = col_type,
-      .bt_stack = bt_stack,
+      .bt_stack = "%bt_stack",
       .slot_val_ptr = slot_val_ptr,
       .branch_ids = branch_ids,
       .branch_offset = 0,
@@ -414,7 +409,7 @@ void peg_ir_memo_set(IrWriter* w, const char* col_type, const char* table, const
 // --- Public: backtrack stack definitions ---
 
 void peg_ir_emit_bt_defs(IrWriter* w) {
-  irwriter_type_def(w, "BtStack", "{ [16 x i32], i32 }");
+  irwriter_type_def(w, "BtStack", "{ [262144 x i32], i32 }");
   irwriter_raw(w, "\n");
 
   irwriter_raw(w, "define internal void @save(ptr %stack, i32 %col) {\n"

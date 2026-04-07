@@ -108,9 +108,9 @@ static void _emit_rule_body_leaf(IrWriter* w) {
   peg_ir_emit_bt_defs(w);
   peg_ir_declare_externs(w);
 
-  const char* arg_types[] = {"ptr", "i32"};
-  const char* arg_names[] = {"table", "col"};
-  irwriter_define_start(w, "parse_test", "i32", 2, arg_types, arg_names);
+  const char* arg_types[] = {"ptr", "i32", "ptr"};
+  const char* arg_names[] = {"table", "col", "bt_stack"};
+  irwriter_define_start(w, "parse_test", "i32", 3, arg_types, arg_names);
   irwriter_bb(w);
 
   int32_t fail_label = irwriter_label(w);
@@ -146,9 +146,9 @@ static void _emit_rule_body_branches(IrWriter* w) {
   peg_ir_emit_bt_defs(w);
   peg_ir_declare_externs(w);
 
-  const char* arg_types[] = {"ptr", "i32"};
-  const char* arg_names[] = {"table", "col"};
-  irwriter_define_start(w, "parse_branched", "i32", 2, arg_types, arg_names);
+  const char* arg_types[] = {"ptr", "i32", "ptr"};
+  const char* arg_names[] = {"table", "col", "bt_stack"};
+  irwriter_define_start(w, "parse_branched", "i32", 3, arg_types, arg_names);
   irwriter_bb(w);
 
   int32_t fail_label = irwriter_label(w);
@@ -203,9 +203,9 @@ TEST(test_peg_ir_compile) {
   peg_ir_emit_bt_defs(w);
   peg_ir_declare_externs(w);
 
-  const char* arg_types[] = {"ptr", "i32"};
-  const char* arg_names[] = {"table", "col"};
-  irwriter_define_start(w, "parse_simple", "i32", 2, arg_types, arg_names);
+  const char* arg_types[] = {"ptr", "i32", "ptr"};
+  const char* arg_names[] = {"table", "col", "bt_stack"};
+  irwriter_define_start(w, "parse_simple", "i32", 3, arg_types, arg_names);
   irwriter_bb(w);
 
   int32_t fail = irwriter_label(w);

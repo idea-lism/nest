@@ -82,7 +82,7 @@ static int32_t _breakdown_leaf(ScopeClosure* cl, PegUnit* unit, const char* owne
 
   if (unit->kind == PEG_TOK || unit->kind == PEG_KEYWORD_TOK) {
     ScopedRule sr = {
-        .name = unit->name,
+        .name = strdup(unit->name),
         .kind = SCOPED_RULE_KIND_TOK,
         .as.tok = symtab_intern(tokens, unit->name),
         .multiplier = (char)unit->multiplier,
@@ -94,7 +94,7 @@ static int32_t _breakdown_leaf(ScopeClosure* cl, PegUnit* unit, const char* owne
   int32_t gi = _global_rule_index(all_rules, n_rules, unit->name);
   if (gi >= 0 && _is_scope_entry(&all_rules[gi])) {
     ScopedRule sr = {
-        .name = unit->name,
+        .name = strdup(unit->name),
         .kind = SCOPED_RULE_KIND_EXTERNAL_SCOPE,
         .as.external_scope = gi,
         .multiplier = (char)unit->multiplier,
@@ -105,7 +105,7 @@ static int32_t _breakdown_leaf(ScopeClosure* cl, PegUnit* unit, const char* owne
   // Regular call — resolve via defined_rules
   int32_t target = symtab_find(&cl->defined_rules, unit->name);
   ScopedRule sr = {
-      .name = unit->name,
+      .name = strdup(unit->name),
       .kind = SCOPED_RULE_KIND_CALL,
       .as.call = target, // resolved if rule was pre-registered, -1 otherwise
       .multiplier = (char)unit->multiplier,
@@ -139,7 +139,7 @@ static int32_t _breakdown(ScopeClosure* cl, PegUnit* unit, const char* owner_nam
       darray_del(child_ids);
       return only;
     }
-    ScopedRule sr = {.name = owner_name, .kind = SCOPED_RULE_KIND_SEQ, .as.seq = child_ids};
+    ScopedRule sr = {.name = strdup(owner_name), .kind = SCOPED_RULE_KIND_SEQ, .as.seq = child_ids};
     return _push_rule(cl, sr);
   }
 
@@ -150,13 +150,13 @@ static int32_t _breakdown(ScopeClosure* cl, PegUnit* unit, const char* owner_nam
       int32_t alt_id = _breakdown(cl, &unit->children[i], owner_name, next_synth, all_rules, n_rules, tokens);
       darray_push(branch_ids, alt_id);
     }
-    ScopedRule sr = {.name = owner_name, .kind = SCOPED_RULE_KIND_BRANCHES, .as.branches = branch_ids};
+    ScopedRule sr = {.name = strdup(owner_name), .kind = SCOPED_RULE_KIND_BRANCHES, .as.branches = branch_ids};
     return _push_rule(cl, sr);
   }
 
   // Fallback: empty seq
   int32_t* empty = darray_new(sizeof(int32_t), 0);
-  ScopedRule sr = {.name = owner_name, .kind = SCOPED_RULE_KIND_SEQ, .as.seq = empty};
+  ScopedRule sr = {.name = strdup(owner_name), .kind = SCOPED_RULE_KIND_SEQ, .as.seq = empty};
   return _push_rule(cl, sr);
 }
 
@@ -194,7 +194,7 @@ static void _resolve_and_wrap(ScopeClosure* cl) {
       // Wrap
       int32_t* wrap_seq = darray_new(sizeof(int32_t), 0);
       darray_push(wrap_seq, alt_id);
-      ScopedRule wrapper = {.name = cl->rules[alt_id].name, .kind = SCOPED_RULE_KIND_SEQ, .as.seq = wrap_seq};
+      ScopedRule wrapper = {.name = strdup(cl->rules[alt_id].name), .kind = SCOPED_RULE_KIND_SEQ, .as.seq = wrap_seq};
       int32_t wrapper_id = _push_rule(cl, wrapper);
       // Refresh pointer (darray may realloc)
       cl->rules[i].as.branches[j] = wrapper_id;
@@ -268,7 +268,7 @@ static ScopeClosure* _build_closures(PegRule* rules, int32_t n_rules, Symtab* to
     int32_t n_scope = (int32_t)darray_size(all_seeds[si]);
     for (int32_t j = 0; j < n_scope; j++) {
       int32_t gi = all_seeds[si][j];
-      ScopedRule placeholder = {.name = rules[gi].name, .kind = SCOPED_RULE_KIND_SEQ};
+      ScopedRule placeholder = {.name = strdup(rules[gi].name), .kind = SCOPED_RULE_KIND_SEQ};
       placeholder.as.seq = NULL; // will be filled in
       _push_rule(&closures[si], placeholder);
       symtab_intern(&closures[si].defined_rules, rules[gi].name);
@@ -285,8 +285,10 @@ static ScopeClosure* _build_closures(PegRule* rules, int32_t n_rules, Symtab* to
 
       // Copy the broken-down body into the reserved slot
       ScopedRule body = closures[si].rules[body_id];
+      free((char*)closures[si].rules[j].name);
       closures[si].rules[j] = body;
-      closures[si].rules[j].name = rules[gi].name;
+      free((char*)closures[si].rules[j].name);
+      closures[si].rules[j].name = strdup(rules[gi].name);
 
       // Null out the original to prevent double-free
       if (body_id != j) {
@@ -315,6 +317,13 @@ static void _free_closures(ScopeClosure* closures) {
       } else if (sr->kind == SCOPED_RULE_KIND_SEQ && sr->as.seq) {
         darray_del(sr->as.seq);
       }
+      if (sr->first_set) {
+        bitset_del(sr->first_set);
+      }
+      if (sr->last_set) {
+        bitset_del(sr->last_set);
+      }
+      free((char*)sr->name);
     }
     darray_del(cl->rules);
     symtab_free(&cl->defined_rules);
@@ -323,82 +332,177 @@ static void _free_closures(ScopeClosure* closures) {
   darray_del(closures);
 }
 
-// --- First/last set computation over ScopedRule graph ---
+// --- Nullable / first-set / last-set analysis ---
 
-static void _compute_set(ScopeClosure* cl, int32_t rule_id, Bitset* out, Bitset* visited, Symtab* symbols,
-                         int32_t is_first) {
+static void _analyze_rule(ScopeClosure* cl, int32_t rule_id, Bitset* visiting, Symtab* symbols);
+
+static void _ensure_analyzed(ScopeClosure* cl, int32_t rule_id, Bitset* visiting, Symtab* symbols) {
   if (rule_id < 0 || rule_id >= (int32_t)darray_size(cl->rules)) {
     return;
   }
-  if (bitset_contains(visited, (uint32_t)rule_id)) {
+  if (!cl->rules[rule_id].first_set) {
+    _analyze_rule(cl, rule_id, visiting, symbols);
+  }
+}
+
+static void _analyze_rule(ScopeClosure* cl, int32_t rule_id, Bitset* visiting, Symtab* symbols) {
+  if (rule_id < 0 || rule_id >= (int32_t)darray_size(cl->rules)) {
     return;
   }
-  bitset_add_bit(visited, (uint32_t)rule_id);
-
   ScopedRule* sr = &cl->rules[rule_id];
+  if (sr->first_set) {
+    return;
+  }
+  if (bitset_contains(visiting, (uint32_t)rule_id)) {
+    sr->first_set = bitset_new();
+    sr->last_set = bitset_new();
+    sr->nullable = false;
+    return;
+  }
+  bitset_add_bit(visiting, (uint32_t)rule_id);
+
+  sr->first_set = bitset_new();
+  sr->last_set = bitset_new();
+  sr->nullable = false;
+
   switch (sr->kind) {
   case SCOPED_RULE_KIND_TOK:
-    bitset_add_bit(out, (uint32_t)sr->as.tok);
+    bitset_add_bit(sr->first_set, (uint32_t)sr->as.tok);
+    bitset_add_bit(sr->last_set, (uint32_t)sr->as.tok);
+    sr->nullable = false;
     break;
 
   case SCOPED_RULE_KIND_CALL:
     if (sr->as.call >= 0) {
-      _compute_set(cl, sr->as.call, out, visited, symbols, is_first);
+      _ensure_analyzed(cl, sr->as.call, visiting, symbols);
+      ScopedRule* target = &cl->rules[sr->as.call];
+      Bitset* f = bitset_or(sr->first_set, target->first_set);
+      bitset_del(sr->first_set);
+      sr->first_set = f;
+      Bitset* l = bitset_or(sr->last_set, target->last_set);
+      bitset_del(sr->last_set);
+      sr->last_set = l;
+      sr->nullable = target->nullable;
     }
     break;
 
   case SCOPED_RULE_KIND_EXTERNAL_SCOPE: {
-    // Add a unique symbol for the external scope, don't expand
     char key[256];
     snprintf(key, sizeof(key), "scope:%s", sr->name);
-    bitset_add_bit(out, (uint32_t)symtab_intern(symbols, key));
+    uint32_t sym = (uint32_t)symtab_intern(symbols, key);
+    bitset_add_bit(sr->first_set, sym);
+    bitset_add_bit(sr->last_set, sym);
+    sr->nullable = false;
     break;
   }
 
   case SCOPED_RULE_KIND_SEQ: {
     int32_t n = sr->as.seq ? (int32_t)darray_size(sr->as.seq) : 0;
-    if (n > 0) {
-      int32_t idx = is_first ? 0 : n - 1;
-      _compute_set(cl, sr->as.seq[idx], out, visited, symbols, is_first);
+    if (n == 0) {
+      sr->nullable = true;
+      break;
+    }
+    sr->nullable = true;
+    for (int32_t i = 0; i < n; i++) {
+      _ensure_analyzed(cl, sr->as.seq[i], visiting, symbols);
+      if (!cl->rules[sr->as.seq[i]].nullable) {
+        sr->nullable = false;
+        break;
+      }
+    }
+    for (int32_t i = 0; i < n; i++) {
+      ScopedRule* child = &cl->rules[sr->as.seq[i]];
+      Bitset* f = bitset_or(sr->first_set, child->first_set);
+      bitset_del(sr->first_set);
+      sr->first_set = f;
+      if (!child->nullable) {
+        break;
+      }
+    }
+    for (int32_t i = n - 1; i >= 0; i--) {
+      ScopedRule* child = &cl->rules[sr->as.seq[i]];
+      Bitset* l = bitset_or(sr->last_set, child->last_set);
+      bitset_del(sr->last_set);
+      sr->last_set = l;
+      if (!child->nullable) {
+        break;
+      }
     }
     break;
   }
 
   case SCOPED_RULE_KIND_BRANCHES: {
     int32_t n = sr->as.branches ? (int32_t)darray_size(sr->as.branches) : 0;
+    sr->nullable = false;
     for (int32_t i = 0; i < n; i++) {
-      _compute_set(cl, sr->as.branches[i], out, visited, symbols, is_first);
+      _ensure_analyzed(cl, sr->as.branches[i], visiting, symbols);
+      ScopedRule* alt = &cl->rules[sr->as.branches[i]];
+      Bitset* f = bitset_or(sr->first_set, alt->first_set);
+      bitset_del(sr->first_set);
+      sr->first_set = f;
+      Bitset* l = bitset_or(sr->last_set, alt->last_set);
+      bitset_del(sr->last_set);
+      sr->last_set = l;
+      if (alt->nullable) {
+        sr->nullable = true;
+      }
     }
     break;
   }
 
   case SCOPED_RULE_KIND_JOIN:
-    // The main element (lhs) is both first and last in an interlace pattern
-    _compute_set(cl, sr->as.join.lhs, out, visited, symbols, is_first);
+    _ensure_analyzed(cl, sr->as.join.lhs, visiting, symbols);
+    {
+      ScopedRule* lhs = &cl->rules[sr->as.join.lhs];
+      Bitset* f = bitset_or(sr->first_set, lhs->first_set);
+      bitset_del(sr->first_set);
+      sr->first_set = f;
+      Bitset* l = bitset_or(sr->last_set, lhs->last_set);
+      bitset_del(sr->last_set);
+      sr->last_set = l;
+      sr->nullable = lhs->nullable;
+    }
     break;
   }
+
+  if (sr->multiplier == '?' || sr->multiplier == '*') {
+    sr->nullable = true;
+  }
+
+  bitset_clear_bit(visiting, (uint32_t)rule_id);
+}
+
+static void _analyze_closure(ScopeClosure* cl, Symtab* symbols) {
+  Bitset* visiting = bitset_new();
+  for (int32_t i = 0; i < (int32_t)darray_size(cl->rules); i++) {
+    _analyze_rule(cl, i, visiting, symbols);
+  }
+  bitset_del(visiting);
 }
 
 // --- Interference graph ---
 
-static int32_t _are_exclusive(Bitset* a_first, Bitset* a_last, Bitset* b_first, Bitset* b_last) {
-  Bitset* first_inter = bitset_and(a_first, b_first);
+static int32_t _are_exclusive(ScopedRule* a, ScopedRule* b) {
+  if (a->nullable || b->nullable) {
+    return 0;
+  }
+  Bitset* first_inter = bitset_and(a->first_set, b->first_set);
   int32_t first_empty = bitset_size(first_inter) == 0;
   bitset_del(first_inter);
   if (first_empty) {
     return 1;
   }
-  Bitset* last_inter = bitset_and(a_last, b_last);
+  Bitset* last_inter = bitset_and(a->last_set, b->last_set);
   int32_t last_empty = bitset_size(last_inter) == 0;
   bitset_del(last_inter);
   return last_empty;
 }
 
-static Graph* _build_interference_graph(Bitset** first_sets, Bitset** last_sets, int32_t n_rules) {
+static Graph* _build_interference_graph(ScopedRule* rules, int32_t n_rules) {
   Graph* g = graph_new(n_rules);
   for (int32_t i = 0; i < n_rules; i++) {
     for (int32_t j = i + 1; j < n_rules; j++) {
-      if (!_are_exclusive(first_sets[i], last_sets[i], first_sets[j], last_sets[j])) {
+      if (!_are_exclusive(&rules[i], &rules[j])) {
         graph_add_edge(g, i, j);
       }
     }
@@ -756,11 +860,11 @@ static void _gen_load_impl(HeaderWriter* hw, PegRule* rule, int32_t rule_id, Sco
 
 static void _gen_rule_prologue(const char* rule_name, ScopeClosure* cl, IrWriter* w, char* col_type_ref,
                                int32_t col_type_ref_size) {
-  const char* args[] = {"i8*", "i32"};
-  const char* arg_names[] = {"table", "col"};
+  const char* args[] = {"i8*", "i32", "i8*"};
+  const char* arg_names[] = {"table", "col", "bt_stack"};
   char func_name[128];
   snprintf(func_name, sizeof(func_name), "parse_%s", rule_name);
-  irwriter_define_start(w, func_name, "i32", 2, args, arg_names);
+  irwriter_define_start(w, func_name, "i32", 3, args, arg_names);
   irwriter_bb(w);
   snprintf(col_type_ref, (size_t)col_type_ref_size, "%%%s", cl->col_type);
 }
@@ -965,13 +1069,14 @@ void peg_gen(PegGenInput* input, HeaderWriter* hw, IrWriter* w, bool compress_me
   ScopeClosure* closures = _build_closures(rules, n_rules, &tokens);
   int32_t n_closures = (int32_t)darray_size(closures);
 
-  // Compute first/last sets (temporary, for exclusiveness analysis)
+  // Assign scoped_rule_id and run nullable/first/last analysis
   for (int32_t si = 0; si < n_closures; si++) {
     ScopeClosure* cl = &closures[si];
     int32_t n_defined = symtab_count(&cl->defined_rules);
     for (int32_t j = 0; j < n_defined; j++) {
       cl->rules[j].scoped_rule_id = (uint32_t)j;
     }
+    _analyze_closure(cl, &analysis_symbols);
   }
 
   // --- Header: PegRef + node types ---
@@ -1002,20 +1107,7 @@ void peg_gen(PegGenInput* input, HeaderWriter* hw, IrWriter* w, bool compress_me
       snprintf(cl->col_type, sizeof(cl->col_type), "Col.%s", cl->scope_name);
       snprintf(cl->hdr_col_type, sizeof(cl->hdr_col_type), "Col_%s", cl->scope_name);
 
-      Bitset** first_sets = malloc((size_t)n_defined * sizeof(Bitset*));
-      Bitset** last_sets = malloc((size_t)n_defined * sizeof(Bitset*));
-      for (int32_t j = 0; j < n_defined; j++) {
-        first_sets[j] = bitset_new();
-        last_sets[j] = bitset_new();
-        Bitset* vis = bitset_new();
-        _compute_set(cl, j, first_sets[j], vis, &analysis_symbols, 1);
-        bitset_del(vis);
-        vis = bitset_new();
-        _compute_set(cl, j, last_sets[j], vis, &analysis_symbols, 0);
-        bitset_del(vis);
-      }
-
-      Graph* g = _build_interference_graph(first_sets, last_sets, n_defined);
+      Graph* g = _build_interference_graph(cl->rules, n_defined);
       int32_t* edges = graph_edges(g);
       int32_t n_edges = graph_n_edges(g);
       ColoringResult* cr = coloring_solve(n_defined, edges, n_edges, n_defined, 1000000, 42);
@@ -1044,14 +1136,6 @@ void peg_gen(PegGenInput* input, HeaderWriter* hw, IrWriter* w, bool compress_me
         }
         cl->rules[j].segment_mask = mask;
       }
-
-      // Free temporary bitsets
-      for (int32_t j = 0; j < n_defined; j++) {
-        bitset_del(first_sets[j]);
-        bitset_del(last_sets[j]);
-      }
-      free(first_sets);
-      free(last_sets);
 
       cl->n_slots = max_color + 1;
 
@@ -1084,7 +1168,7 @@ void peg_gen(PegGenInput* input, HeaderWriter* hw, IrWriter* w, bool compress_me
 
   // --- Header: parse function declarations ---
   for (int32_t i = 0; i < n_rules; i++) {
-    hw_fmt(hw, "int32_t parse_%s(void* table, int32_t col);\n", rules[i].name);
+    hw_fmt(hw, "int32_t parse_%s(void* table, int32_t col, void* bt_stack);\n", rules[i].name);
   }
   hw_blank(hw);
 

@@ -1,5 +1,6 @@
 #pragma once
 
+#include "bitset.h"
 #include "header_writer.h"
 #include "irwriter.h"
 #include "symtab.h"
@@ -71,7 +72,12 @@ typedef struct {
   char multiplier; // '?', '*', '+', or 0
   PegDebugInfo di;
 
-  // per-scope analysis results (populated by peg_gen):
+  // analysis fields (populated by _analyze_closure):
+  bool nullable;     // can the rule match 0-length input?
+  Bitset* first_set; // tokens that can start a match (excluding epsilon)
+  Bitset* last_set;  // tokens that can end a match (excluding epsilon)
+
+  // per-scope codegen results (populated by peg_gen):
   uint32_t scoped_rule_id; // unique in a scope closure
   uint32_t segment_index;  // check Col.bits[segment_index]
   uint32_t segment_mask;   // OR of all rule_bit_masks sharing this segment

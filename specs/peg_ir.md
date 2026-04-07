@@ -11,13 +11,11 @@ All values are `i32`. Convention: negative return = failure.
 | `define internal @tok(token_id, col)`  | `%token_id == %col` | Match token at `col`. Returns match length (≥0) or negative on failure. |
 | `define internal @call(rule_id, col)`  | `sext` + `call i32 @parse_{id}(ptr %table, i64 %col)` | Call rule function (which checks memo table internally). Returns match length or negative. |
 
-### Backtrack stack (ordered choice only)
+### Backtrack stack
 
-Each rule function allocates `%BtStack` on the LLVM stack and initializes `top = -1`.
+At the beginning of lexing, malloc a 1M `i32 * 256K` stack as local variable.
 
-```llvm
-%BtStack = type { [16 x i32], i32 }  ; { data[16], top }
-```
+And all scope's backtracking can share this same stack.
 
 | Operation                              | Semantics                                                   |
 |----------------------------------------|-------------------------------------------------------------|

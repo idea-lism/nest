@@ -407,7 +407,7 @@ static void _gen_action_dispatch_ir(ActionRegistry* reg, IrWriter* w) {
   }
   int32_t n = (int32_t)darray_size(reg->entries);
 
-  irwriter_raw(w, "define void @vpa_dispatch(ptr %tt, i32 %action_id, i32 %cp_start, i32 %cp_size) {\n");
+  irwriter_raw(w, "define void @vpa_dispatch(ptr %tt, i32 %action_id, i32 %cp_start, i32 %cp_size, ptr %bt_stack) {\n");
   irwriter_raw(w, "entry:\n");
 
   if (n == 0) {
@@ -471,8 +471,8 @@ static void _gen_action_dispatch_ir(ActionRegistry* reg, IrWriter* w) {
         irwriter_rawf(w, "  %%table_%d = call ptr @malloc(i64 %%table_size_%d)\n", aid, aid);
         irwriter_rawf(w, "  call void @llvm.memset.p0.i64(ptr %%table_%d, i8 -1, i64 %%table_size_%d, i1 false)\n", aid,
                       aid);
-        irwriter_rawf(w, "  %%parse_len_%d = call i32 @parse_%s(ptr %%table_%d, i32 0)\n", aid, e->parse_scope_name,
-                      aid);
+        irwriter_rawf(w, "  %%parse_len_%d = call i32 @parse_%s(ptr %%table_%d, i32 0, ptr %%bt_stack)\n", aid,
+                      e->parse_scope_name, aid);
         irwriter_rawf(w, "  call void @free(ptr %%table_%d)\n", aid);
         irwriter_raw(w, "  call void @tc_parse_end()\n");
       }
@@ -491,7 +491,7 @@ static void _gen_action_dispatch_ir(ActionRegistry* reg, IrWriter* w) {
 //
 // Uses allocas for all mutable state. LLVM mem2reg promotes to SSA.
 
-static void _gen_lex_loop_ir(ScopeInfo* scopes, IrWriter* w) {
+static void _gen_lex_loop_ir(ScopeInfo* scopes, IrWriter* w, bool has_parse) {
   irwriter_declare(w, "i32", "vpa_rt_read_cp", "ptr, i32");
   irwriter_declare(w, "i32", "tc_scope", "ptr");
 
@@ -513,6 +513,15 @@ static void _gen_lex_loop_ir(ScopeInfo* scopes, IrWriter* w) {
   irwriter_raw(w, "  store i32 0, ptr %tok_start\n");
   irwriter_raw(w, "  store i32 0, ptr %last_act\n");
   irwriter_raw(w, "  store i32 0, ptr %last_off\n");
+
+  if (has_parse) {
+    irwriter_raw(w, "  %bt_end = getelementptr %BtStack, ptr null, i32 1\n");
+    irwriter_raw(w, "  %bt_size = ptrtoint ptr %bt_end to i64\n");
+    irwriter_raw(w, "  %bt_stack = call ptr @malloc(i64 %bt_size)\n");
+    irwriter_raw(w, "  %bt_top_ptr = getelementptr %BtStack, ptr %bt_stack, i32 0, i32 1\n");
+    irwriter_raw(w, "  store i32 -1, ptr %bt_top_ptr\n");
+  }
+
   irwriter_raw(w, "  br label %Lloop\n\n");
 
   irwriter_raw(w, "Lloop:\n");
@@ -580,7 +589,11 @@ static void _gen_lex_loop_ir(ScopeInfo* scopes, IrWriter* w) {
   irwriter_raw(w, "  %ts = load i32, ptr %tok_start\n");
   irwriter_raw(w, "  %lo = load i32, ptr %last_off\n");
   irwriter_raw(w, "  %sz = sub i32 %lo, %ts\n");
-  irwriter_raw(w, "  call void @vpa_dispatch(ptr %tt, i32 %la, i32 %ts, i32 %sz)\n");
+  if (has_parse) {
+    irwriter_raw(w, "  call void @vpa_dispatch(ptr %tt, i32 %la, i32 %ts, i32 %sz, ptr %bt_stack)\n");
+  } else {
+    irwriter_raw(w, "  call void @vpa_dispatch(ptr %tt, i32 %la, i32 %ts, i32 %sz, ptr null)\n");
+  }
   irwriter_raw(w, "  store i32 %lo, ptr %cp_off\n");
   irwriter_raw(w, "  store i32 0, ptr %state\n");
   irwriter_raw(w, "  store i32 %lo, ptr %tok_start\n");
@@ -607,10 +620,17 @@ static void _gen_lex_loop_ir(ScopeInfo* scopes, IrWriter* w) {
   irwriter_raw(w, "  %ts2 = load i32, ptr %tok_start\n");
   irwriter_raw(w, "  %lo2 = load i32, ptr %last_off\n");
   irwriter_raw(w, "  %sz2 = sub i32 %lo2, %ts2\n");
-  irwriter_raw(w, "  call void @vpa_dispatch(ptr %tt, i32 %la2, i32 %ts2, i32 %sz2)\n");
+  if (has_parse) {
+    irwriter_raw(w, "  call void @vpa_dispatch(ptr %tt, i32 %la2, i32 %ts2, i32 %sz2, ptr %bt_stack)\n");
+  } else {
+    irwriter_raw(w, "  call void @vpa_dispatch(ptr %tt, i32 %la2, i32 %ts2, i32 %sz2, ptr null)\n");
+  }
   irwriter_raw(w, "  br label %Ldone\n\n");
 
   irwriter_raw(w, "Ldone:\n");
+  if (has_parse) {
+    irwriter_raw(w, "  call void @free(ptr %bt_stack)\n");
+  }
   irwriter_raw(w, "  ret void\n");
   irwriter_raw(w, "}\n\n");
 }
@@ -688,8 +708,16 @@ void vpa_gen(VpaGenInput* input, HeaderWriter* hw, IrWriter* w) {
     darray_del(patterns);
   }
 
+  bool has_parse = false;
+  for (int32_t i = 0; i < (int32_t)darray_size(reg.entries); i++) {
+    if (_has_parse_scope(&reg.entries[i])) {
+      has_parse = true;
+      break;
+    }
+  }
+
   _gen_action_dispatch_ir(&reg, w);
-  _gen_lex_loop_ir(scopes, w);
+  _gen_lex_loop_ir(scopes, w, has_parse);
 
   _gen_lex_declarations(scopes, hw);
   _gen_user_hook_header(&reg, hw);
