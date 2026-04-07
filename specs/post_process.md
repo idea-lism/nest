@@ -6,6 +6,9 @@ Create "src/post_process.c".
 
 `bool pp_inline_macros(ParseState* ps);`:
 - inline macro vpa rules
+- for `@{ ... }` rules, create literal symtab `ParseState.literals`, so later peg analysis can check if the literal is not defined.
+  - for example, `@{ "+" }` auto-creates token `@lit.+`
+- after this pass, there will be no longer "keyword entry" type in vpa rule definition
 
 ### peg: auto tag branches
 
@@ -41,6 +44,13 @@ foo = a [
   b4
 ]
 ```
+
+### peg: desugar literal tokens
+
+`bool pp_desugar_literal_tokens(ParseState* ps)`:
+- replace keyword literals (strings) in peg definition to token definition
+  - for example, `"+"` references token `@lit.+`
+- if token is not found in `ParseState.literals`, report error and return false
 
 ### peg: left recursion detect
 

@@ -4,6 +4,7 @@
 #include "re.h"
 #include "ustr.h"
 
+#include <ctype.h>
 #include <stdbool.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -182,12 +183,34 @@ static int32_t _cmd_compile(int32_t argc, char** argv) {
     _usage();
   }
 
-  if (!input || !arg_o) {
+  if (!input || !arg_o || !arg_p) {
     _usage();
   }
 
   const char* output = arg_o;
+  const char* prefix = arg_p;
   const char* triple = (arg_t == cmdopt_set) ? _detect_triple() : arg_t;
+
+  size_t prefix_len = strlen(prefix);
+  if (prefix_len == 0 || prefix_len > 64) {
+    fprintf(stderr, "nest: prefix must be 1-64 characters\n");
+    return 1;
+  }
+  if (!isalpha((unsigned char)prefix[0])) {
+    fprintf(stderr, "nest: prefix must start with a letter\n");
+    return 1;
+  }
+  for (size_t i = 1; i < prefix_len; i++) {
+    if (!isalnum((unsigned char)prefix[i]) && prefix[i] != '_') {
+      fprintf(stderr, "nest: prefix must match [a-zA-Z][a-zA-Z0-9_]*\n");
+      return 1;
+    }
+  }
+  if (strcmp(prefix, "parse") == 0 || strcmp(prefix, "ustr") == 0 || strcmp(prefix, "load") == 0 ||
+      strcmp(prefix, "lex") == 0) {
+    fprintf(stderr, "nest: prefix name reserved\n");
+    return 1;
+  }
   FILE* fin = fopen(input, "r");
   if (!fin) {
     perror(input);
@@ -243,15 +266,14 @@ static int32_t _cmd_compile(int32_t argc, char** argv) {
   }
 
   bool compress_memoize = !(arg_k && strcmp(arg_k, "false") == 0);
-  const char* main_func_name = arg_m;
-  peg_gen(&(PegGenInput){.rules = ps->peg_rules}, hw, w, compress_memoize);
+  peg_gen(&(PegGenInput){.rules = ps->peg_rules}, hw, w, compress_memoize, prefix);
   vpa_gen(
       &(VpaGenInput){
           .rules = ps->vpa_rules,
           .effects = ps->effects,
           .src = ps->src,
       },
-      hw, w, main_func_name);
+      hw, w, prefix);
 
 cleanup:
   irwriter_end(w);

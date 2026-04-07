@@ -779,12 +779,12 @@ static void _emit_child_load(HeaderWriter* hw, PegUnit* child, const char* cur_v
   }
 }
 
-static void _gen_load_impl(HeaderWriter* hw, PegRule* rule, int32_t rule_id, ScopeClosure* cl) {
+static void _gen_load_impl(HeaderWriter* hw, PegRule* rule, int32_t rule_id, ScopeClosure* cl, const char* prefix) {
   char struct_name[128];
   _make_struct_name(rule->name, struct_name, sizeof(struct_name));
 
   hw_blank(hw);
-  hw_fmt(hw, "static inline %s load_%s(PegRef ref) {\n", struct_name, rule->name);
+  hw_fmt(hw, "static inline %s %s_load_%s(PegRef ref) {\n", struct_name, prefix, rule->name);
   hw_fmt(hw, "  %s node = {0};\n", struct_name);
   hw_fmt(hw, "  %s* table = (%s*)ref.table;\n", cl->hdr_col_type, cl->hdr_col_type);
   hw_fmt(hw, "  int32_t col = ref.col;\n");
@@ -1056,7 +1056,7 @@ static void _gen_rule_shared(int32_t rule_id, ScopeClosure* cl, IrWriter* w) {
 
 // --- Public API ---
 
-void peg_gen(PegGenInput* input, HeaderWriter* hw, IrWriter* w, bool compress_memoize) {
+void peg_gen(PegGenInput* input, HeaderWriter* hw, IrWriter* w, bool compress_memoize, const char* prefix) {
   PegRule* rules = input->rules;
   int32_t n_rules = (int32_t)darray_size(rules);
   if (n_rules == 0) {
@@ -1153,22 +1153,6 @@ void peg_gen(PegGenInput* input, HeaderWriter* hw, IrWriter* w, bool compress_me
   hw_raw(hw, "static inline bool peg_has_next(PegRef ref) { return ref.next_col >= 0; }\n");
   hw_raw(hw, "static inline PegRef peg_get_next(PegRef ref) { return (PegRef){ref.table, ref.next_col, -1}; }\n");
   hw_blank(hw);
-  hw_raw(hw, "#include <stdlib.h>\n");
-  hw_raw(hw, "#include <string.h>\n");
-  hw_blank(hw);
-
-  for (int32_t si = 0; si < n_closures; si++) {
-    ScopeClosure* cl = &closures[si];
-    hw_fmt(hw, "static inline %s* peg_alloc_%s(int32_t n_cols) {\n", cl->hdr_col_type, cl->scope_name);
-    hw_fmt(hw, "  %s* table = (%s*)malloc(sizeof(%s) * n_cols);\n", cl->hdr_col_type, cl->hdr_col_type,
-           cl->hdr_col_type);
-    hw_fmt(hw, "  if (table) memset(table, 0xFF, sizeof(%s) * n_cols);\n", cl->hdr_col_type);
-    hw_fmt(hw, "  return table;\n");
-    hw_fmt(hw, "}\n\n");
-    hw_fmt(hw, "static inline void peg_free_%s(%s* table) { free(table); }\n\n", cl->scope_name, cl->hdr_col_type);
-  }
-
-  hw_blank(hw);
 
   // --- Header: load functions ---
   for (int32_t i = 0; i < n_rules; i++) {
@@ -1176,7 +1160,7 @@ void peg_gen(PegGenInput* input, HeaderWriter* hw, IrWriter* w, bool compress_me
     int32_t si = _closure_index(closures, sn);
     int32_t rid = symtab_find(&closures[si].defined_rules, rules[i].name);
     if (rid >= 0) {
-      _gen_load_impl(hw, &rules[i], rid, &closures[si]);
+      _gen_load_impl(hw, &rules[i], rid, &closures[si], prefix);
     }
   }
 

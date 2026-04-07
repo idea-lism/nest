@@ -670,12 +670,12 @@ static ScopeInfo* _collect_scopes(VpaRule* rules) {
 }
 
 // --- IR: main parse function wrapper ---
-// define void @{main_func_name}(ptr %src, i32 %len, ptr %tt)
+// define void @{prefix}_parse(ptr %src, i32 %len, ptr %tt)
 // Wraps vpa_lex and invokes parse_main afterwards.
 // pp_match_scopes guarantees the main scope has a parser.
 
-static void _gen_main_func_ir(const char* main_func_name, IrWriter* w) {
-  irwriter_rawf(w, "define void @%s(ptr %%src, i32 %%len, ptr %%tt) {\n", main_func_name);
+static void _gen_main_func_ir(const char* prefix, IrWriter* w) {
+  irwriter_rawf(w, "define void @%s_parse(ptr %%src, i32 %%len, ptr %%tt) {\n", prefix);
   irwriter_raw(w, "entry:\n");
   irwriter_raw(w, "  call void @vpa_lex(ptr %src, i32 %len, ptr %tt)\n");
   irwriter_raw(w, "  %ncols0 = call i32 @tc_size(ptr %tt)\n");
@@ -699,33 +699,21 @@ static void _gen_main_func_ir(const char* main_func_name, IrWriter* w) {
   irwriter_raw(w, "}\n\n");
 }
 
-static void _gen_main_func_header(const char* main_func_name, HeaderWriter* hw) {
+static void _gen_main_func_header(const char* prefix, HeaderWriter* hw) {
   hw_blank(hw);
   hw_comment(hw, "Main parse function");
-  hw_fmt(hw, "extern void %s(void* src, int32_t len, void* tt);\n", main_func_name);
+  hw_fmt(hw, "extern void %s_parse(void* src, int32_t len, void* tt);\n", prefix);
 }
 
 // --- Public API ---
 
-void vpa_gen(VpaGenInput* input, HeaderWriter* hw, IrWriter* w, const char* main_func_name) {
+void vpa_gen(VpaGenInput* input, HeaderWriter* hw, IrWriter* w, const char* prefix) {
   VpaRule* rules = input->rules;
-  KeywordEntry* keywords = input->keywords;
   EffectDecl* effects = input->effects;
 
   ActionRegistry reg = {0};
   reg.entries = darray_new(sizeof(ActionEntry), 0);
   reg.tok_names = darray_new(sizeof(char*), 0);
-
-  for (int32_t i = 0; i < (int32_t)darray_size(keywords); i++) {
-    int32_t len = keywords[i].lit_len;
-    char lit[len + 1];
-    memcpy(lit, keywords[i].src + keywords[i].lit_off, (size_t)len);
-    lit[len] = '\0';
-    int32_t tn_len = snprintf(NULL, 0, "%s.%s", keywords[i].group, lit) + 1;
-    char tok_name[tn_len];
-    snprintf(tok_name, (size_t)tn_len, "%s.%s", keywords[i].group, lit);
-    _register_token(&reg, tok_name);
-  }
 
   ScopeInfo* scopes = _collect_scopes(rules);
 
@@ -752,8 +740,8 @@ void vpa_gen(VpaGenInput* input, HeaderWriter* hw, IrWriter* w, const char* main
   _gen_action_dispatch_ir(&reg, w);
   _gen_lex_loop_ir(scopes, w, has_parse);
 
-  if (main_func_name) {
-    _gen_main_func_ir(main_func_name, w);
+  if (prefix) {
+    _gen_main_func_ir(prefix, w);
   }
 
   _gen_lex_declarations(scopes, hw);
@@ -761,8 +749,8 @@ void vpa_gen(VpaGenInput* input, HeaderWriter* hw, IrWriter* w, const char* main
   _gen_token_header(&reg, hw);
   _gen_action_table_header(&reg, scopes, hw);
 
-  if (main_func_name) {
-    _gen_main_func_header(main_func_name, hw);
+  if (prefix) {
+    _gen_main_func_header(prefix, hw);
   }
 
   for (int32_t i = 0; i < (int32_t)darray_size(scopes); i++) {

@@ -37,14 +37,6 @@ typedef struct {
   bool has_parser; // set by pp_match_scopes when a matching PEG rule exists
 } VpaRule;
 
-// Keyword entry
-typedef struct {
-  char* group; // (owned)
-  int32_t lit_off;
-  int32_t lit_len;
-  const char* src; // source pointer for accessing literal text
-} KeywordEntry;
-
 // Effect declaration
 typedef struct {
   char* hook_name;  // (owned)
@@ -58,10 +50,9 @@ typedef struct {
 
 // Input to vpa_gen
 typedef struct {
-  VpaRule* rules;         // darray
-  KeywordEntry* keywords; // darray
-  EffectDecl* effects;    // darray
+  VpaRule* rules;      // darray
+  EffectDecl* effects; // darray
   const char* src;
 } VpaGenInput;
 
-void vpa_gen(VpaGenInput* input, HeaderWriter* hw, IrWriter* w, const char* main_func_name);
+void vpa_gen(VpaGenInput* input, HeaderWriter* hw, IrWriter* w, const char* prefix);

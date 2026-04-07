@@ -2,6 +2,7 @@
 #include "../src/parse.h"
 #include "../src/post_process.h"
 #include "../src/re_ir.h"
+#include "../src/symtab.h"
 #include "../src/ustr.h"
 #include "../src/vpa.h"
 #include <assert.h>
@@ -264,62 +265,111 @@ TEST(test_no_left_recursion) {
 }
 
 // ============================================================================
-// pp_expand_keywords
+// pp_inline_macros: literal naming
 // ============================================================================
 
-TEST(test_expand_keywords) {
+TEST(test_inline_macros_literals) {
   ParseState* ps = parse_state_new();
-
-  ps->src = ustr_new(15, "\"if\"  \"else\"  ");
-  ps->src_len = 15;
-
   ps->vpa_rules = darray_new(sizeof(VpaRule), 0);
 
+  // main = { /a/ @word *kw }
   VpaRule main_rule = {.name = strdup("main"), .is_scope = true};
   main_rule.units = darray_new(sizeof(VpaUnit), 0);
-  VpaUnit tok_u = {.kind = VPA_REGEXP, .re = re_ir_new(), .name = strdup("id")};
-  tok_u.re = re_ir_emit_ch(tok_u.re, 'a');
-  darray_push(main_rule.units, tok_u);
-  VpaUnit kw_ref = {.kind = VPA_REF, .name = strdup("kw")};
+  VpaUnit word_u = {.kind = VPA_REGEXP, .re = re_ir_new(), .name = strdup("word")};
+  word_u.re = re_ir_emit_ch(word_u.re, 'a');
+  darray_push(main_rule.units, word_u);
+  VpaUnit kw_ref = {.kind = VPA_REF, .name = strdup("*kw")};
   darray_push(main_rule.units, kw_ref);
   darray_push(ps->vpa_rules, main_rule);
 
-  VpaRule kw_rule = {.name = strdup("kw"), .is_scope = false, .is_macro = false};
-  kw_rule.units = darray_new(sizeof(VpaUnit), 0);
-  darray_push(ps->vpa_rules, kw_rule);
+  // *kw = @{ "+" "-" }
+  VpaRule kw_macro = {.name = strdup("kw"), .is_scope = true, .is_macro = true};
+  kw_macro.units = darray_new(sizeof(VpaUnit), 0);
+  VpaUnit plus_u = {.kind = VPA_REGEXP, .re = re_ir_new()};
+  plus_u.re = re_ir_emit_ch(plus_u.re, '+');
+  darray_push(kw_macro.units, plus_u);
+  VpaUnit minus_u = {.kind = VPA_REGEXP, .re = re_ir_new()};
+  minus_u.re = re_ir_emit_ch(minus_u.re, '-');
+  darray_push(kw_macro.units, minus_u);
+  darray_push(ps->vpa_rules, kw_macro);
 
-  ps->keywords = darray_new(sizeof(KeywordEntry), 0);
-  KeywordEntry kw1 = {.group = strdup("kw"), .lit_off = 1, .lit_len = 2, .src = ps->src};
-  darray_push(ps->keywords, kw1);
-  KeywordEntry kw2 = {.group = strdup("kw"), .lit_off = 7, .lit_len = 4, .src = ps->src};
-  darray_push(ps->keywords, kw2);
-
-  ps->peg_rules = darray_new(sizeof(PegRule), 0);
-  ps->effects = darray_new(sizeof(EffectDecl), 0);
-  ps->ignores.names = (Symtab){0};
-  symtab_init(&ps->ignores.names, 0);
-
-  bool ok = pp_expand_keywords(ps);
+  bool ok = pp_inline_macros(ps);
   assert(ok);
 
-  bool found_kw_if = false;
-  bool found_kw_else = false;
-  for (int32_t i = 0; i < (int32_t)darray_size(ps->vpa_rules); i++) {
-    VpaRule* rule = &ps->vpa_rules[i];
-    for (int32_t j = 0; j < (int32_t)darray_size(rule->units); j++) {
-      VpaUnit* u = &rule->units[j];
-      if (u->kind == VPA_REGEXP && u->name) {
-        if (strstr(u->name, "kw.if")) {
-          found_kw_if = true;
-        }
-        if (strstr(u->name, "kw.else")) {
-          found_kw_else = true;
-        }
+  // literals symtab should have lit.+ and lit.-
+  assert(symtab_find(&ps->literals, "lit.+") >= 0);
+  assert(symtab_find(&ps->literals, "lit.-") >= 0);
+
+  // inlined units in main should have names
+  VpaRule* mr = &ps->vpa_rules[0];
+  bool found_plus = false;
+  bool found_minus = false;
+  for (int32_t j = 0; j < (int32_t)darray_size(mr->units); j++) {
+    VpaUnit* u = &mr->units[j];
+    if (u->kind == VPA_REGEXP && u->name) {
+      if (strcmp(u->name, "lit.+") == 0) {
+        found_plus = true;
+      }
+      if (strcmp(u->name, "lit.-") == 0) {
+        found_minus = true;
       }
     }
   }
-  assert(found_kw_if);
-  assert(found_kw_else);
+  assert(found_plus);
+  assert(found_minus);
+
+  parse_state_del(ps);
+}
+
+// ============================================================================
+// pp_desugar_literal_tokens
+// ============================================================================
+
+TEST(test_desugar_literal_tokens) {
+  ParseState* ps = parse_state_new();
+  symtab_init(&ps->literals, 0);
+  symtab_intern(&ps->literals, "lit.+");
+  symtab_intern(&ps->literals, "lit.-");
+
+  ps->peg_rules = darray_new(sizeof(PegRule), 0);
+
+  // expr = @num "+" @num
+  PegRule rule = {.name = strdup("expr"), .seq = {.kind = PEG_SEQ}};
+  rule.seq.children = darray_new(sizeof(PegUnit), 0);
+  PegUnit t1 = {.kind = PEG_TOK, .name = strdup("num")};
+  darray_push(rule.seq.children, t1);
+  PegUnit kw = {.kind = PEG_KEYWORD_TOK, .name = strdup("+")};
+  darray_push(rule.seq.children, kw);
+  PegUnit t2 = {.kind = PEG_TOK, .name = strdup("num")};
+  darray_push(rule.seq.children, t2);
+  darray_push(ps->peg_rules, rule);
+
+  bool ok = pp_desugar_literal_tokens(ps);
+  assert(ok);
+
+  PegUnit* desugared = &ps->peg_rules[0].seq.children[1];
+  assert(desugared->kind == PEG_TOK);
+  assert(strcmp(desugared->name, "lit.+") == 0);
+
+  parse_state_del(ps);
+}
+
+TEST(test_desugar_literal_tokens_missing) {
+  ParseState* ps = parse_state_new();
+  symtab_init(&ps->literals, 0);
+
+  ps->peg_rules = darray_new(sizeof(PegRule), 0);
+
+  PegRule rule = {.name = strdup("expr"), .seq = {.kind = PEG_SEQ}};
+  rule.seq.children = darray_new(sizeof(PegUnit), 0);
+  PegUnit kw = {.kind = PEG_KEYWORD_TOK, .name = strdup("?")};
+  darray_push(rule.seq.children, kw);
+  darray_push(ps->peg_rules, rule);
+
+  bool ok = pp_desugar_literal_tokens(ps);
+  assert(!ok);
+  assert(parse_has_error(ps));
+  assert(strstr(parse_get_error(ps), "?") != NULL);
 
   parse_state_del(ps);
 }
@@ -446,12 +496,14 @@ int main(void) {
 
   RUN(test_inline_macros);
   RUN(test_inline_macros_missing);
+  RUN(test_inline_macros_literals);
   RUN(test_auto_tag_branches);
   RUN(test_duplicate_tag_error);
   RUN(test_no_duplicate_tags);
   RUN(test_detect_left_recursion);
   RUN(test_no_left_recursion);
-  RUN(test_expand_keywords);
+  RUN(test_desugar_literal_tokens);
+  RUN(test_desugar_literal_tokens_missing);
   RUN(test_validate_missing_vpa_main);
   RUN(test_validate_missing_peg_main);
   RUN(test_validate_token_set_mismatch);

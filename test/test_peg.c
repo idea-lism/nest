@@ -40,7 +40,7 @@ TEST(test_empty_input) {
   IrWriter* w = irwriter_new(irf, NULL);
 
   irwriter_start(w, "test.c", ".");
-  peg_gen(&input, hw, w, false);
+  peg_gen(&input, hw, w, false, "test");
   irwriter_end(w);
 
   hw_del(hw);
@@ -90,7 +90,7 @@ TEST(test_simple_rule_naive) {
   IrWriter* w = irwriter_new(irf, NULL);
 
   irwriter_start(w, "test.c", ".");
-  peg_gen(&input, hw, w, false);
+  peg_gen(&input, hw, w, false, "test");
   irwriter_end(w);
 
   hw_del(hw);
@@ -155,7 +155,7 @@ TEST(test_row_shared_mode) {
   IrWriter* w = irwriter_new(irf, NULL);
 
   irwriter_start(w, "test.c", ".");
-  peg_gen(&input, hw, w, true);
+  peg_gen(&input, hw, w, true, "test");
   irwriter_end(w);
 
   hw_del(hw);
@@ -226,7 +226,7 @@ TEST(test_branch_rule) {
   IrWriter* w = irwriter_new(irf, NULL);
 
   irwriter_start(w, "test.c", ".");
-  peg_gen(&input, hw, w, false);
+  peg_gen(&input, hw, w, false, "test");
   irwriter_end(w);
 
   hw_del(hw);
@@ -243,9 +243,6 @@ TEST(test_branch_rule) {
   assert(strstr(hdr_buf, "node.is.tag2"));
   // Check: per-scope Col type
   assert(strstr(hdr_buf, "Col_main"));
-  // Check: per-scope alloc/free
-  assert(strstr(hdr_buf, "peg_alloc_main"));
-  assert(strstr(hdr_buf, "peg_free_main"));
 
   free(hdr_buf);
 
@@ -302,7 +299,7 @@ TEST(test_per_scope_col) {
   IrWriter* w = irwriter_new(irf, NULL);
 
   irwriter_start(w, "test.c", ".");
-  peg_gen(&input, hw, w, false);
+  peg_gen(&input, hw, w, false, "test");
   irwriter_end(w);
 
   hw_del(hw);
@@ -316,9 +313,6 @@ TEST(test_per_scope_col) {
   // s1 has 2 rules → slots[2], s2 has 1 rule → slots[1]
   assert(strstr(hdr_buf, "slots[2]"));
   assert(strstr(hdr_buf, "slots[1]"));
-  // Per-scope alloc/free
-  assert(strstr(hdr_buf, "peg_alloc_s1"));
-  assert(strstr(hdr_buf, "peg_alloc_s2"));
 
   free(hdr_buf);
 
@@ -373,7 +367,7 @@ TEST(test_row_shared_per_scope_compact) {
   IrWriter* w = irwriter_new(irf, NULL);
 
   irwriter_start(w, "test.c", ".");
-  peg_gen(&input, hw, w, true);
+  peg_gen(&input, hw, w, true, "test");
   irwriter_end(w);
 
   hw_del(hw);
@@ -437,7 +431,7 @@ TEST(test_scope_refs_not_expanded_in_sets) {
   IrWriter* w = irwriter_new(irf, NULL);
 
   irwriter_start(w, "test.c", ".");
-  peg_gen(&input, hw, w, true);
+  peg_gen(&input, hw, w, true, "test");
   irwriter_end(w);
 
   hw_del(hw);

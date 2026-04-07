@@ -250,10 +250,6 @@ static void _free_gen_input(VpaGenInput* input) {
     free(rule->name);
   }
   darray_del(input->rules);
-  for (int32_t i = 0; i < (int32_t)darray_size(input->keywords); i++) {
-    free(input->keywords[i].group);
-  }
-  darray_del(input->keywords);
   for (int32_t i = 0; i < (int32_t)darray_size(input->effects); i++) {
     free(input->effects[i].hook_name);
     darray_del(input->effects[i].effects);
@@ -306,7 +302,6 @@ static void _run_vpa_gen(VpaGenInput* input, const char* h_path, const char* ir_
 static VpaGenInput _empty_input(const char* src) {
   VpaGenInput input = {0};
   input.rules = darray_new(sizeof(VpaRule), 0);
-  input.keywords = darray_new(sizeof(KeywordEntry), 0);
   input.effects = darray_new(sizeof(EffectDecl), 0);
   input.src = src;
   return input;
@@ -558,12 +553,11 @@ TEST(test_vpa_gen_pop_scope) {
   _free_gen_input(&input);
 }
 
-// === vpa_gen: keywords ===
-// Keywords registered via input.keywords should produce TOK_ defines in the header.
+// === vpa_gen: literal tokens ===
+// Literal tokens named lit.xxx should produce TOK_LIT_XXX defines in the header.
 
 TEST(test_vpa_gen_keywords) {
-  const char* source = "int float";
-  VpaGenInput input = _empty_input(source);
+  VpaGenInput input = _empty_input("");
 
   VpaRule main_rule = {0};
   main_rule.name = strdup("main");
@@ -573,19 +567,28 @@ TEST(test_vpa_gen_keywords) {
   VpaUnit u = {.kind = VPA_REGEXP, .re = re_ir_new(), .name = strdup("ident")};
   u.re = re_ir_emit_ch(u.re, 'x');
   darray_push(main_rule.units, u);
-  darray_push(input.rules, main_rule);
 
-  KeywordEntry kw1 = {.group = strdup("kw"), .lit_off = 0, .lit_len = 3, .src = source};
-  KeywordEntry kw2 = {.group = strdup("kw"), .lit_off = 4, .lit_len = 5, .src = source};
-  darray_push(input.keywords, kw1);
-  darray_push(input.keywords, kw2);
+  VpaUnit kw1 = {.kind = VPA_REGEXP, .re = re_ir_new(), .name = strdup("lit.int")};
+  kw1.re = re_ir_emit_ch(kw1.re, 'i');
+  kw1.re = re_ir_emit_ch(kw1.re, 'n');
+  kw1.re = re_ir_emit_ch(kw1.re, 't');
+  darray_push(main_rule.units, kw1);
+
+  VpaUnit kw2 = {.kind = VPA_REGEXP, .re = re_ir_new(), .name = strdup("lit.float")};
+  kw2.re = re_ir_emit_ch(kw2.re, 'f');
+  kw2.re = re_ir_emit_ch(kw2.re, 'l');
+  kw2.re = re_ir_emit_ch(kw2.re, 'o');
+  kw2.re = re_ir_emit_ch(kw2.re, 'a');
+  kw2.re = re_ir_emit_ch(kw2.re, 't');
+  darray_push(main_rule.units, kw2);
+
+  darray_push(input.rules, main_rule);
 
   _run_vpa_gen(&input, BUILD_DIR "/test_vpa_kw.h", BUILD_DIR "/test_vpa_kw.ll");
 
   char* h_buf = _read_file(BUILD_DIR "/test_vpa_kw.h");
-  // "kw.int" -> "TOK_KW_INT", "kw.float" -> "TOK_KW_FLOAT"
-  assert(strstr(h_buf, "TOK_KW_INT") != NULL);
-  assert(strstr(h_buf, "TOK_KW_FLOAT") != NULL);
+  assert(strstr(h_buf, "TOK_LIT_INT") != NULL);
+  assert(strstr(h_buf, "TOK_LIT_FLOAT") != NULL);
   assert(strstr(h_buf, "TOK_IDENT") != NULL);
   free(h_buf);
 

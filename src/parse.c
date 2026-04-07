@@ -981,7 +981,7 @@ static bool _parse_peg_unit(ParseState* ps, TokenChunk* chunk, int32_t* tpos, Pe
   }
   if (t->tok_id == SCOPE_PEG_STR) {
     _next(chunk, tpos);
-    u->kind = PEG_TOK;
+    u->kind = PEG_KEYWORD_TOK;
     TokenChunk* sc = _scope_chunk(ps, t);
     u->name = (char*)sc->value;
     sc->value = NULL;
@@ -1117,6 +1117,7 @@ static void _free_state(ParseState* ps) {
   }
   darray_del(ps->effects);
   symtab_free(&ps->ignores.names);
+  symtab_free(&ps->literals);
 }
 
 ParseState* parse_state_new(void) { return calloc(1, sizeof(ParseState)); }

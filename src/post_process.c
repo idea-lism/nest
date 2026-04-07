@@ -2,6 +2,7 @@
 #include "post_process.h"
 #include "darray.h"
 #include "peg.h"
+#include "symtab.h"
 #include "ustr.h"
 #include "vpa.h"
 
@@ -11,6 +12,25 @@
 #include <string.h>
 
 // --- Helper functions ---
+
+static char* _ir_to_literal(ReIr ir) {
+  char* buf = darray_new(sizeof(char), 0);
+  for (int32_t i = 0; i < (int32_t)darray_size(ir); i++) {
+    if (ir[i].kind != RE_IR_APPEND_CH) {
+      darray_del(buf);
+      return NULL;
+    }
+    char enc[4] = {0};
+    int32_t n = ustr_encode_utf8(enc, ir[i].start);
+    for (int32_t j = 0; j < n; j++) {
+      darray_push(buf, enc[j]);
+    }
+  }
+  darray_push(buf, '\0');
+  char* result = strdup(buf);
+  darray_del(buf);
+  return result;
+}
 
 static bool _is_vpa_scope_rule(VpaRule* rule) {
   if (rule->is_macro) {
@@ -84,27 +104,6 @@ static PegRule* _find_peg_rule(ParseState* ps, const char* name) {
   return NULL;
 }
 
-static void _expand_kw_in_peg_unit(PegUnit* unit, ParseState* ps) {
-  if (unit->kind == PEG_TOK && unit->name) {
-    for (int32_t k = 0; k < (int32_t)darray_size(ps->keywords); k++) {
-      KeywordEntry* kw = &ps->keywords[k];
-      char* lit = ustr_slice(ps->src, kw->lit_off, kw->lit_off + kw->lit_len);
-      if (strcmp(unit->name, lit) == 0) {
-        parse_set_str(&unit->name, parse_sfmt("%s.%s", kw->group, lit));
-        ustr_del(lit);
-        break;
-      }
-      ustr_del(lit);
-    }
-  }
-  for (int32_t i = 0; i < (int32_t)darray_size(unit->children); i++) {
-    _expand_kw_in_peg_unit(&unit->children[i], ps);
-  }
-  if (unit->interlace) {
-    _expand_kw_in_peg_unit(unit->interlace, ps);
-  }
-}
-
 // --- Post-processing: inline macros ---
 
 static VpaRule* _find_macro(ParseState* ps, const char* name) {
@@ -130,13 +129,6 @@ static VpaUnit _clone_vpa_unit(VpaUnit* src) {
   return dst;
 }
 
-static void _add_vpa_unit(VpaRule* rule, VpaUnit unit) {
-  if (!rule->units) {
-    rule->units = darray_new(sizeof(VpaUnit), 0);
-  }
-  darray_push(rule->units, unit);
-}
-
 static void _free_vpa_unit(VpaUnit* unit) {
   re_ir_free(unit->re);
   free(unit->name);
@@ -148,6 +140,30 @@ static void _free_vpa_unit(VpaUnit* unit) {
 }
 
 bool pp_inline_macros(ParseState* ps) {
+  // name @{...} literal units and populate ps->literals
+  symtab_init(&ps->literals, 0);
+  for (int32_t r = 0; r < (int32_t)darray_size(ps->vpa_rules); r++) {
+    VpaRule* rule = &ps->vpa_rules[r];
+    if (!rule->is_macro) {
+      continue;
+    }
+    for (int32_t i = 0; i < (int32_t)darray_size(rule->units); i++) {
+      VpaUnit* unit = &rule->units[i];
+      if (unit->kind != VPA_REGEXP || unit->name) {
+        continue;
+      }
+      char* lit = _ir_to_literal(unit->re);
+      if (!lit) {
+        continue;
+      }
+      char* tok_name = parse_sfmt("lit.%s", lit);
+      unit->name = tok_name;
+      symtab_intern(&ps->literals, tok_name);
+      free(lit);
+    }
+  }
+
+  // inline *macro references
   for (int32_t r = 0; r < (int32_t)darray_size(ps->vpa_rules); r++) {
     VpaRule* rule = &ps->vpa_rules[r];
     if (rule->is_macro) {
@@ -185,54 +201,35 @@ bool pp_inline_macros(ParseState* ps) {
   return true;
 }
 
-bool pp_expand_keywords(ParseState* ps) {
-  for (int32_t k = 0; k < (int32_t)darray_size(ps->keywords); k++) {
-    KeywordEntry* kw = &ps->keywords[k];
-    char* lit = ustr_slice(ps->src, kw->lit_off, kw->lit_off + kw->lit_len);
-
-    char* tok_name = parse_sfmt("%s.%s", kw->group, lit);
-    ReIr ir = re_ir_build_literal(ps->src, kw->lit_off, kw->lit_len);
-
-    bool added = false;
-    for (int32_t i = 0; i < (int32_t)darray_size(ps->vpa_rules) && !added; i++) {
-      VpaRule* rule = &ps->vpa_rules[i];
-      if (rule->is_macro || !rule->is_scope) {
-        continue;
-      }
-      for (int32_t j = 0; j < (int32_t)darray_size(rule->units); j++) {
-        if (rule->units[j].kind == VPA_REF && rule->units[j].name && strcmp(rule->units[j].name, kw->group) == 0) {
-          VpaUnit unit = {.kind = VPA_REGEXP, .re = ir, .name = strdup(tok_name)};
-          _add_vpa_unit(rule, unit);
-          added = true;
-          break;
-        }
-      }
-    }
-
-    if (!added) {
-      for (int32_t i = 0; i < (int32_t)darray_size(ps->vpa_rules); i++) {
-        if (strcmp(ps->vpa_rules[i].name, kw->group) == 0) {
-          VpaUnit unit = {.kind = VPA_REGEXP, .re = ir, .name = strdup(tok_name)};
-          _add_vpa_unit(&ps->vpa_rules[i], unit);
-          added = true;
-          break;
-        }
-      }
-    }
-
-    if (!added) {
-      parse_error(ps, "keyword group '%s' not found for literal '%s'", kw->group, lit);
-      re_ir_free(ir);
-      ustr_del(lit);
+static bool _desugar_literal_in_unit(PegUnit* unit, ParseState* ps) {
+  if (unit->kind == PEG_KEYWORD_TOK && unit->name) {
+    char* tok_name = parse_sfmt("lit.%s", unit->name);
+    if (symtab_find(&ps->literals, tok_name) < 0) {
+      parse_error(ps, "literal token '%s' not defined in any @{...} rule", unit->name);
       free(tok_name);
       return false;
     }
-    ustr_del(lit);
-    free(tok_name);
+    parse_set_str(&unit->name, tok_name);
+    unit->kind = PEG_TOK;
   }
+  for (int32_t i = 0; i < (int32_t)darray_size(unit->children); i++) {
+    if (!_desugar_literal_in_unit(&unit->children[i], ps)) {
+      return false;
+    }
+  }
+  if (unit->interlace) {
+    if (!_desugar_literal_in_unit(unit->interlace, ps)) {
+      return false;
+    }
+  }
+  return true;
+}
 
+bool pp_desugar_literal_tokens(ParseState* ps) {
   for (int32_t p = 0; p < (int32_t)darray_size(ps->peg_rules); p++) {
-    _expand_kw_in_peg_unit(&ps->peg_rules[p].seq, ps);
+    if (!_desugar_literal_in_unit(&ps->peg_rules[p].seq, ps)) {
+      return false;
+    }
   }
   return true;
 }

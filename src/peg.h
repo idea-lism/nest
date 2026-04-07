@@ -97,4 +97,4 @@ typedef struct {
   char hdr_col_type[64]; // C header type name (e.g. "Col_main")
 } ScopeClosure;
 
-void peg_gen(PegGenInput* input, HeaderWriter* hw, IrWriter* w, bool compress_memoize);
+void peg_gen(PegGenInput* input, HeaderWriter* hw, IrWriter* w, bool compress_memoize, const char* prefix);

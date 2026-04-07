@@ -114,6 +114,10 @@ For each scope, PEG parsers generates a `parse_{scope_name}` function, the visib
 
 Since the VPA and the PEG share a same LLVM-IR writer, in PEG the parsing functions should be defined as internal, in VPA we can call them directly.
 
+### The `{prefix}_parse` loop
+
+Similar to the `_lex_scope` in the [parse spec][parse.md].
+
 ### Header generating
 
 Resulting parser needs:
