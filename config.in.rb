@@ -31,7 +31,7 @@ exe "test_re",
   deps: %w[ustr]
 
 exe "test_re_ir",
-  srcs: %w[test/test_re_ir.c src/re.c src/re_ir.c src/aut.c src/irwriter.c src/symtab.c src/bitset.c src/darray.c],
+  srcs: %w[test/test_re_ir.c test/compat.c src/re.c src/re_ir.c src/aut.c src/irwriter.c src/symtab.c src/bitset.c src/darray.c],
   deps: %w[ustr]
 
 exe "test_parse_gen",

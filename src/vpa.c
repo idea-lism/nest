@@ -145,9 +145,9 @@ static bool _is_first_user_hook(ActionRegistry* reg, int32_t idx) {
   return true;
 }
 
-static void _make_user_hook_symbol(const char* user_hook, char* out, size_t out_sz) {
+static int32_t _user_hook_symbol(const char* user_hook, char* out, size_t out_sz) {
   const char* hook_name = user_hook[0] == '.' ? user_hook + 1 : user_hook;
-  snprintf(out, out_sz, "vpa_hook_%s", hook_name);
+  return snprintf(out, out_sz, "vpa_hook_%s", hook_name);
 }
 
 // --- Resolve scope body into DFA/state patterns ---
@@ -309,9 +309,9 @@ static void _gen_user_hook_header(ActionRegistry* reg, HeaderWriter* hw) {
     if (!_is_first_user_hook(reg, i)) {
       continue;
     }
-    int32_t sym_len = snprintf(NULL, 0, "vpa_hook_%s", reg->entries[i].user_hook + 1) + 1;
+    int32_t sym_len = _user_hook_symbol(reg->entries[i].user_hook, NULL, 0) + 1;
     char symbol[sym_len];
-    _make_user_hook_symbol(reg->entries[i].user_hook, symbol, sizeof(symbol));
+    _user_hook_symbol(reg->entries[i].user_hook, symbol, sizeof(symbol));
     hw_fmt(hw, "void %s(void* tt, int32_t cp_start, int32_t cp_size);\n", symbol);
   }
   hw_blank(hw);
@@ -400,9 +400,9 @@ static void _gen_action_dispatch_ir(ActionRegistry* reg, IrWriter* w) {
     if (!_is_first_user_hook(reg, i)) {
       continue;
     }
-    int32_t sym_len = snprintf(NULL, 0, "vpa_hook_%s", reg->entries[i].user_hook + 1) + 1;
+    int32_t sym_len = _user_hook_symbol(reg->entries[i].user_hook, NULL, 0) + 1;
     char symbol[sym_len];
-    _make_user_hook_symbol(reg->entries[i].user_hook, symbol, sizeof(symbol));
+    _user_hook_symbol(reg->entries[i].user_hook, symbol, sizeof(symbol));
     irwriter_declare(w, "void", symbol, "ptr, i32, i32");
   }
   int32_t n = (int32_t)darray_size(reg->entries);
@@ -448,9 +448,9 @@ static void _gen_action_dispatch_ir(ActionRegistry* reg, IrWriter* w) {
     int32_t aid = i + 1;
     irwriter_rawf(w, "Lact_%d:\n", aid);
     if (_has_user_hook(e)) {
-      int32_t sym_len = snprintf(NULL, 0, "vpa_hook_%s", e->user_hook + 1) + 1;
+      int32_t sym_len = _user_hook_symbol(e->user_hook, NULL, 0) + 1;
       char symbol[sym_len];
-      _make_user_hook_symbol(e->user_hook, symbol, sizeof(symbol));
+      _user_hook_symbol(e->user_hook, symbol, sizeof(symbol));
       irwriter_rawf(w, "  call void @%s(ptr %%tt, i32 %%cp_start, i32 %%cp_size)\n", symbol);
     }
     if (e->tok_id > 0) {

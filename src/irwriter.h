@@ -64,3 +64,5 @@ void irwriter_type_def(IrWriter* w, const char* name, const char* body);
 void irwriter_raw(IrWriter* w, const char* text);
 void irwriter_rawf(IrWriter* w, const char* fmt, ...) __attribute__((format(printf, 2, 3)));
 void irwriter_vrawf(IrWriter* w, const char* fmt, va_list ap);
+
+void irwriter_comment(IrWriter* w, const char* fmt, ...) __attribute__((format(printf, 2, 3)));

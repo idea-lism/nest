@@ -1,6 +1,7 @@
 #include "../src/darray.h"
 #include "../src/re_ir.h"
 #include "../src/ustr.h"
+#include "compat.h"
 #include <assert.h>
 #include <stdio.h>
 #include <string.h>
@@ -337,70 +338,80 @@ TEST(test_ignore_case) {
 
 // --- re_ir_exec ---
 
-TEST(test_exec_single_ch) {
-  Aut* aut = aut_new("test", "test.re");
+static char* _exec_to_ir(ReIr ir, DebugInfo di) {
+  char* buf = NULL;
+  size_t sz = 0;
+  FILE* f = compat_open_memstream(&buf, &sz);
+  assert(f);
+  IrWriter* w = irwriter_new(f, NULL);
+  irwriter_start(w, "test.rules", ".");
+
+  Aut* aut = aut_new("match", "test.rules");
   Re* re = re_new(aut);
-
-  ReIr ir = re_ir_new();
-  ir = re_ir_emit_ch(ir, 'a');
-
-  re_ir_exec(re, ir, (DebugInfo){0, 0});
-
-  re_ir_free(ir);
+  re_ir_exec(re, ir, di);
+  re_action(re, 1);
+  aut_gen_dfa(aut, w, false);
   re_del(re);
   aut_del(aut);
+
+  irwriter_end(w);
+  irwriter_del(w);
+  compat_close_memstream(f, &buf, &sz);
+  return buf;
+}
+
+TEST(test_exec_single_ch) {
+  ReIr ir = re_ir_new();
+  ir = re_ir_emit_ch(ir, 'a');
+  char* out = _exec_to_ir(ir, (DebugInfo){0, 0});
+  re_ir_free(ir);
+
+  assert(strstr(out, "i32 97")); // 'a'
+  free(out);
 }
 
 TEST(test_exec_literal) {
-  Aut* aut = aut_new("test", "test.re");
-  Re* re = re_new(aut);
-
   char* s = ustr_new(3, "abc");
   ReIr ir = re_ir_build_literal(s, 0, 3);
-  re_ir_exec(re, ir, (DebugInfo){0, 0});
-
+  char* out = _exec_to_ir(ir, (DebugInfo){0, 0});
   re_ir_free(ir);
   ustr_del(s);
-  re_del(re);
-  aut_del(aut);
+
+  assert(strstr(out, "i32 97")); // 'a'
+  assert(strstr(out, "i32 98")); // 'b'
+  assert(strstr(out, "i32 99")); // 'c'
+  free(out);
 }
 
 TEST(test_exec_range) {
-  Aut* aut = aut_new("test", "test.re");
-  Re* re = re_new(aut);
-
   ReIr ir = re_ir_new();
   ir = re_ir_emit(ir, RE_IR_RANGE_BEGIN, 0, 0);
   ir = re_ir_emit(ir, RE_IR_APPEND_CH, 'a', 'z');
   ir = re_ir_emit(ir, RE_IR_APPEND_CH, '0', '9');
   ir = re_ir_emit(ir, RE_IR_RANGE_END, 0, 0);
-  re_ir_exec(re, ir, (DebugInfo){0, 0});
-
+  char* out = _exec_to_ir(ir, (DebugInfo){0, 0});
   re_ir_free(ir);
-  re_del(re);
-  aut_del(aut);
+
+  assert(strstr(out, "icmp sge i32 %cp"));
+  assert(strstr(out, "icmp sle i32 %cp"));
+  free(out);
 }
 
 TEST(test_exec_range_neg) {
-  Aut* aut = aut_new("test", "test.re");
-  Re* re = re_new(aut);
-
   ReIr ir = re_ir_new();
   ir = re_ir_emit(ir, RE_IR_RANGE_BEGIN, 0, 0);
   ir = re_ir_emit(ir, RE_IR_APPEND_CH, 'a', 'z');
   ir = re_ir_emit(ir, RE_IR_RANGE_NEG, 0, 0);
   ir = re_ir_emit(ir, RE_IR_RANGE_END, 0, 0);
-  re_ir_exec(re, ir, (DebugInfo){0, 0});
-
+  char* out = _exec_to_ir(ir, (DebugInfo){0, 0});
   re_ir_free(ir);
-  re_del(re);
-  aut_del(aut);
+
+  assert(strstr(out, "icmp sge i32 %cp"));
+  assert(strstr(out, "icmp sle i32 %cp"));
+  free(out);
 }
 
 TEST(test_exec_paren_fork) {
-  Aut* aut = aut_new("test", "test.re");
-  Re* re = re_new(aut);
-
   // (a|b)
   ReIr ir = re_ir_new();
   ir = re_ir_emit(ir, RE_IR_LPAREN, 0, 0);
@@ -408,118 +419,168 @@ TEST(test_exec_paren_fork) {
   ir = re_ir_emit(ir, RE_IR_FORK, 0, 0);
   ir = re_ir_emit_ch(ir, 'b');
   ir = re_ir_emit(ir, RE_IR_RPAREN, 0, 0);
-  re_ir_exec(re, ir, (DebugInfo){0, 0});
-
+  char* out = _exec_to_ir(ir, (DebugInfo){0, 0});
   re_ir_free(ir);
-  re_del(re);
-  aut_del(aut);
+
+  assert(strstr(out, "i32 97")); // 'a'
+  assert(strstr(out, "i32 98")); // 'b'
+  free(out);
 }
 
-TEST(test_exec_groups) {
-  Aut* aut = aut_new("test", "test.re");
-  Re* re = re_new(aut);
+TEST(test_exec_group_d) {
+  ReIr ir = re_ir_new();
+  ir = re_ir_emit(ir, RE_IR_RANGE_BEGIN, 0, 0);
+  ir = re_ir_emit(ir, RE_IR_APPEND_GROUP_D, 0, 0);
+  ir = re_ir_emit(ir, RE_IR_RANGE_END, 0, 0);
+  char* out = _exec_to_ir(ir, (DebugInfo){0, 0});
+  re_ir_free(ir);
 
+  // \d = [0-9], must produce range check for 48..57
+  assert(strstr(out, "icmp sge i32 %cp"));
+  assert(strstr(out, "icmp sle i32 %cp"));
+  free(out);
+}
+
+TEST(test_exec_group_w) {
+  ReIr ir = re_ir_new();
+  ir = re_ir_emit(ir, RE_IR_RANGE_BEGIN, 0, 0);
+  ir = re_ir_emit(ir, RE_IR_APPEND_GROUP_W, 0, 0);
+  ir = re_ir_emit(ir, RE_IR_RANGE_END, 0, 0);
+  char* out = _exec_to_ir(ir, (DebugInfo){0, 0});
+  re_ir_free(ir);
+
+  // \w = [0-9A-Z_a-z], must produce range checks
+  assert(strstr(out, "icmp sge i32 %cp"));
+  assert(strstr(out, "icmp sle i32 %cp"));
+  free(out);
+}
+
+TEST(test_exec_group_s) {
   ReIr ir = re_ir_new();
   ir = re_ir_emit(ir, RE_IR_RANGE_BEGIN, 0, 0);
   ir = re_ir_emit(ir, RE_IR_APPEND_GROUP_S, 0, 0);
-  ir = re_ir_emit(ir, RE_IR_APPEND_GROUP_W, 0, 0);
-  ir = re_ir_emit(ir, RE_IR_APPEND_GROUP_D, 0, 0);
+  ir = re_ir_emit(ir, RE_IR_RANGE_END, 0, 0);
+  char* out = _exec_to_ir(ir, (DebugInfo){0, 0});
+  re_ir_free(ir);
+
+  // \s = [\t-\r ] = ranges [9..13] and [32..32]
+  assert(strstr(out, "icmp sge i32 %cp"));
+  assert(strstr(out, "icmp sle i32 %cp"));
+  free(out);
+}
+
+TEST(test_exec_group_h) {
+  ReIr ir = re_ir_new();
+  ir = re_ir_emit(ir, RE_IR_RANGE_BEGIN, 0, 0);
   ir = re_ir_emit(ir, RE_IR_APPEND_GROUP_H, 0, 0);
+  ir = re_ir_emit(ir, RE_IR_RANGE_END, 0, 0);
+  char* out = _exec_to_ir(ir, (DebugInfo){0, 0});
+  re_ir_free(ir);
+
+  // \h = [0-9A-Fa-f], must produce range checks
+  assert(strstr(out, "icmp sge i32 %cp"));
+  assert(strstr(out, "icmp sle i32 %cp"));
+  free(out);
+}
+
+TEST(test_exec_group_dot) {
+  ReIr ir = re_ir_new();
+  ir = re_ir_emit(ir, RE_IR_RANGE_BEGIN, 0, 0);
   ir = re_ir_emit(ir, RE_IR_APPEND_GROUP_DOT, 0, 0);
   ir = re_ir_emit(ir, RE_IR_RANGE_END, 0, 0);
-  re_ir_exec(re, ir, (DebugInfo){0, 0});
-
+  char* out = _exec_to_ir(ir, (DebugInfo){0, 0});
   re_ir_free(ir);
-  re_del(re);
-  aut_del(aut);
+
+  // dot = [^\n] = [0..9] ++ [11..MAX_UNICODE], must produce range checks
+  assert(strstr(out, "icmp sge i32 %cp"));
+  assert(strstr(out, "icmp sle i32 %cp"));
+  free(out);
 }
 
 TEST(test_exec_c_escape) {
-  Aut* aut = aut_new("test", "test.re");
-  Re* re = re_new(aut);
-
   ReIr ir = re_ir_new();
   ir = re_ir_emit(ir, RE_IR_APPEND_C_ESCAPE, 'n', 0);
-  re_ir_exec(re, ir, (DebugInfo){0, 0});
-
+  char* out = _exec_to_ir(ir, (DebugInfo){0, 0});
   re_ir_free(ir);
-  re_del(re);
-  aut_del(aut);
+
+  assert(strstr(out, "i32 10")); // '\n'
+  free(out);
 }
 
 TEST(test_exec_hex) {
-  Aut* aut = aut_new("test", "test.re");
-  Re* re = re_new(aut);
-
   ReIr ir = re_ir_new();
   ir = re_ir_emit(ir, RE_IR_APPEND_HEX, 0x41, 0x41);
-  re_ir_exec(re, ir, (DebugInfo){0, 0});
-
+  char* out = _exec_to_ir(ir, (DebugInfo){0, 0});
   re_ir_free(ir);
-  re_del(re);
-  aut_del(aut);
+
+  assert(strstr(out, "i32 65")); // 0x41 = 'A'
+  free(out);
 }
 
 TEST(test_exec_action) {
-  Aut* aut = aut_new("test", "test.re");
-  Re* re = re_new(aut);
-
   ReIr ir = re_ir_new();
   ir = re_ir_emit_ch(ir, 'a');
-  ir = re_ir_emit(ir, RE_IR_ACTION, 1, 0);
-  re_ir_exec(re, ir, (DebugInfo){0, 0});
+  ir = re_ir_emit(ir, RE_IR_ACTION, 42, 0);
 
-  re_ir_free(ir);
+  char* buf = NULL;
+  size_t sz = 0;
+  FILE* f = compat_open_memstream(&buf, &sz);
+  assert(f);
+  IrWriter* w = irwriter_new(f, NULL);
+  irwriter_start(w, "test.rules", ".");
+  Aut* aut = aut_new("match", "test.rules");
+  Re* re = re_new(aut);
+  re_ir_exec(re, ir, (DebugInfo){0, 0});
+  aut_gen_dfa(aut, w, false);
   re_del(re);
   aut_del(aut);
+  irwriter_end(w);
+  irwriter_del(w);
+  compat_close_memstream(f, &buf, &sz);
+  re_ir_free(ir);
+
+  assert(strstr(buf, "i32 42, 1")); // action_id=42 emitted
+  free(buf);
 }
 
 TEST(test_exec_ignore_case) {
-  Aut* aut = aut_new("test", "test.re");
-  Re* re = re_new(aut);
-
   ReIr ir = re_ir_new();
   ir = re_ir_emit(ir, RE_IR_APPEND_CH_IC, 'A', 'A');
-  re_ir_exec(re, ir, (DebugInfo){0, 0});
-
+  char* out = _exec_to_ir(ir, (DebugInfo){0, 0});
   re_ir_free(ir);
-  re_del(re);
-  aut_del(aut);
+
+  assert(strstr(out, "i32 65")); // 'A'
+  assert(strstr(out, "i32 97")); // 'a' — case-insensitive adds both
+  free(out);
 }
 
 TEST(test_exec_range_ic) {
-  Aut* aut = aut_new("test", "test.re");
-  Re* re = re_new(aut);
-
   ReIr ir = re_ir_new();
   ir = re_ir_emit(ir, RE_IR_RANGE_BEGIN, 0, 0);
   ir = re_ir_emit(ir, RE_IR_APPEND_CH, 'a', 'z');
   ir = re_ir_emit(ir, RE_IR_RANGE_IC, 0, 0);
   ir = re_ir_emit(ir, RE_IR_RANGE_END, 0, 0);
-  re_ir_exec(re, ir, (DebugInfo){0, 0});
-
+  char* out = _exec_to_ir(ir, (DebugInfo){0, 0});
   re_ir_free(ir);
-  re_del(re);
-  aut_del(aut);
+
+  // [a-z] with ignore-case should produce ranges covering both a-z and A-Z
+  assert(strstr(out, "icmp sge i32 %cp"));
+  assert(strstr(out, "icmp sle i32 %cp"));
+  free(out);
 }
 
 TEST(test_exec_debug_info_passthrough) {
-  Aut* aut = aut_new("test", "test.re");
-  Re* re = re_new(aut);
-
   ReIr ir = re_ir_new();
   ir = re_ir_emit_ch(ir, 'x');
-  re_ir_exec(re, ir, (DebugInfo){10, 5});
-
+  char* out = _exec_to_ir(ir, (DebugInfo){10, 5});
   re_ir_free(ir);
-  re_del(re);
-  aut_del(aut);
+
+  assert(strstr(out, "i32 120"));                        // 'x'
+  assert(strstr(out, "DILocation(line: 10, column: 5")); // debug info passed through
+  free(out);
 }
 
 TEST(test_exec_complex) {
-  Aut* aut = aut_new("test", "test.re");
-  Re* re = re_new(aut);
-
   // (([a-z]|\d)\w) => action 1
   ReIr ir = re_ir_new();
   ir = re_ir_emit(ir, RE_IR_LPAREN, 0, 0);
@@ -537,11 +598,28 @@ TEST(test_exec_complex) {
   ir = re_ir_emit(ir, RE_IR_RANGE_END, 0, 0);
   ir = re_ir_emit(ir, RE_IR_RPAREN, 0, 0);
   ir = re_ir_emit(ir, RE_IR_ACTION, 1, 0);
-  re_ir_exec(re, ir, (DebugInfo){0, 0});
 
-  re_ir_free(ir);
+  char* buf = NULL;
+  size_t sz = 0;
+  FILE* f = compat_open_memstream(&buf, &sz);
+  assert(f);
+  IrWriter* w = irwriter_new(f, NULL);
+  irwriter_start(w, "test.rules", ".");
+  Aut* aut = aut_new("match", "test.rules");
+  Re* re = re_new(aut);
+  re_ir_exec(re, ir, (DebugInfo){0, 0});
+  aut_gen_dfa(aut, w, false);
   re_del(re);
   aut_del(aut);
+  irwriter_end(w);
+  irwriter_del(w);
+  compat_close_memstream(f, &buf, &sz);
+  re_ir_free(ir);
+
+  assert(strstr(buf, "i32 1, 1"));         // action_id=1 emitted
+  assert(strstr(buf, "icmp sge i32 %cp")); // ranges from \d and \w
+  assert(strstr(buf, "icmp sle i32 %cp"));
+  free(buf);
 }
 
 // --- Malformed IR (should crash/abort) ---
@@ -659,7 +737,11 @@ int main(void) {
   RUN(test_exec_range);
   RUN(test_exec_range_neg);
   RUN(test_exec_paren_fork);
-  RUN(test_exec_groups);
+  RUN(test_exec_group_d);
+  RUN(test_exec_group_w);
+  RUN(test_exec_group_s);
+  RUN(test_exec_group_h);
+  RUN(test_exec_group_dot);
   RUN(test_exec_c_escape);
   RUN(test_exec_hex);
   RUN(test_exec_action);

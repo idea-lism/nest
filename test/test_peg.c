@@ -35,6 +35,7 @@ TEST(test_empty_input) {
 
   FILE* hf = fopen(BUILD_DIR "/test_peg_empty.h", "w");
   FILE* irf = fopen(BUILD_DIR "/test_peg_empty.ll", "w");
+  assert(hf && irf);
   HeaderWriter* hw = hw_new(hf);
   IrWriter* w = irwriter_new(irf, NULL);
 
@@ -46,6 +47,24 @@ TEST(test_empty_input) {
   irwriter_del(w);
   fclose(irf);
   fclose(hf);
+
+  char* ir_buf;
+  size_t ir_sz;
+  FILE* ir_read = fopen(BUILD_DIR "/test_peg_empty.ll", "r");
+  assert(ir_read);
+  fseek(ir_read, 0, SEEK_END);
+  ir_sz = (size_t)ftell(ir_read);
+  rewind(ir_read);
+  ir_buf = malloc(ir_sz + 1);
+  fread(ir_buf, 1, ir_sz, ir_read);
+  ir_buf[ir_sz] = '\0';
+  fclose(ir_read);
+
+  assert(strstr(ir_buf, "source_filename") != NULL);
+  assert(strstr(ir_buf, "parse_") == NULL);
+
+  free(ir_buf);
+  _compile_test(BUILD_DIR "/test_peg_empty.h", BUILD_DIR "/test_peg_empty.ll");
   darray_del(input.rules);
 }
 

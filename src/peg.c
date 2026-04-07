@@ -411,6 +411,7 @@ static void _analyze_rule(ScopeClosure* cl, int32_t rule_id, Bitset* visiting, S
       }
     }
     for (int32_t i = 0; i < n; i++) {
+      _ensure_analyzed(cl, sr->as.seq[i], visiting, symbols);
       ScopedRule* child = &cl->rules[sr->as.seq[i]];
       Bitset* f = bitset_or(sr->first_set, child->first_set);
       bitset_del(sr->first_set);
@@ -420,6 +421,7 @@ static void _analyze_rule(ScopeClosure* cl, int32_t rule_id, Bitset* visiting, S
       }
     }
     for (int32_t i = n - 1; i >= 0; i--) {
+      _ensure_analyzed(cl, sr->as.seq[i], visiting, symbols);
       ScopedRule* child = &cl->rules[sr->as.seq[i]];
       Bitset* l = bitset_or(sr->last_set, child->last_set);
       bitset_del(sr->last_set);
@@ -1190,6 +1192,41 @@ void peg_gen(PegGenInput* input, HeaderWriter* hw, IrWriter* w, bool compress_me
   for (int32_t si = 0; si < n_closures; si++) {
     _define_col_type_ir(w, &closures[si]);
   }
+
+  // --- IR: token ID legend ---
+  {
+    int32_t n_tok = symtab_count(&tokens);
+    if (n_tok > 0) {
+      irwriter_rawf(w, "\n; Token IDs:\n");
+      for (int32_t t = 0; t < n_tok; t++) {
+        irwriter_rawf(w, ";   %d = @%s\n", t, symtab_get(&tokens, t));
+      }
+    }
+  }
+
+  // --- IR: slot mapping legend ---
+  for (int32_t si = 0; si < n_closures; si++) {
+    ScopeClosure* cl = &closures[si];
+    int32_t n_defined = symtab_count(&cl->defined_rules);
+    irwriter_rawf(w, "\n; Slot map (scope %s, %d slots):\n", cl->scope_name, cl->n_slots);
+    for (int32_t s = 0; s < cl->n_slots; s++) {
+      irwriter_rawf(w, ";   slot %d:", s);
+      int first = 1;
+      for (int32_t j = 0; j < n_defined; j++) {
+        if ((int32_t)cl->rules[j].slot_index == s) {
+          if (cl->n_bits > 0) {
+            irwriter_rawf(w, "%s %s(bit 0x%x)", first ? "" : " |", symtab_get(&cl->defined_rules, j),
+                          cl->rules[j].rule_bit_mask);
+          } else {
+            irwriter_rawf(w, "%s %s", first ? "" : " |", symtab_get(&cl->defined_rules, j));
+          }
+          first = 0;
+        }
+      }
+      irwriter_rawf(w, "\n");
+    }
+  }
+  irwriter_rawf(w, "\n");
 
   // --- IR: rule functions ---
   for (int32_t i = 0; i < n_rules; i++) {

@@ -67,6 +67,7 @@ static IrVal _to_val(GenCtx* ctx, const char* val) { return irwriter_imm(ctx->w,
 static IrVal _emit_leaf(GenCtx* ctx, int32_t rule_id, const char* col_expr) {
   ScopedRule* sr = &ctx->rules[rule_id];
   if (sr->kind == SCOPED_RULE_KIND_TOK) {
+    irwriter_comment(ctx->w, "token @%s", sr->name);
     return _tok(ctx->w, sr->as.tok, col_expr);
   }
   if (sr->kind == SCOPED_RULE_KIND_CALL) {

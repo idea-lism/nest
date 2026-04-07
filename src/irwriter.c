@@ -457,3 +457,12 @@ void irwriter_rawf(IrWriter* w, const char* fmt, ...) {
 }
 
 void irwriter_vrawf(IrWriter* w, const char* fmt, va_list ap) { vfprintf(w->out, fmt, ap); }
+
+void irwriter_comment(IrWriter* w, const char* fmt, ...) {
+  fprintf(w->out, "  ; ");
+  va_list ap;
+  va_start(ap, fmt);
+  vfprintf(w->out, fmt, ap);
+  va_end(ap);
+  fprintf(w->out, "\n");
+}
