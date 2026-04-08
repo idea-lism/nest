@@ -245,16 +245,16 @@ static void _collect_emit_set(ParseState* ps, VpaUnit* units, char*** set, char*
     } else if (u->kind == VPA_REF) {
       VpaRule* ref = u->name ? _find_vpa_rule(ps, u->name) : NULL;
       if (ref) {
-        if (!_is_vpa_scope_rule(ref)) {
-          if (!_str_set_has(*visited, u->name)) {
-            char* dup = strdup(u->name);
-            darray_push(*visited, dup);
-            _collect_emit_set(ps, ref->units, set, visited);
-            for (int32_t j = 0; j < (int32_t)darray_size(ref->units); j++) {
-              VpaUnit* ru = &ref->units[j];
-              if ((ru->kind == VPA_REGEXP) && (!ru->name || !ru->name[0])) {
-                _str_set_add(set, ref->name);
-              }
+        if (_is_vpa_scope_rule(ref)) {
+          _str_set_add(set, u->name);
+        } else if (!_str_set_has(*visited, u->name)) {
+          char* dup = strdup(u->name);
+          darray_push(*visited, dup);
+          _collect_emit_set(ps, ref->units, set, visited);
+          for (int32_t j = 0; j < (int32_t)darray_size(ref->units); j++) {
+            VpaUnit* ru = &ref->units[j];
+            if ((ru->kind == VPA_REGEXP) && (!ru->name || !ru->name[0])) {
+              _str_set_add(set, ref->name);
             }
           }
         }
@@ -272,7 +272,9 @@ static void _collect_peg_used_set(PegUnit* unit, char*** set, ParseState* ps, ch
   if (unit->kind == PEG_ID && unit->name) {
     if (!_str_set_has(*visited_rules, unit->name)) {
       VpaRule* vr = _find_vpa_rule(ps, unit->name);
-      if (!vr || !_is_vpa_scope_rule(vr)) {
+      if (vr && _is_vpa_scope_rule(vr)) {
+        _str_set_add(set, unit->name);
+      } else {
         char* dup = strdup(unit->name);
         darray_push(*visited_rules, dup);
         PegRule* ref = _find_peg_rule(ps, unit->name);
@@ -519,6 +521,146 @@ bool pp_check_duplicate_tags(ParseState* ps) {
   return true;
 }
 
+// --- Helpers for hook resolution ---
+
+static bool _unit_has_hook(VpaUnit* u, int32_t hook, ParseState* ps) {
+  if (u->hook == hook) {
+    return true;
+  }
+  if (u->user_hook && u->user_hook[0]) {
+    for (int32_t e = 0; e < (int32_t)darray_size(ps->effects); e++) {
+      if (strcmp(ps->effects[e].hook_name, u->user_hook) == 0) {
+        for (int32_t ef = 0; ef < (int32_t)darray_size(ps->effects[e].effects); ef++) {
+          if (ps->effects[e].effects[ef] == hook) {
+            return true;
+          }
+        }
+      }
+    }
+  }
+  return false;
+}
+
+// --- vpa scope validity ---
+
+bool pp_validate_vpa_scopes(ParseState* ps) {
+  bool has_main = false;
+  for (int32_t i = 0; i < (int32_t)darray_size(ps->vpa_rules); i++) {
+    VpaRule* rule = &ps->vpa_rules[i];
+    if (rule->is_macro) {
+      continue;
+    }
+    if (strcmp(rule->name, "main") == 0) {
+      has_main = true;
+    }
+    // no repeated scope names
+    for (int32_t j = 0; j < i; j++) {
+      if (!ps->vpa_rules[j].is_macro && strcmp(ps->vpa_rules[j].name, rule->name) == 0) {
+        parse_error(ps, "duplicate vpa scope name '%s'", rule->name);
+        return false;
+      }
+    }
+  }
+  if (!has_main) {
+    parse_error(ps, "'main' rule must exist in [[vpa]]");
+    return false;
+  }
+
+  for (int32_t i = 0; i < (int32_t)darray_size(ps->vpa_rules); i++) {
+    VpaRule* rule = &ps->vpa_rules[i];
+    if (!rule->is_scope || rule->is_macro) {
+      continue;
+    }
+
+    // determine leading re and scope body
+    int32_t body_start = 0;
+    bool is_main = strcmp(rule->name, "main") == 0;
+    int32_t n_units = (int32_t)darray_size(rule->units);
+
+    if (!is_main && n_units > 0 && rule->units[0].kind == VPA_REGEXP) {
+      // leading re before scope bracket
+      if ((int32_t)darray_size(rule->units[0].re) == 0) {
+        parse_error(ps, "scope '%s': leading pattern must match at least 1 character", rule->name);
+        return false;
+      }
+      body_start = 1;
+    }
+
+    // scopes except main must have .begin and .end
+    if (!is_main) {
+      bool has_begin = false;
+      bool has_end = false;
+      for (int32_t j = 0; j < n_units; j++) {
+        VpaUnit* u = &rule->units[j];
+        if (_unit_has_hook(u, TOK_HOOK_BEGIN, ps)) {
+          has_begin = true;
+        }
+        if (_unit_has_hook(u, TOK_HOOK_END, ps)) {
+          has_end = true;
+        }
+      }
+      if (has_begin && !has_end) {
+        parse_error(ps, "scope '%s' missing .end", rule->name);
+        return false;
+      }
+      if (!has_begin && has_end) {
+        parse_error(ps, "scope '%s' missing .begin", rule->name);
+        return false;
+      }
+      if (!has_begin && !has_end) {
+        parse_error(ps, "scope '%s' missing .begin and .end", rule->name);
+        return false;
+      }
+    }
+
+    // inside scope bracket: at most 1 empty re, and it must have .end or .fail
+    int32_t empty_count = 0;
+    for (int32_t j = body_start; j < n_units; j++) {
+      VpaUnit* u = &rule->units[j];
+      if (u->kind != VPA_REGEXP) {
+        continue;
+      }
+      if ((int32_t)darray_size(u->re) == 0) {
+        empty_count++;
+        if (empty_count > 1) {
+          parse_error(ps, "scope '%s': at most 1 empty pattern allowed inside scope", rule->name);
+          return false;
+        }
+        if (!_unit_has_hook(u, TOK_HOOK_END, ps) && !_unit_has_hook(u, TOK_HOOK_FAIL, ps)) {
+          parse_error(ps, "scope '%s': empty pattern must have .end or .fail", rule->name);
+          return false;
+        }
+      }
+    }
+  }
+
+  return true;
+}
+
+// --- peg rule validity ---
+
+bool pp_validate_peg_rules(ParseState* ps) {
+  bool has_main = false;
+  for (int32_t i = 0; i < (int32_t)darray_size(ps->peg_rules); i++) {
+    if (strcmp(ps->peg_rules[i].name, "main") == 0) {
+      has_main = true;
+    }
+    for (int32_t j = 0; j < i; j++) {
+      if (strcmp(ps->peg_rules[j].name, ps->peg_rules[i].name) == 0) {
+        parse_error(ps, "duplicate peg rule name '%s'", ps->peg_rules[i].name);
+        return false;
+      }
+    }
+  }
+  if (!has_main) {
+    parse_error(ps, "'main' rule must exist in [[peg]]");
+    return false;
+  }
+  return true;
+}
+
+// --- vpa & peg scope matching ---
+
 bool pp_match_scopes(ParseState* ps) {
   for (int32_t p = 0; p < (int32_t)darray_size(ps->peg_rules); p++) {
     VpaRule* vr = _find_vpa_rule(ps, ps->peg_rules[p].name);
@@ -531,81 +673,8 @@ bool pp_match_scopes(ParseState* ps) {
     parse_error(ps, "'main' scope must have a parser (missing [[peg]] main rule)");
     return false;
   }
-  return true;
-}
-
-bool pp_validate(ParseState* ps) {
-  bool has_vpa_main = false;
-  for (int32_t i = 0; i < (int32_t)darray_size(ps->vpa_rules); i++) {
-    if (!ps->vpa_rules[i].is_macro && strcmp(ps->vpa_rules[i].name, "main") == 0) {
-      has_vpa_main = true;
-      break;
-    }
-  }
-  if (!has_vpa_main) {
-    parse_error(ps, "'main' rule must exist in [[vpa]]");
-    return false;
-  }
-
-  bool has_peg_main = false;
-  for (int32_t i = 0; i < (int32_t)darray_size(ps->peg_rules); i++) {
-    if (strcmp(ps->peg_rules[i].name, "main") == 0) {
-      has_peg_main = true;
-      break;
-    }
-  }
-  if (!has_peg_main) {
-    parse_error(ps, "'main' rule must exist in [[peg]]");
-    return false;
-  }
-
-  for (int32_t i = 0; i < (int32_t)darray_size(ps->vpa_rules); i++) {
-    VpaRule* rule = &ps->vpa_rules[i];
-    if (!rule->is_scope || rule->is_macro || strcmp(rule->name, "main") == 0) {
-      continue;
-    }
-    bool has_begin = false;
-    bool has_end = false;
-    for (int32_t j = 0; j < (int32_t)darray_size(rule->units); j++) {
-      VpaUnit* u = &rule->units[j];
-      if (u->hook == TOK_HOOK_BEGIN) {
-        has_begin = true;
-      }
-      if (u->hook == TOK_HOOK_END) {
-        has_end = true;
-      }
-      if (u->user_hook && u->user_hook[0]) {
-        for (int32_t e = 0; e < (int32_t)darray_size(ps->effects); e++) {
-          if (strcmp(ps->effects[e].hook_name, u->user_hook) == 0) {
-            for (int32_t ef = 0; ef < (int32_t)darray_size(ps->effects[e].effects); ef++) {
-              if (ps->effects[e].effects[ef] == TOK_HOOK_BEGIN) {
-                has_begin = true;
-              }
-              if (ps->effects[e].effects[ef] == TOK_HOOK_END) {
-                has_end = true;
-              }
-            }
-          }
-        }
-      }
-    }
-    if (has_begin && !has_end) {
-      parse_error(ps, "scope '%s' missing .end", rule->name);
-      return false;
-    }
-    if (!has_begin && has_end) {
-      parse_error(ps, "scope '%s' missing .begin", rule->name);
-      return false;
-    }
-    if (!has_begin && !has_end) {
-      parse_error(ps, "scope '%s' missing .begin and .end", rule->name);
-      return false;
-    }
-  }
-
   if (!_validate_token_sets(ps)) {
     return false;
   }
-
   return true;
 }

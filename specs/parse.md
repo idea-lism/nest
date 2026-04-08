@@ -45,7 +45,7 @@ Act as a low-level ambiguity resolver, we prefer first-declared action when poss
 
 The lexer will remain simple, just to solve the state and the macro problem.
 
-Hooks have the info of current pos, parsed range, can return token id or end / fail.
+Hooks have the info of current pos and parsed range in `Token tok`, can return token id or primitive hook (details in [vpa](vpa.md)).
 
 Some tokens and their meanings (details in bootstrap.nest):
 - `%ignore` define tokens to ignore -- these tokens won't get into the stream
@@ -67,13 +67,14 @@ Some tokens and their meanings (details in bootstrap.nest):
 
 First implementation of the syntax, must be a manual recursive descend parser.
 
-More on the semantics:
+More on the semantics (see also validations in [post_process](post_process.md)):
 - `main` is the entrance
 - user_hook_ids are user-defined functions referenced via `\.{ID}` pattern. They fire during lexing for semantic actions (tracking definitions, resolving names, etc.) but don't affect the token stream unless combined with `%effect`.
 - Visibly pushdown automata
   - scope
     - a union of vpa_rules
-    - takes up a token in parent scope
+    - if a peg is defined on it, takes up a token in parent scope
+    - if there's no peg defined on it, flattend in parent scope
   - lookahead-1 for greedy match: when there can be no action to emit, the last min action wins (see also the MIN-RULE in aut.md)
 - when a vpa scope ends, if there is a `peg_rule` with the same id as the `vpa_rule`, invoke peg parsing on the scope tokens.
   - both peg & vpa -- create sub-stream and invoke parsing on sub-stream
@@ -106,7 +107,7 @@ Some tokens and their meanings (details in bootstrap.nest):
 - `+` plus, PEG possesive matching
 - `*` star, PEG possesive matching
 
-More on the semantics:
+More on the semantics (see also validations in [post_process](post_process.md)):
 - if there's id named `main` , it is the entrance. there must be one entrance
 - besides basic peg semantics, we have "join/interlace" semantics which interlaces the "operator" inside angle brackets with the base_multi_unit
   - to get the idea, can reference `chain` rule Haskell's Parsec library
@@ -329,6 +330,19 @@ Note that `%define` can reference each other, must avoid infinite recursions.
   - no expand sub-scope parsing -- sub-scopes are just a token_id match
 - Regexps are converted to [IR](re_ir.md)
 - When a scope is complete (at `.end` hook), it should invoke recursive descend parsing on the token stream chunk
+
+### Token & Hook numbering
+
+ATTENTION: this numbering system is for produced AST, don't confuse it with the bootstrap parser's design in [parse gen](parse_gen.md).
+
+Parser should produce what vpa_gen / peg_gen requires.
+
+- vpa_gen() & peg_gen() both needs tok_id, so we have symtab `ParseState.tokens` (num start from 1) for the uniq numbering
+- user defined needs hook_id, so we have symtab `ParseState.hooks` (num start from 0) for user-defined hook numbering
+  - the first enties are fixed for builtin hooks: .begin = 0, .end = 1, .fail = 2, .unparse = 3
+- unified action_unit_id (see also `action` in [bootstrap syntax](bootstrap.nest)):
+  - action_unit_id > 0: maps to token_id
+  - action_unit_id <= 0: maps to -hook_id
 
 ### What is FORBIDDEN, a no-go
 

@@ -375,23 +375,18 @@ TEST(test_desugar_literal_tokens_missing) {
 }
 
 // ============================================================================
-// pp_validate
+// pp_validate_vpa_scopes
 // ============================================================================
 
-TEST(test_validate_missing_vpa_main) {
+TEST(test_validate_vpa_missing_main) {
   ParseState* ps = parse_state_new();
   ps->vpa_rules = darray_new(sizeof(VpaRule), 0);
-  ps->peg_rules = darray_new(sizeof(PegRule), 0);
 
   VpaRule rule = {.name = strdup("other"), .is_scope = true};
   rule.units = darray_new(sizeof(VpaUnit), 0);
   darray_push(ps->vpa_rules, rule);
 
-  PegRule pr = {.name = strdup("main"), .seq = {.kind = PEG_SEQ}};
-  pr.seq.children = darray_new(sizeof(PegUnit), 0);
-  darray_push(ps->peg_rules, pr);
-
-  bool ok = pp_validate(ps);
+  bool ok = pp_validate_vpa_scopes(ps);
   assert(!ok);
   assert(strstr(parse_get_error(ps), "main") != NULL);
   assert(strstr(parse_get_error(ps), "vpa") != NULL);
@@ -399,20 +394,147 @@ TEST(test_validate_missing_vpa_main) {
   parse_state_del(ps);
 }
 
-TEST(test_validate_missing_peg_main) {
+TEST(test_validate_vpa_duplicate_scope) {
   ParseState* ps = parse_state_new();
   ps->vpa_rules = darray_new(sizeof(VpaRule), 0);
-  ps->peg_rules = darray_new(sizeof(PegRule), 0);
+  ps->effects = darray_new(sizeof(EffectDecl), 0);
 
-  VpaRule rule = {.name = strdup("main"), .is_scope = true};
-  rule.units = darray_new(sizeof(VpaUnit), 0);
-  darray_push(ps->vpa_rules, rule);
+  VpaRule main_r = {.name = strdup("main"), .is_scope = true};
+  main_r.units = darray_new(sizeof(VpaUnit), 0);
+  darray_push(ps->vpa_rules, main_r);
+
+  VpaRule dup1 = {.name = strdup("foo"), .is_scope = true};
+  dup1.units = darray_new(sizeof(VpaUnit), 0);
+  VpaUnit begin1 = {.kind = VPA_REGEXP, .re = re_ir_new(), .hook = TOK_HOOK_BEGIN};
+  begin1.re = re_ir_emit_ch(begin1.re, '(');
+  darray_push(dup1.units, begin1);
+  VpaUnit end1 = {.kind = VPA_REGEXP, .re = re_ir_new(), .hook = TOK_HOOK_END};
+  end1.re = re_ir_emit_ch(end1.re, ')');
+  darray_push(dup1.units, end1);
+  darray_push(ps->vpa_rules, dup1);
+
+  VpaRule dup2 = {.name = strdup("foo"), .is_scope = true};
+  dup2.units = darray_new(sizeof(VpaUnit), 0);
+  VpaUnit begin2 = {.kind = VPA_REGEXP, .re = re_ir_new(), .hook = TOK_HOOK_BEGIN};
+  begin2.re = re_ir_emit_ch(begin2.re, '[');
+  darray_push(dup2.units, begin2);
+  VpaUnit end2 = {.kind = VPA_REGEXP, .re = re_ir_new(), .hook = TOK_HOOK_END};
+  end2.re = re_ir_emit_ch(end2.re, ']');
+  darray_push(dup2.units, end2);
+  darray_push(ps->vpa_rules, dup2);
+
+  bool ok = pp_validate_vpa_scopes(ps);
+  assert(!ok);
+  assert(strstr(parse_get_error(ps), "duplicate") != NULL);
+  assert(strstr(parse_get_error(ps), "foo") != NULL);
+
+  parse_state_del(ps);
+}
+
+TEST(test_validate_vpa_leading_re_empty) {
+  ParseState* ps = parse_state_new();
+  ps->vpa_rules = darray_new(sizeof(VpaRule), 0);
+  ps->effects = darray_new(sizeof(EffectDecl), 0);
+
+  VpaRule main_r = {.name = strdup("main"), .is_scope = true};
+  main_r.units = darray_new(sizeof(VpaUnit), 0);
+  darray_push(ps->vpa_rules, main_r);
+
+  // scope with empty leading re
+  VpaRule scope = {.name = strdup("str"), .is_scope = true};
+  scope.units = darray_new(sizeof(VpaUnit), 0);
+  VpaUnit leader = {.kind = VPA_REGEXP, .re = re_ir_new(), .hook = TOK_HOOK_BEGIN};
+  darray_push(scope.units, leader);
+  VpaUnit body_end = {.kind = VPA_REGEXP, .re = re_ir_new(), .hook = TOK_HOOK_END};
+  body_end.re = re_ir_emit_ch(body_end.re, '"');
+  darray_push(scope.units, body_end);
+  darray_push(ps->vpa_rules, scope);
+
+  bool ok = pp_validate_vpa_scopes(ps);
+  assert(!ok);
+  assert(strstr(parse_get_error(ps), "leading") != NULL);
+  assert(strstr(parse_get_error(ps), "at least 1") != NULL);
+
+  parse_state_del(ps);
+}
+
+TEST(test_validate_vpa_empty_re_needs_hook) {
+  ParseState* ps = parse_state_new();
+  ps->vpa_rules = darray_new(sizeof(VpaRule), 0);
+  ps->effects = darray_new(sizeof(EffectDecl), 0);
+
+  VpaRule main_r = {.name = strdup("main"), .is_scope = true};
+  main_r.units = darray_new(sizeof(VpaUnit), 0);
+
+  // empty fallback without .end or .fail
+  VpaUnit fallback = {.kind = VPA_REGEXP, .re = re_ir_new(), .name = strdup("bad")};
+  darray_push(main_r.units, fallback);
+
+  darray_push(ps->vpa_rules, main_r);
+
+  bool ok = pp_validate_vpa_scopes(ps);
+  assert(!ok);
+  assert(strstr(parse_get_error(ps), "empty") != NULL);
+  assert(strstr(parse_get_error(ps), ".end") != NULL);
+
+  parse_state_del(ps);
+}
+
+TEST(test_validate_vpa_empty_re_with_end_ok) {
+  ParseState* ps = parse_state_new();
+  ps->vpa_rules = darray_new(sizeof(VpaRule), 0);
+  ps->effects = darray_new(sizeof(EffectDecl), 0);
+
+  VpaRule main_r = {.name = strdup("main"), .is_scope = true};
+  main_r.units = darray_new(sizeof(VpaUnit), 0);
+
+  VpaUnit tok = {.kind = VPA_REGEXP, .re = re_ir_new(), .name = strdup("id")};
+  tok.re = re_ir_emit_ch(tok.re, 'a');
+  darray_push(main_r.units, tok);
+
+  darray_push(ps->vpa_rules, main_r);
+
+  bool ok = pp_validate_vpa_scopes(ps);
+  assert(ok);
+
+  parse_state_del(ps);
+}
+
+TEST(test_validate_vpa_two_empty_re) {
+  ParseState* ps = parse_state_new();
+  ps->vpa_rules = darray_new(sizeof(VpaRule), 0);
+  ps->effects = darray_new(sizeof(EffectDecl), 0);
+
+  VpaRule main_r = {.name = strdup("main"), .is_scope = true};
+  main_r.units = darray_new(sizeof(VpaUnit), 0);
+
+  VpaUnit e1 = {.kind = VPA_REGEXP, .re = re_ir_new(), .hook = TOK_HOOK_END};
+  darray_push(main_r.units, e1);
+  VpaUnit e2 = {.kind = VPA_REGEXP, .re = re_ir_new(), .hook = TOK_HOOK_FAIL};
+  darray_push(main_r.units, e2);
+
+  darray_push(ps->vpa_rules, main_r);
+
+  bool ok = pp_validate_vpa_scopes(ps);
+  assert(!ok);
+  assert(strstr(parse_get_error(ps), "at most 1") != NULL);
+
+  parse_state_del(ps);
+}
+
+// ============================================================================
+// pp_validate_peg_rules
+// ============================================================================
+
+TEST(test_validate_peg_missing_main) {
+  ParseState* ps = parse_state_new();
+  ps->peg_rules = darray_new(sizeof(PegRule), 0);
 
   PegRule pr = {.name = strdup("helper"), .seq = {.kind = PEG_SEQ}};
   pr.seq.children = darray_new(sizeof(PegUnit), 0);
   darray_push(ps->peg_rules, pr);
 
-  bool ok = pp_validate(ps);
+  bool ok = pp_validate_peg_rules(ps);
   assert(!ok);
   assert(strstr(parse_get_error(ps), "main") != NULL);
   assert(strstr(parse_get_error(ps), "peg") != NULL);
@@ -420,7 +542,35 @@ TEST(test_validate_missing_peg_main) {
   parse_state_del(ps);
 }
 
-TEST(test_validate_token_set_mismatch) {
+TEST(test_validate_peg_duplicate_rule) {
+  ParseState* ps = parse_state_new();
+  ps->peg_rules = darray_new(sizeof(PegRule), 0);
+
+  PegRule main_r = {.name = strdup("main"), .seq = {.kind = PEG_SEQ}};
+  main_r.seq.children = darray_new(sizeof(PegUnit), 0);
+  darray_push(ps->peg_rules, main_r);
+
+  PegRule dup1 = {.name = strdup("expr"), .seq = {.kind = PEG_SEQ}};
+  dup1.seq.children = darray_new(sizeof(PegUnit), 0);
+  darray_push(ps->peg_rules, dup1);
+
+  PegRule dup2 = {.name = strdup("expr"), .seq = {.kind = PEG_SEQ}};
+  dup2.seq.children = darray_new(sizeof(PegUnit), 0);
+  darray_push(ps->peg_rules, dup2);
+
+  bool ok = pp_validate_peg_rules(ps);
+  assert(!ok);
+  assert(strstr(parse_get_error(ps), "duplicate") != NULL);
+  assert(strstr(parse_get_error(ps), "expr") != NULL);
+
+  parse_state_del(ps);
+}
+
+// ============================================================================
+// pp_match_scopes (token set validation)
+// ============================================================================
+
+TEST(test_match_scopes_token_mismatch) {
   ParseState* ps = parse_state_new();
   ps->vpa_rules = darray_new(sizeof(VpaRule), 0);
   ps->peg_rules = darray_new(sizeof(PegRule), 0);
@@ -445,14 +595,14 @@ TEST(test_validate_token_set_mismatch) {
   darray_push(pr.seq.children, t2);
   darray_push(ps->peg_rules, pr);
 
-  bool ok = pp_validate(ps);
+  bool ok = pp_match_scopes(ps);
   assert(!ok);
   assert(strstr(parse_get_error(ps), "num") != NULL);
 
   parse_state_del(ps);
 }
 
-TEST(test_validate_ok) {
+TEST(test_match_scopes_ok) {
   ParseState* ps = parse_state_new();
   ps->vpa_rules = darray_new(sizeof(VpaRule), 0);
   ps->peg_rules = darray_new(sizeof(PegRule), 0);
@@ -485,8 +635,108 @@ TEST(test_validate_ok) {
   darray_push(pr.seq.children, t2);
   darray_push(ps->peg_rules, pr);
 
-  bool ok = pp_validate(ps);
+  bool ok = pp_match_scopes(ps);
   assert(ok);
+
+  parse_state_del(ps);
+}
+
+TEST(test_match_scopes_scope_ref_in_sets) {
+  ParseState* ps = parse_state_new();
+  ps->vpa_rules = darray_new(sizeof(VpaRule), 0);
+  ps->peg_rules = darray_new(sizeof(PegRule), 0);
+  ps->effects = darray_new(sizeof(EffectDecl), 0);
+  ps->ignores.names = (Symtab){0};
+  symtab_init(&ps->ignores.names, 0);
+
+  // VPA: foo = /.../ { @a ... }  (a scope)
+  VpaRule foo_vr = {.name = strdup("foo"), .is_scope = true};
+  foo_vr.units = darray_new(sizeof(VpaUnit), 0);
+  VpaUnit foo_leader = {.kind = VPA_REGEXP, .re = re_ir_new(), .hook = TOK_HOOK_BEGIN};
+  foo_leader.re = re_ir_emit_ch(foo_leader.re, '(');
+  darray_push(foo_vr.units, foo_leader);
+  VpaUnit foo_a = {.kind = VPA_REGEXP, .re = re_ir_new(), .name = strdup("a")};
+  foo_a.re = re_ir_emit_ch(foo_a.re, 'x');
+  darray_push(foo_vr.units, foo_a);
+  VpaUnit foo_end = {.kind = VPA_REGEXP, .re = re_ir_new(), .hook = TOK_HOOK_END};
+  foo_end.re = re_ir_emit_ch(foo_end.re, ')');
+  darray_push(foo_vr.units, foo_end);
+  darray_push(ps->vpa_rules, foo_vr);
+
+  // VPA: main = { @b foo }  (emit_set = {@b, foo})
+  VpaRule main_vr = {.name = strdup("main"), .is_scope = true};
+  main_vr.units = darray_new(sizeof(VpaUnit), 0);
+  VpaUnit main_b = {.kind = VPA_REGEXP, .re = re_ir_new(), .name = strdup("b")};
+  main_b.re = re_ir_emit_ch(main_b.re, 'b');
+  darray_push(main_vr.units, main_b);
+  VpaUnit main_foo_ref = {.kind = VPA_REF, .name = strdup("foo")};
+  darray_push(main_vr.units, main_foo_ref);
+  darray_push(ps->vpa_rules, main_vr);
+
+  // PEG: foo = @a  (foo is a scope, won't be expanded)
+  PegRule foo_pr = {.name = strdup("foo"), .seq = {.kind = PEG_SEQ}};
+  foo_pr.seq.children = darray_new(sizeof(PegUnit), 0);
+  PegUnit foo_tok = {.kind = PEG_TOK, .name = strdup("a")};
+  darray_push(foo_pr.seq.children, foo_tok);
+  darray_push(ps->peg_rules, foo_pr);
+
+  // PEG: main = foo @b  (used_set = {foo, @b})
+  PegRule main_pr = {.name = strdup("main"), .seq = {.kind = PEG_SEQ}};
+  main_pr.seq.children = darray_new(sizeof(PegUnit), 0);
+  PegUnit main_foo = {.kind = PEG_ID, .name = strdup("foo")};
+  darray_push(main_pr.seq.children, main_foo);
+  PegUnit main_tok = {.kind = PEG_TOK, .name = strdup("b")};
+  darray_push(main_pr.seq.children, main_tok);
+  darray_push(ps->peg_rules, main_pr);
+
+  bool ok = pp_match_scopes(ps);
+  assert(ok);
+
+  parse_state_del(ps);
+}
+
+TEST(test_match_scopes_scope_ref_mismatch) {
+  ParseState* ps = parse_state_new();
+  ps->vpa_rules = darray_new(sizeof(VpaRule), 0);
+  ps->peg_rules = darray_new(sizeof(PegRule), 0);
+  ps->effects = darray_new(sizeof(EffectDecl), 0);
+  ps->ignores.names = (Symtab){0};
+  symtab_init(&ps->ignores.names, 0);
+
+  // VPA: foo = /.../ { @a ... }  (a scope)
+  VpaRule foo_vr = {.name = strdup("foo"), .is_scope = true};
+  foo_vr.units = darray_new(sizeof(VpaUnit), 0);
+  VpaUnit foo_leader = {.kind = VPA_REGEXP, .re = re_ir_new(), .hook = TOK_HOOK_BEGIN};
+  foo_leader.re = re_ir_emit_ch(foo_leader.re, '(');
+  darray_push(foo_vr.units, foo_leader);
+  VpaUnit foo_a = {.kind = VPA_REGEXP, .re = re_ir_new(), .name = strdup("a")};
+  foo_a.re = re_ir_emit_ch(foo_a.re, 'x');
+  darray_push(foo_vr.units, foo_a);
+  VpaUnit foo_end = {.kind = VPA_REGEXP, .re = re_ir_new(), .hook = TOK_HOOK_END};
+  foo_end.re = re_ir_emit_ch(foo_end.re, ')');
+  darray_push(foo_vr.units, foo_end);
+  darray_push(ps->vpa_rules, foo_vr);
+
+  // VPA: main = { @b foo }  (emit_set = {@b, foo})
+  VpaRule main_vr = {.name = strdup("main"), .is_scope = true};
+  main_vr.units = darray_new(sizeof(VpaUnit), 0);
+  VpaUnit main_b = {.kind = VPA_REGEXP, .re = re_ir_new(), .name = strdup("b")};
+  main_b.re = re_ir_emit_ch(main_b.re, 'b');
+  darray_push(main_vr.units, main_b);
+  VpaUnit main_foo_ref = {.kind = VPA_REF, .name = strdup("foo")};
+  darray_push(main_vr.units, main_foo_ref);
+  darray_push(ps->vpa_rules, main_vr);
+
+  // PEG: main = @b  (used_set = {@b}, missing foo)
+  PegRule main_pr = {.name = strdup("main"), .seq = {.kind = PEG_SEQ}};
+  main_pr.seq.children = darray_new(sizeof(PegUnit), 0);
+  PegUnit main_tok = {.kind = PEG_TOK, .name = strdup("b")};
+  darray_push(main_pr.seq.children, main_tok);
+  darray_push(ps->peg_rules, main_pr);
+
+  bool ok = pp_match_scopes(ps);
+  assert(!ok);
+  assert(strstr(parse_get_error(ps), "foo") != NULL);
 
   parse_state_del(ps);
 }
@@ -504,10 +754,18 @@ int main(void) {
   RUN(test_no_left_recursion);
   RUN(test_desugar_literal_tokens);
   RUN(test_desugar_literal_tokens_missing);
-  RUN(test_validate_missing_vpa_main);
-  RUN(test_validate_missing_peg_main);
-  RUN(test_validate_token_set_mismatch);
-  RUN(test_validate_ok);
+  RUN(test_validate_vpa_missing_main);
+  RUN(test_validate_vpa_duplicate_scope);
+  RUN(test_validate_vpa_leading_re_empty);
+  RUN(test_validate_vpa_empty_re_needs_hook);
+  RUN(test_validate_vpa_empty_re_with_end_ok);
+  RUN(test_validate_vpa_two_empty_re);
+  RUN(test_validate_peg_missing_main);
+  RUN(test_validate_peg_duplicate_rule);
+  RUN(test_match_scopes_token_mismatch);
+  RUN(test_match_scopes_ok);
+  RUN(test_match_scopes_scope_ref_in_sets);
+  RUN(test_match_scopes_scope_ref_mismatch);
 
   printf("all ok\n");
   return 0;

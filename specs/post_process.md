@@ -58,22 +58,31 @@ foo = a [
 - walk down peg rules to detect left recursions -- we don't allow this infinite loop.
   - when analyzing, be ware of the scope boundary: if there is a scope, we don't expand it. for example str is defined `str = str_char*`, but it always takes a slot in token stream so parsing the scope won't result in infinite loop.
 
+### vpa scope validity
+
+`bool pp_validate_vpa_scopes(ParseState* ps)`:
+- a `main` must exist.
+- no repeated scope names.
+- scopes except `main` must have a `.begin` (or user hook that produces the `.begin` effect) and one or more `.end` (or user hook that produces the `end` effect)
+- a leading `re`/`re_str`/``re_frag_id` (before scope bracket) must contain at least 1 char in it
+- inside a scope bracket `{ ... }`, after macro expansion, there can only be 1 `re`/`re_str`/``re_frag_id` that is empty
+  - if the branch is empty, it means a fallback action, the following action must have one of `.end`/`.fail`
+
+### peg rule validity
+
+`bool pp_validate_peg_rules(ParseState* ps)`:
+- `main` must exist.
+- no repeated peg rule names.
+
 ### vpa & peg
 
 `bool pp_match_scopes(ParseState* ps)`:
-- for every PEG scope, find related to VPA scope, and update attr `VpaRule.has_parser = true`.
+- Check if VPA scope has a corresponding PEG parser in the same name, if found, update VPA scope's attr `VpaRule.has_parser = true`.
 - For `main` scope, validate `has_parser` must be true.
-
-### other validations
-
-`bool pp_validate(ParseState* ps);`:
-- `main` must exist in `[[vpa]]` and `[[peg]]`
-- a leading `re`/`re_str`/``re_frag_id` must contain at least 1 char in it
-- in a scope, there can only be 1 `re`/`re_str`/``re_frag_id` that is empty
-  - if the branch is empty, it means a fallback action, the following action must have one of `.end`/`.fail`
-- each scope in `[[vpa]]` except `main` must have a `.begin` (or user hook that produces the `.begin` effect) and one or more `.end` (or user hook that produces the `end` effect)
-- for a same scope, used token set in `[[peg]]` must be the same as emit token set in `[[vpa]]`
-  - for example, 
-    - with vpa rule `foo = /.../ @a`, `bar = foo @b`, `bar`'s emit token set is `{@a, @b}` (including descendant's)
-    - with peg rule `foo = @c?`, `bar = foo @b`, `bar`'s used token set is `{@c, @b}`, this doesn't equal to the vpa rule's token set
-    - it is a mismatch, then we should raise error to tell user this rule doesn't add up
+- for every PEG scope, `used_set` must be the same as `emit_set` in the related VPA scope
+  - emit_set including tokens and scopes, but if the scope doesn't have a mapping peg parser, expand it.
+  - used_set including tokens and scopes, if a child-rule doesn't have a mapping vpa scope, expand it.
+  - for example,
+    1. with vpa rule `foo = /.../ { @a ... }`, `bar = /.../ { @b ... foo ... }`, then `bar`'s emit_set is `{@b, foo}`
+    2. with peg rule `foo = @a`, `baz = @c?`, `bar = foo @b baz`, and `baz` is not a scope, then `bar`'s used_set is `{@b, @c, foo}`
+    3. `{@b, foo} != {@b, @c, foo}`, then it is a mismatch, then we should raise error to tell user this rule doesn't add up

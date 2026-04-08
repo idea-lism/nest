@@ -139,8 +139,6 @@ Two rules A, B are **exclusive** if all the following conditions hold:
 - `!nullable(A)` and `!nullable(B)`
 - `first_set(A) ∩ first_set(B) = ∅` or `last_set(A) ∩ last_set(B) = ∅`
 
-Another exclusive check is:
-
 ### Interference graph and coloring
 
 Build an interference graph G where:
