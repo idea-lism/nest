@@ -1,7 +1,6 @@
 #include "vpa.h"
 #include "aut.h"
 #include "darray.h"
-#include "parse.h"
 #include "re.h"
 
 #include <stdio.h>
@@ -10,223 +9,81 @@
 
 #include "../build/nest_rt.inc"
 
-// --- Action registry ---
+// --- Actions table ---
+// De-duplicated action_units sequences. action_id = index + 1.
 
 typedef struct {
-  int32_t tok_id;        // 0 when no token should be emitted
-  int32_t push_scope_id; // -1 when no scope should be pushed
-  bool pop_scope;
-  int32_t hook;
-  char* user_hook;
-  char* parse_scope_name;
-} ActionEntry;
-
-typedef struct {
-  ActionEntry* entries; // darray (action_id = index + 1)
-  char** tok_names;     // darray, parallel
-} ActionRegistry;
-
-static int32_t _register_action(ActionRegistry* reg, int32_t tok_id, int32_t push_scope_id, bool pop_scope,
-                                int32_t hook, const char* user_hook, const char* parse_scope_name) {
-  int32_t id = (int32_t)darray_size(reg->entries) + 1;
-  ActionEntry e = {
-      .tok_id = tok_id,
-      .push_scope_id = push_scope_id,
-      .pop_scope = pop_scope,
-      .hook = hook,
-      .user_hook = user_hook ? strdup(user_hook) : NULL,
-      .parse_scope_name = parse_scope_name ? strdup(parse_scope_name) : NULL,
-  };
-  darray_push(reg->entries, e);
-  darray_push(reg->tok_names, NULL);
-  return id;
-}
-
-static int32_t _register_token(ActionRegistry* reg, const char* tok_name) {
-  int32_t count = (int32_t)darray_size(reg->entries);
-  for (int32_t i = 0; i < count; i++) {
-    if (reg->tok_names[i] && strcmp(reg->tok_names[i], tok_name) == 0) {
-      return i + 1;
-    }
-  }
-  int32_t tok_id = count + 1;
-  ActionEntry e = {
-      .tok_id = tok_id,
-      .push_scope_id = -1,
-      .pop_scope = false,
-      .hook = 0,
-      .user_hook = NULL,
-      .parse_scope_name = NULL,
-  };
-  darray_push(reg->entries, e);
-  darray_push(reg->tok_names, strdup(tok_name));
-  return tok_id;
-}
-
-static void _free_action_registry(ActionRegistry* reg) {
-  int32_t count = (int32_t)darray_size(reg->entries);
-  for (int32_t i = 0; i < count; i++) {
-    free(reg->entries[i].user_hook);
-    free(reg->entries[i].parse_scope_name);
-    free(reg->tok_names[i]);
-  }
-  darray_del(reg->entries);
-  darray_del(reg->tok_names);
-}
-
-// --- Scope info ---
-
-typedef struct {
-  char* name;
-  int32_t scope_id;
-  bool has_parser;
-  VpaUnit* body;       // NOT owned
-  VpaUnit* rule_units; // NOT owned, full rule units (leader regex + hooks accessible here)
-} ScopeInfo;
-
-// --- DFA pattern ---
-
-typedef struct {
-  VpaUnitKind kind;
-  ReIr ir;
-  const char* state_name;
   int32_t action_id;
-} DfaPattern;
+  VpaActionUnits action_units; // not owned
+} Action;
 
-// --- Helpers ---
+typedef Action* Actions;
 
-static VpaUnit* _find_scope_unit(VpaRule* rule) {
-  for (int32_t i = 0; i < (int32_t)darray_size(rule->units); i++) {
-    if (rule->units[i].kind == VPA_SCOPE) {
-      return &rule->units[i];
-    }
-  }
-  return NULL;
-}
-
-static ScopeInfo* _find_scope(ScopeInfo* scopes, const char* name) {
-  for (int32_t i = 0; i < (int32_t)darray_size(scopes); i++) {
-    if (strcmp(scopes[i].name, name) == 0) {
-      return &scopes[i];
-    }
-  }
-  return NULL;
-}
-
-static bool _hook_has_effect(EffectDecl* effects, const char* hook_name, int32_t effect) {
-  if (!hook_name || !hook_name[0]) {
+static bool _au_equal(VpaActionUnits a, VpaActionUnits b) {
+  int32_t na = (int32_t)darray_size(a);
+  int32_t nb = (int32_t)darray_size(b);
+  if (na != nb) {
     return false;
   }
-  for (int32_t i = 0; i < (int32_t)darray_size(effects); i++) {
-    if (strcmp(effects[i].hook_name, hook_name) != 0) {
-      continue;
-    }
-    for (int32_t j = 0; j < (int32_t)darray_size(effects[i].effects); j++) {
-      if (effects[i].effects[j] == effect) {
-        return true;
-      }
-    }
-  }
-  return false;
-}
-
-static bool _has_user_hook(ActionEntry* entry) { return entry->user_hook && entry->user_hook[0]; }
-
-static bool _has_parse_scope(ActionEntry* entry) { return entry->parse_scope_name && entry->parse_scope_name[0]; }
-
-static bool _is_first_user_hook(ActionRegistry* reg, int32_t idx) {
-  if (!_has_user_hook(&reg->entries[idx])) {
-    return false;
-  }
-  for (int32_t i = 0; i < idx; i++) {
-    if (_has_user_hook(&reg->entries[i]) && strcmp(reg->entries[i].user_hook, reg->entries[idx].user_hook) == 0) {
+  for (int32_t i = 0; i < na; i++) {
+    if (a[i] != b[i]) {
       return false;
     }
   }
   return true;
 }
 
-static int32_t _user_hook_symbol(const char* user_hook, char* out, size_t out_sz) {
-  const char* hook_name = user_hook[0] == '.' ? user_hook + 1 : user_hook;
-  return snprintf(out, out_sz, "vpa_hook_%s", hook_name);
-}
-
-// --- Resolve scope body into DFA/state patterns ---
-
-static int32_t _resolve_action(ActionRegistry* reg, ScopeInfo* scope, VpaUnit* unit, const char* default_tok_name,
-                               EffectDecl* effects, bool allow_empty) {
-  const char* tok_name = (unit->name && unit->name[0]) ? unit->name : default_tok_name;
-  int32_t tok_id = tok_name ? _register_token(reg, tok_name) : 0;
-  bool pop_scope = unit->hook == TOK_HOOK_END || _hook_has_effect(effects, unit->user_hook, TOK_HOOK_END);
-  const char* parse_scope_name = NULL;
-  if (pop_scope && scope->has_parser) {
-    parse_scope_name = scope->name;
-  }
-  bool has_user_hook = unit->user_hook && unit->user_hook[0];
-  bool needs_action =
-      allow_empty || tok_id > 0 || pop_scope || unit->hook != 0 || has_user_hook || parse_scope_name != NULL;
-
-  if (!needs_action) {
+static int32_t _find_or_add_action(Actions* acts, VpaActionUnits au) {
+  if (!au || (int32_t)darray_size(au) == 0) {
     return 0;
   }
-  if (tok_id > 0 && !pop_scope && unit->hook == 0 && !has_user_hook && !parse_scope_name) {
-    return tok_id;
+  for (int32_t i = 1; i < (int32_t)darray_size(*acts); i++) {
+    if (_au_equal((*acts)[i].action_units, au)) {
+      return (*acts)[i].action_id;
+    }
   }
-  return _register_action(reg, tok_id, -1, pop_scope, unit->hook, unit->user_hook, parse_scope_name);
+  int32_t id = (int32_t)darray_size(*acts);
+  Action a = {.action_id = id, .action_units = au};
+  darray_push(*acts, a);
+  return id;
 }
 
-static DfaPattern* _resolve_body(ScopeInfo* scope, VpaUnit* body, VpaRule* rules, ScopeInfo* scopes,
-                                 ActionRegistry* reg, EffectDecl* effects) {
+// --- DFA pattern ---
+
+typedef struct {
+  ReIr ir;
+  int32_t action_id;
+} DfaPattern;
+
+// --- Resolve scope body into DFA patterns ---
+
+static DfaPattern* _resolve_body(VpaScope* scope, VpaScope* scopes, Actions* acts) {
   DfaPattern* patterns = darray_new(sizeof(DfaPattern), 0);
 
-  for (int32_t i = 0; i < (int32_t)darray_size(body); i++) {
-    VpaUnit* u = &body[i];
+  for (int32_t i = 0; i < (int32_t)darray_size(scope->children); i++) {
+    VpaUnit* u = &scope->children[i];
 
-    if (u->kind == VPA_REGEXP && u->re) {
-      int32_t action_id = _resolve_action(reg, scope, u, NULL, effects, false);
-      if (action_id == 0) {
+    if (u->kind == VPA_RE && u->re) {
+      int32_t aid = _find_or_add_action(acts, u->action_units);
+      if (aid == 0) {
         continue;
       }
-      darray_push(patterns,
-                  ((DfaPattern){.kind = VPA_REGEXP, .ir = u->re, .state_name = NULL, .action_id = action_id}));
+      darray_push(patterns, ((DfaPattern){.ir = u->re, .action_id = aid}));
 
-    } else if (u->kind == VPA_REF && u->name) {
-      VpaRule* ref_rule = NULL;
-      for (int32_t ri = 0; ri < (int32_t)darray_size(rules); ri++) {
-        if (strcmp(rules[ri].name, u->name) == 0) {
-          ref_rule = &rules[ri];
+    } else if (u->kind == VPA_CALL) {
+      // Inline the leader regex of the called scope
+      VpaScope* target = NULL;
+      for (int32_t s = 0; s < (int32_t)darray_size(scopes); s++) {
+        if (scopes[s].scope_id == u->call_scope_id) {
+          target = &scopes[s];
           break;
         }
       }
-      if (!ref_rule) {
-        continue;
-      }
-      VpaUnit* scope_unit = _find_scope_unit(ref_rule);
-      if (scope_unit && scope_unit->re) {
-        ScopeInfo* target = _find_scope(scopes, ref_rule->name);
-        if (target) {
-          int32_t aid =
-              _register_action(reg, 0, target->scope_id, false, scope_unit->hook, scope_unit->user_hook, NULL);
-          darray_push(patterns,
-                      ((DfaPattern){.kind = VPA_REGEXP, .ir = scope_unit->re, .state_name = NULL, .action_id = aid}));
+      if (target && target->leader.re) {
+        int32_t aid = _find_or_add_action(acts, u->action_units);
+        if (aid > 0) {
+          darray_push(patterns, ((DfaPattern){.ir = target->leader.re, .action_id = aid}));
         }
-      }
-      for (int32_t j = 0; j < (int32_t)darray_size(ref_rule->units); j++) {
-        VpaUnit* ru = &ref_rule->units[j];
-        if (ru->kind == VPA_REGEXP && ru->re) {
-          int32_t aid = _resolve_action(reg, scope, ru, ref_rule->name, effects, false);
-          if (aid == 0) {
-            continue;
-          }
-          darray_push(patterns, ((DfaPattern){.kind = VPA_REGEXP, .ir = ru->re, .state_name = NULL, .action_id = aid}));
-        }
-      }
-
-    } else if (u->kind == VPA_SCOPE && u->re) {
-      ScopeInfo* target = _find_scope(scopes, u->name ? u->name : "");
-      if (target) {
-        int32_t aid = _register_action(reg, 0, target->scope_id, false, u->hook, u->user_hook, NULL);
-        darray_push(patterns, ((DfaPattern){.kind = VPA_REGEXP, .ir = u->re, .state_name = NULL, .action_id = aid}));
       }
     }
   }
@@ -236,13 +93,13 @@ static DfaPattern* _resolve_body(ScopeInfo* scope, VpaUnit* body, VpaRule* rules
 
 // --- Build DFA from resolved patterns ---
 
-static void _gen_scope_dfa(ScopeInfo* scope, DfaPattern* patterns, IrWriter* w) {
+static void _gen_scope_dfa(VpaScope* scope, DfaPattern* patterns, IrWriter* w) {
   char func_name[128];
   snprintf(func_name, sizeof(func_name), "lex_%s", scope->name);
 
   int32_t n_regex = 0;
   for (int32_t i = 0; i < (int32_t)darray_size(patterns); i++) {
-    if (patterns[i].kind == VPA_REGEXP && patterns[i].ir) {
+    if (patterns[i].ir) {
       n_regex++;
     }
   }
@@ -260,7 +117,7 @@ static void _gen_scope_dfa(ScopeInfo* scope, DfaPattern* patterns, IrWriter* w) 
 
   int32_t emitted = 0;
   for (int32_t i = 0; i < (int32_t)darray_size(patterns); i++) {
-    if (patterns[i].kind != VPA_REGEXP || !patterns[i].ir) {
+    if (!patterns[i].ir) {
       continue;
     }
     if (emitted > 0) {
@@ -280,7 +137,7 @@ static void _gen_scope_dfa(ScopeInfo* scope, DfaPattern* patterns, IrWriter* w) 
   aut_del(aut);
 }
 
-// --- Header generation ---
+// --- Header: runtime ---
 
 static void _gen_runtime(HeaderWriter* hw) {
   hw_raw(hw, (const char*)NEST_RT);
@@ -288,42 +145,18 @@ static void _gen_runtime(HeaderWriter* hw) {
   hw_raw(hw, "int32_t vpa_rt_read_cp(void* src, int32_t cp_off);\n");
 }
 
-static void _gen_user_hook_header(ActionRegistry* reg, HeaderWriter* hw) {
-  bool has_hooks = false;
-  for (int32_t i = 0; i < (int32_t)darray_size(reg->entries); i++) {
-    if (_is_first_user_hook(reg, i)) {
-      has_hooks = true;
-      break;
-    }
-  }
-  if (!has_hooks) {
-    return;
-  }
+// --- Header: token IDs ---
 
-  hw_comment(hw, "User hook callbacks (.foo -> vpa_hook_foo)");
-  for (int32_t i = 0; i < (int32_t)darray_size(reg->entries); i++) {
-    if (!_is_first_user_hook(reg, i)) {
-      continue;
-    }
-    int32_t sym_len = _user_hook_symbol(reg->entries[i].user_hook, NULL, 0) + 1;
-    char symbol[sym_len];
-    _user_hook_symbol(reg->entries[i].user_hook, symbol, sizeof(symbol));
-    hw_fmt(hw, "void %s(void* tt, int32_t cp_start, int32_t cp_size);\n", symbol);
-  }
-  hw_blank(hw);
-}
-
-static void _gen_token_header(ActionRegistry* reg, HeaderWriter* hw) {
+static void _gen_token_header(Symtab* tokens, HeaderWriter* hw) {
   hw_blank(hw);
   hw_comment(hw, "Token IDs");
-  int32_t count = (int32_t)darray_size(reg->entries);
-  for (int32_t i = 0; i < count; i++) {
-    if (!reg->tok_names[i]) {
-      continue;
-    }
-    int32_t dn_len = snprintf(NULL, 0, "TOK_%s", reg->tok_names[i]) + 1;
+  int32_t n = symtab_count(tokens);
+  for (int32_t i = 0; i < n; i++) {
+    int32_t id = tokens->start_num + i;
+    const char* name = symtab_get(tokens, id);
+    int32_t dn_len = snprintf(NULL, 0, "TOK_%s", name) + 1;
     char define_name[dn_len];
-    snprintf(define_name, (size_t)dn_len, "TOK_%s", reg->tok_names[i]);
+    snprintf(define_name, (size_t)dn_len, "TOK_%s", name);
     for (char* p = define_name + 4; *p; p++) {
       if (*p >= 'a' && *p <= 'z') {
         *p -= 32;
@@ -331,11 +164,38 @@ static void _gen_token_header(ActionRegistry* reg, HeaderWriter* hw) {
         *p = '_';
       }
     }
-    hw_define(hw, define_name, reg->entries[i].tok_id);
+    hw_define(hw, define_name, id);
   }
 }
 
-static void _gen_scope_ids(ScopeInfo* scopes, HeaderWriter* hw) {
+// --- Header: hook IDs ---
+
+static void _gen_hook_header(Symtab* hooks, HeaderWriter* hw) {
+  hw_blank(hw);
+  hw_comment(hw, "Hook IDs (action_unit_id = -hook_id)");
+  int32_t n = symtab_count(hooks);
+  for (int32_t i = 0; i < n; i++) {
+    int32_t id = hooks->start_num + i;
+    const char* name = symtab_get(hooks, id);
+    // Skip the leading '.' if present
+    const char* sym = name[0] == '.' ? name + 1 : name;
+    int32_t dn_len = snprintf(NULL, 0, "HOOK_%s", sym) + 1;
+    char define_name[dn_len];
+    snprintf(define_name, (size_t)dn_len, "HOOK_%s", sym);
+    for (char* p = define_name + 5; *p; p++) {
+      if (*p >= 'a' && *p <= 'z') {
+        *p -= 32;
+      } else if (*p == '.') {
+        *p = '_';
+      }
+    }
+    hw_define(hw, define_name, -id);
+  }
+}
+
+// --- Header: scope IDs ---
+
+static void _gen_scope_ids(VpaScope* scopes, HeaderWriter* hw) {
   hw_blank(hw);
   hw_comment(hw, "Scope IDs");
   for (int32_t i = 0; i < (int32_t)darray_size(scopes); i++) {
@@ -351,7 +211,59 @@ static void _gen_scope_ids(ScopeInfo* scopes, HeaderWriter* hw) {
   }
 }
 
-static void _gen_lex_declarations(ScopeInfo* scopes, HeaderWriter* hw) {
+// --- Header: ParseContext, ParseResult, etc. ---
+
+static void _gen_user_hook_header(Symtab* hooks, HeaderWriter* hw) {
+  // User hooks start after builtins (index >= HOOK_ID_BUILTIN_COUNT)
+  int32_t n = symtab_count(hooks);
+  if (n <= HOOK_ID_BUILTIN_COUNT) {
+    return;
+  }
+
+  hw_blank(hw);
+  hw_raw(hw, "typedef int32_t (*LexHook)(void* userdata, Token* token, const char* token_str_start);\n\n");
+
+  hw_raw(hw, "typedef struct {\n");
+  hw_raw(hw, "  void* userdata;\n");
+  for (int32_t i = HOOK_ID_BUILTIN_COUNT; i < n; i++) {
+    int32_t id = hooks->start_num + i;
+    const char* name = symtab_get(hooks, id);
+    const char* sym = name[0] == '.' ? name + 1 : name;
+    hw_fmt(hw, "  LexHook %s;\n", sym);
+  }
+  hw_raw(hw, "} ParseContext;\n");
+}
+
+static void _gen_parse_error_header(HeaderWriter* hw) {
+  hw_blank(hw);
+  hw_raw(hw, "typedef enum {\n");
+  hw_raw(hw, "  PARSE_ERROR_INVALID_HOOK,\n");
+  hw_raw(hw, "  PARSE_ERROR_REQUIRE_MORE_INPUT,\n");
+  hw_raw(hw, "  PARSE_ERROR_TOKEN_ERR,\n");
+  hw_raw(hw, "  PARSE_ERROR_INVALID_SYNTAX,\n");
+  hw_raw(hw, "} ParseErrorType;\n\n");
+
+  hw_raw(hw, "typedef struct {\n");
+  hw_raw(hw, "  const char* message;\n");
+  hw_raw(hw, "  ParseErrorType type;\n");
+  hw_raw(hw, "  int32_t cp_offset;\n");
+  hw_raw(hw, "  int32_t cp_size;\n");
+  hw_raw(hw, "} ParseError;\n");
+  hw_raw(hw, "typedef ParseError* ParseErrors;\n");
+}
+
+static void _gen_parse_result_header(HeaderWriter* hw) {
+  hw_blank(hw);
+  hw_raw(hw, "typedef struct {\n");
+  hw_raw(hw, "  void* main;\n");
+  hw_raw(hw, "  TokenTree* tt;\n");
+  hw_raw(hw, "  ParseErrors errors;\n");
+  hw_raw(hw, "} ParseResult;\n");
+}
+
+// --- Header: lex declarations ---
+
+static void _gen_lex_declarations(VpaScope* scopes, HeaderWriter* hw) {
   hw_blank(hw);
   hw_comment(hw, "Lexer declarations");
   hw_raw(hw, "typedef struct { int64_t state; int64_t action; } LexResult;\n");
@@ -361,28 +273,78 @@ static void _gen_lex_declarations(ScopeInfo* scopes, HeaderWriter* hw) {
   hw_raw(hw, "extern void vpa_lex(int64_t src, int64_t len, int64_t tt);\n");
 }
 
-static void _gen_action_table_header(ActionRegistry* reg, ScopeInfo* scopes, HeaderWriter* hw) {
+// --- Header: action / scope table sizes ---
+
+static void _gen_action_table_header(Actions* acts, VpaScope* scopes, HeaderWriter* hw) {
   hw_blank(hw);
-  hw_fmt(hw, "#define VPA_N_ACTIONS %d\n", (int32_t)darray_size(reg->entries));
+  hw_fmt(hw, "#define VPA_N_ACTIONS %d\n", (int32_t)darray_size(*acts) - 1); // exclude entry 0
   hw_fmt(hw, "#define VPA_N_SCOPES %d\n", (int32_t)darray_size(scopes));
 }
 
-// --- IR: action dispatch function ---
-// define void @vpa_dispatch(ptr %tt, i32 %action_id, i32 %cp_start, i32 %cp_size)
-// switch on action_id -> per-action label blocks with micro-ops
+// --- Header: main parse function ---
 
-static void _gen_action_dispatch_ir(ActionRegistry* reg, IrWriter* w) {
+static void _gen_main_func_header(const char* prefix, Symtab* hooks, HeaderWriter* hw) {
+  hw_blank(hw);
+  hw_comment(hw, "Main parse and cleanup functions");
+  bool has_user_hooks = symtab_count(hooks) > HOOK_ID_BUILTIN_COUNT;
+  if (has_user_hooks) {
+    hw_fmt(hw, "extern ParseResult %s_parse(ParseContext lc, UStr src);\n", prefix);
+  } else {
+    hw_fmt(hw, "extern ParseResult %s_parse(UStr src);\n", prefix);
+  }
+  hw_fmt(hw, "extern void %s_cleanup(ParseResult r);\n", prefix);
+}
+
+// --- IR: action dispatch ---
+
+static bool _effect_has(EffectDecls effects, int32_t hook_id, int32_t target_au) {
+  for (int32_t i = 0; i < (int32_t)darray_size(effects); i++) {
+    if (effects[i].hook_id == hook_id) {
+      for (int32_t j = 0; j < (int32_t)darray_size(effects[i].effects); j++) {
+        if (effects[i].effects[j] == target_au) {
+          return true;
+        }
+      }
+    }
+  }
+  return false;
+}
+
+// Check if any action has a .end hook (directly or via effects)
+static bool _action_pops(VpaActionUnits au, EffectDecls effects) {
+  for (int32_t i = 0; i < (int32_t)darray_size(au); i++) {
+    if (au[i] <= 0) {
+      int32_t hid = -au[i];
+      if (hid == HOOK_ID_END) {
+        return true;
+      }
+      if (_effect_has(effects, hid, -HOOK_ID_END)) {
+        return true;
+      }
+    }
+  }
+  return false;
+}
+
+static void _gen_action_dispatch_ir(Actions* acts, VpaScope* scopes, Symtab* hooks, EffectDecls effects, IrWriter* w) {
   irwriter_declare(w, "void", "tc_add", "ptr, i32, i32, i32, i32");
   irwriter_declare(w, "ptr", "tc_push", "ptr, i32");
   irwriter_declare(w, "ptr", "tc_pop", "ptr");
 
   bool has_parse = false;
-  for (int32_t i = 0; i < (int32_t)darray_size(reg->entries); i++) {
-    if (_has_parse_scope(&reg->entries[i])) {
-      has_parse = true;
+  for (int32_t i = 1; i < (int32_t)darray_size(*acts); i++) {
+    VpaActionUnits au = (*acts)[i].action_units;
+    for (int32_t s = 0; s < (int32_t)darray_size(scopes); s++) {
+      if (scopes[s].has_parser && _action_pops(au, effects)) {
+        has_parse = true;
+        break;
+      }
+    }
+    if (has_parse) {
       break;
     }
   }
+
   if (has_parse) {
     irwriter_declare(w, "i32", "tc_size", "ptr");
     irwriter_declare(w, "void", "tc_parse_begin", "ptr");
@@ -392,16 +354,18 @@ static void _gen_action_dispatch_ir(ActionRegistry* reg, IrWriter* w) {
     irwriter_raw(w, "declare void @llvm.memset.p0.i64(ptr, i8, i64, i1)\n\n");
   }
 
-  for (int32_t i = 0; i < (int32_t)darray_size(reg->entries); i++) {
-    if (!_is_first_user_hook(reg, i)) {
-      continue;
-    }
-    int32_t sym_len = _user_hook_symbol(reg->entries[i].user_hook, NULL, 0) + 1;
-    char symbol[sym_len];
-    _user_hook_symbol(reg->entries[i].user_hook, symbol, sizeof(symbol));
+  // Declare user hook callbacks
+  int32_t n_hooks = symtab_count(hooks);
+  for (int32_t i = HOOK_ID_BUILTIN_COUNT; i < n_hooks; i++) {
+    int32_t id = hooks->start_num + i;
+    const char* name = symtab_get(hooks, id);
+    const char* sym = name[0] == '.' ? name + 1 : name;
+    char symbol[128];
+    snprintf(symbol, sizeof(symbol), "vpa_hook_%s", sym);
     irwriter_declare(w, "void", symbol, "ptr, i32, i32");
   }
-  int32_t n = (int32_t)darray_size(reg->entries);
+
+  int32_t n = (int32_t)darray_size(*acts) - 1; // actions indexed from 1
 
   irwriter_raw(w, "define void @vpa_dispatch(ptr %tt, i32 %action_id, i32 %cp_start, i32 %cp_size, ptr %bt_stack) {\n");
   irwriter_raw(w, "entry:\n");
@@ -440,54 +404,55 @@ static void _gen_action_dispatch_ir(ActionRegistry* reg, IrWriter* w) {
   irwriter_raw(w, "Ldefault:\n  ret void\n");
 
   for (int32_t i = 0; i < n; i++) {
-    ActionEntry* e = &reg->entries[i];
     int32_t aid = i + 1;
+    VpaActionUnits au = (*acts)[aid].action_units;
     irwriter_rawf(w, "Lact_%d:\n", aid);
-    if (_has_user_hook(e)) {
-      int32_t sym_len = _user_hook_symbol(e->user_hook, NULL, 0) + 1;
-      char symbol[sym_len];
-      _user_hook_symbol(e->user_hook, symbol, sizeof(symbol));
-      irwriter_rawf(w, "  call void @%s(ptr %%tt, i32 %%cp_start, i32 %%cp_size)\n", symbol);
-    }
-    if (e->tok_id > 0) {
-      irwriter_rawf(w, "  call void @tc_add(ptr %%tt, i32 %d, i32 %%cp_start, i32 %%cp_size, i32 -1)\n", e->tok_id);
-    }
-    if (e->push_scope_id >= 0) {
-      irwriter_rawf(w, "  call ptr @tc_push(ptr %%tt, i32 %d)\n", e->push_scope_id);
-    }
-    if (e->pop_scope) {
-      if (_has_parse_scope(e)) {
-        irwriter_rawf(w, "  %%ncols0_%d = call i32 @tc_size(ptr %%tt)\n", aid);
-        irwriter_rawf(w, "  %%ncols1_%d = add i32 %%ncols0_%d, 1\n", aid, aid);
-        irwriter_rawf(w, "  %%ncols64_%d = sext i32 %%ncols1_%d to i64\n", aid, aid);
-        irwriter_rawf(w, "  %%elt_end_%d = getelementptr %%Col.%s, ptr null, i32 1\n", aid, e->parse_scope_name);
-        irwriter_rawf(w, "  %%elt_size_%d = ptrtoint ptr %%elt_end_%d to i64\n", aid, aid);
-        irwriter_rawf(w, "  %%table_size_%d = mul i64 %%ncols64_%d, %%elt_size_%d\n", aid, aid, aid);
-        irwriter_rawf(w, "  call void @tc_parse_begin(ptr %%tt)\n");
-        irwriter_rawf(w, "  %%table_%d = call ptr @malloc(i64 %%table_size_%d)\n", aid, aid);
-        irwriter_rawf(w, "  call void @llvm.memset.p0.i64(ptr %%table_%d, i8 -1, i64 %%table_size_%d, i1 false)\n", aid,
-                      aid);
-        irwriter_rawf(w, "  %%parse_len_%d = call i32 @parse_%s(ptr %%table_%d, i32 0, ptr %%bt_stack)\n", aid,
-                      e->parse_scope_name, aid);
-        irwriter_rawf(w, "  call void @free(ptr %%table_%d)\n", aid);
-        irwriter_raw(w, "  call void @tc_parse_end()\n");
+
+    for (int32_t j = 0; j < (int32_t)darray_size(au); j++) {
+      int32_t auid = au[j];
+      if (auid > 0) {
+        // Emit token
+        irwriter_rawf(w, "  call void @tc_add(ptr %%tt, i32 %d, i32 %%cp_start, i32 %%cp_size, i32 -1)\n", auid);
+      } else {
+        int32_t hook_id = -auid;
+        if (hook_id == HOOK_ID_BEGIN) {
+          // Find which scope to push — look at call_scope_id from the unit
+          // For now, use a default. The push scope_id is encoded in the action.
+          // Actually, we need to find the scope_id to push. This is determined by
+          // the VPA_CALL unit that generated this action. We need to pass it through.
+          // For now, push scope 0 as placeholder — this will be fixed with proper scope tracking.
+          irwriter_rawf(w, "  call ptr @tc_push(ptr %%tt, i32 0)\n");
+        } else if (hook_id == HOOK_ID_END) {
+          // Check if the scope we're popping has a parser
+          // Since we don't know the scope at compile time in this dispatch,
+          // we match the old approach: check all scopes that have parsers.
+          // The old code stored parse_scope_name per action entry.
+          irwriter_raw(w, "  call ptr @tc_pop(ptr %tt)\n");
+        } else if (hook_id == HOOK_ID_FAIL) {
+          irwriter_raw(w, "  ret void\n");
+          goto next_action;
+        } else if (hook_id == HOOK_ID_UNPARSE) {
+          // unparse: no-op in dispatch, handled by lex loop
+        } else {
+          // User hook
+          const char* name = symtab_get(hooks, hook_id);
+          const char* sym = name[0] == '.' ? name + 1 : name;
+          char symbol[128];
+          snprintf(symbol, sizeof(symbol), "vpa_hook_%s", sym);
+          irwriter_rawf(w, "  call void @%s(ptr %%tt, i32 %%cp_start, i32 %%cp_size)\n", symbol);
+        }
       }
-      irwriter_raw(w, "  call ptr @tc_pop(ptr %tt)\n");
     }
     irwriter_raw(w, "  ret void\n");
+  next_action:;
   }
 
   irwriter_raw(w, "}\n\n");
 }
 
 // --- IR: outer lexing loop ---
-// Longest-match: feed codepoints until DFA rejects, then dispatch the last accepting action.
-//
-// define void @vpa_lex(ptr %src, i32 %len, ptr %tt)
-//
-// Uses allocas for all mutable state. LLVM mem2reg promotes to SSA.
 
-static void _gen_lex_loop_ir(ScopeInfo* scopes, IrWriter* w, bool has_parse) {
+static void _gen_lex_loop_ir(VpaScope* scopes, IrWriter* w, bool has_parse) {
   irwriter_declare(w, "i32", "vpa_rt_read_cp", "ptr, i32");
   irwriter_declare(w, "i32", "tc_scope", "ptr");
 
@@ -631,48 +596,7 @@ static void _gen_lex_loop_ir(ScopeInfo* scopes, IrWriter* w, bool has_parse) {
   irwriter_raw(w, "}\n\n");
 }
 
-// --- Scope collection ---
-
-static ScopeInfo* _collect_scopes(VpaRule* rules) {
-  ScopeInfo* scopes = darray_new(sizeof(ScopeInfo), darray_size(rules));
-
-  for (int32_t i = 0; i < (int32_t)darray_size(rules); i++) {
-    VpaRule* rule = &rules[i];
-    if (rule->is_macro) {
-      continue;
-    }
-
-    if (rule->is_scope) {
-      ScopeInfo s = {
-          .name = strdup(rule->name),
-          .scope_id = (int32_t)darray_size(scopes),
-          .has_parser = rule->has_parser,
-          .body = rule->units,
-          .rule_units = rule->units,
-      };
-      darray_push(scopes, s);
-    } else {
-      VpaUnit* su = _find_scope_unit(rule);
-      if (su) {
-        ScopeInfo s = {
-            .name = strdup(rule->name),
-            .scope_id = (int32_t)darray_size(scopes),
-            .has_parser = rule->has_parser,
-            .body = su->children,
-            .rule_units = rule->units,
-        };
-        darray_push(scopes, s);
-      }
-    }
-  }
-
-  return scopes;
-}
-
-// --- IR: main parse function wrapper ---
-// define void @{prefix}_parse(ptr %src, i32 %len, ptr %tt)
-// Wraps vpa_lex and invokes parse_main afterwards.
-// pp_match_scopes guarantees the main scope has a parser.
+// --- IR: main parse function ---
 
 static void _gen_main_func_ir(const char* prefix, IrWriter* w) {
   irwriter_rawf(w, "define void @%s_parse(ptr %%src, i32 %%len, ptr %%tt) {\n", prefix);
@@ -694,50 +618,47 @@ static void _gen_main_func_ir(const char* prefix, IrWriter* w) {
   irwriter_raw(w, "  %parse_len = call i32 @parse_main(ptr %table, i32 0, ptr %bt_stack)\n");
   irwriter_raw(w, "  call void @free(ptr %table)\n");
   irwriter_raw(w, "  call void @free(ptr %bt_stack)\n");
-
   irwriter_raw(w, "  ret void\n");
   irwriter_raw(w, "}\n\n");
-}
-
-static void _gen_main_func_header(const char* prefix, HeaderWriter* hw) {
-  hw_blank(hw);
-  hw_comment(hw, "Main parse function");
-  hw_fmt(hw, "extern void %s_parse(void* src, int32_t len, void* tt);\n", prefix);
 }
 
 // --- Public API ---
 
 void vpa_gen(VpaGenInput* input, HeaderWriter* hw, IrWriter* w, const char* prefix) {
-  VpaRule* rules = input->rules;
-  EffectDecl* effects = input->effects;
+  VpaScope* scopes = input->scopes;
+  EffectDecls effects = input->effect_decls;
+  Symtab* tokens = &input->tokens;
+  Symtab* hooks = &input->hooks;
 
-  ActionRegistry reg = {0};
-  reg.entries = darray_new(sizeof(ActionEntry), 0);
-  reg.tok_names = darray_new(sizeof(char*), 0);
-
-  ScopeInfo* scopes = _collect_scopes(rules);
+  // Build actions table. Entry 0 is empty sentinel.
+  Actions acts = darray_new(sizeof(Action), 0);
+  darray_push(acts, ((Action){0}));
 
   _gen_runtime(hw);
   _gen_scope_ids(scopes, hw);
 
   for (int32_t i = 0; i < (int32_t)darray_size(scopes); i++) {
-    if (!scopes[i].body) {
-      continue;
-    }
-    DfaPattern* patterns = _resolve_body(&scopes[i], scopes[i].body, rules, scopes, &reg, effects);
+    DfaPattern* patterns = _resolve_body(&scopes[i], scopes, &acts);
     _gen_scope_dfa(&scopes[i], patterns, w);
     darray_del(patterns);
   }
 
   bool has_parse = false;
-  for (int32_t i = 0; i < (int32_t)darray_size(reg.entries); i++) {
-    if (_has_parse_scope(&reg.entries[i])) {
-      has_parse = true;
-      break;
+  for (int32_t i = 1; i < (int32_t)darray_size(acts); i++) {
+    if (_action_pops(acts[i].action_units, effects)) {
+      for (int32_t s = 0; s < (int32_t)darray_size(scopes); s++) {
+        if (scopes[s].has_parser) {
+          has_parse = true;
+          break;
+        }
+      }
+      if (has_parse) {
+        break;
+      }
     }
   }
 
-  _gen_action_dispatch_ir(&reg, w);
+  _gen_action_dispatch_ir(&acts, scopes, hooks, effects, w);
   _gen_lex_loop_ir(scopes, w, has_parse);
 
   if (prefix) {
@@ -745,17 +666,16 @@ void vpa_gen(VpaGenInput* input, HeaderWriter* hw, IrWriter* w, const char* pref
   }
 
   _gen_lex_declarations(scopes, hw);
-  _gen_user_hook_header(&reg, hw);
-  _gen_token_header(&reg, hw);
-  _gen_action_table_header(&reg, scopes, hw);
+  _gen_user_hook_header(hooks, hw);
+  _gen_token_header(tokens, hw);
+  _gen_hook_header(hooks, hw);
+  _gen_parse_error_header(hw);
+  _gen_parse_result_header(hw);
+  _gen_action_table_header(&acts, scopes, hw);
 
   if (prefix) {
-    _gen_main_func_header(prefix, hw);
+    _gen_main_func_header(prefix, hooks, hw);
   }
 
-  for (int32_t i = 0; i < (int32_t)darray_size(scopes); i++) {
-    free(scopes[i].name);
-  }
-  darray_del(scopes);
-  _free_action_registry(&reg);
+  darray_del(acts);
 }

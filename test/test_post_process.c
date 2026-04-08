@@ -18,48 +18,123 @@
     printf("ok\n");                                                                                                    \
   } while (0)
 
+// Helper: init tokens, hooks, scope_names, and rule_names symtabs as parse_nest would
+static void _init_symtabs(ParseState* ps) {
+  symtab_init(&ps->tokens, 1);
+  symtab_init(&ps->hooks, 0);
+  symtab_intern(&ps->hooks, ".begin");   // HOOK_ID_BEGIN = 0
+  symtab_intern(&ps->hooks, ".end");     // HOOK_ID_END = 1
+  symtab_intern(&ps->hooks, ".fail");    // HOOK_ID_FAIL = 2
+  symtab_intern(&ps->hooks, ".unparse"); // HOOK_ID_UNPARSE = 3
+  symtab_init(&ps->scope_names, 0);
+  symtab_init(&ps->rule_names, 0);
+}
+
+// Helper: get the first token name from a VpaUnit's action_units, or NULL
+static const char* _unit_tok_name(VpaUnit* u, Symtab* tokens) {
+  for (int32_t i = 0; i < (int32_t)darray_size(u->action_units); i++) {
+    if (u->action_units[i] > 0) {
+      return symtab_get(tokens, u->action_units[i]);
+    }
+  }
+  return NULL;
+}
+
+// Helper: make a VPA_RE unit with an re and optional token (interned in symtab)
+static VpaUnit _make_re_unit(int32_t ch, const char* tok_name, Symtab* tokens) {
+  VpaUnit u = {.kind = VPA_RE, .re = re_ir_new(), .call_scope_id = -1};
+  if (ch >= 0) {
+    u.re = re_ir_emit_ch(u.re, ch);
+  }
+  if (tok_name && tokens) {
+    int32_t tok_id = symtab_intern(tokens, tok_name);
+    u.action_units = darray_new(sizeof(int32_t), 0);
+    darray_push(u.action_units, tok_id);
+  }
+  return u;
+}
+
+// Helper: make a VPA_RE unit with action_units containing a hook
+static VpaUnit _make_re_unit_hook(int32_t ch, int32_t hook_id) {
+  VpaUnit u = {.kind = VPA_RE, .re = re_ir_new(), .call_scope_id = -1};
+  if (ch >= 0) {
+    u.re = re_ir_emit_ch(u.re, ch);
+  }
+  u.action_units = darray_new(sizeof(int32_t), 0);
+  int32_t au = -hook_id;
+  darray_push(u.action_units, au);
+  return u;
+}
+
+// Helper: make a VPA_MACRO_REF unit (for *macro references)
+static VpaUnit _make_macro_ref(const char* name) {
+  VpaUnit u = {.kind = VPA_MACRO_REF};
+  u.macro_name = strdup(name);
+  return u;
+}
+
+// Helper: make a VPA_CALL unit (scope reference by id)
+static VpaUnit _make_call_unit(int32_t scope_id) {
+  VpaUnit u = {.kind = VPA_CALL, .call_scope_id = scope_id};
+  return u;
+}
+
+// Helper: make a scope (no leader, children provided externally)
+static VpaScope _make_scope(const char* name, int32_t scope_id, bool is_macro) {
+  VpaScope s = {.scope_id = scope_id,
+                .name = strdup(name),
+                .leader = {0},
+                .children = darray_new(sizeof(VpaUnit), 0),
+                .is_macro = is_macro};
+  return s;
+}
+
+// Helper: make a scoped rule with a leader
+static VpaScope _make_scoped(const char* name, int32_t scope_id, VpaUnit leader) {
+  VpaScope s = {
+      .scope_id = scope_id, .name = strdup(name), .leader = leader, .children = darray_new(sizeof(VpaUnit), 0)};
+  return s;
+}
+
 // ============================================================================
 // pp_inline_macros
 // ============================================================================
 
 TEST(test_inline_macros) {
   ParseState* ps = parse_state_new();
-  ps->vpa_rules = darray_new(sizeof(VpaRule), 0);
+  _init_symtabs(ps);
+  ps->vpa_scopes = darray_new(sizeof(VpaScope), 0);
 
   // main = { /a/ @word *ws }
-  VpaRule main_rule = {.name = strdup("main"), .is_scope = true};
-  main_rule.units = darray_new(sizeof(VpaUnit), 0);
-  VpaUnit word_u = {.kind = VPA_REGEXP, .re = re_ir_new(), .name = strdup("word")};
-  word_u.re = re_ir_emit_ch(word_u.re, 'a');
-  darray_push(main_rule.units, word_u);
-  VpaUnit ws_ref = {.kind = VPA_REF, .name = strdup("*ws")};
-  darray_push(main_rule.units, ws_ref);
-  darray_push(ps->vpa_rules, main_rule);
+  VpaScope main_s = _make_scope("main", 0, false);
+  VpaUnit word_u = _make_re_unit('a', "word", &ps->tokens);
+  darray_push(main_s.children, word_u);
+  VpaUnit ws_ref = _make_macro_ref("ws");
+  darray_push(main_s.children, ws_ref);
+  darray_push(ps->vpa_scopes, main_s);
 
   // *ws = { /[ ]/ @space /\n/ @nl }
-  VpaRule ws_macro = {.name = strdup("ws"), .is_scope = true, .is_macro = true};
-  ws_macro.units = darray_new(sizeof(VpaUnit), 0);
-  VpaUnit sp_u = {.kind = VPA_REGEXP, .re = re_ir_new(), .name = strdup("space")};
-  sp_u.re = re_ir_emit_ch(sp_u.re, ' ');
-  darray_push(ws_macro.units, sp_u);
-  VpaUnit nl_u = {.kind = VPA_REGEXP, .re = re_ir_new(), .name = strdup("nl")};
-  nl_u.re = re_ir_emit_ch(nl_u.re, '\n');
-  darray_push(ws_macro.units, nl_u);
-  darray_push(ps->vpa_rules, ws_macro);
+  VpaScope ws_macro = _make_scope("ws", 100, true);
+  VpaUnit sp_u = _make_re_unit(' ', "space", &ps->tokens);
+  darray_push(ws_macro.children, sp_u);
+  VpaUnit nl_u = _make_re_unit('\n', "nl", &ps->tokens);
+  darray_push(ws_macro.children, nl_u);
+  darray_push(ps->vpa_scopes, ws_macro);
 
   bool ok = pp_inline_macros(ps);
   assert(ok);
 
   bool found_space = false;
   bool found_nl = false;
-  VpaRule* mr = &ps->vpa_rules[0];
-  for (int32_t j = 0; j < (int32_t)darray_size(mr->units); j++) {
-    VpaUnit* u = &mr->units[j];
-    if (u->kind == VPA_REGEXP && u->name) {
-      if (strcmp(u->name, "space") == 0) {
+  VpaScope* mr = &ps->vpa_scopes[0];
+  for (int32_t j = 0; j < (int32_t)darray_size(mr->children); j++) {
+    VpaUnit* u = &mr->children[j];
+    const char* tok = _unit_tok_name(u, &ps->tokens);
+    if (u->kind == VPA_RE && tok) {
+      if (strcmp(tok, "space") == 0) {
         found_space = true;
       }
-      if (strcmp(u->name, "nl") == 0) {
+      if (strcmp(tok, "nl") == 0) {
         found_nl = true;
       }
     }
@@ -72,13 +147,13 @@ TEST(test_inline_macros) {
 
 TEST(test_inline_macros_missing) {
   ParseState* ps = parse_state_new();
-  ps->vpa_rules = darray_new(sizeof(VpaRule), 0);
+  _init_symtabs(ps);
+  ps->vpa_scopes = darray_new(sizeof(VpaScope), 0);
 
-  VpaRule rule = {.name = strdup("main"), .is_scope = true};
-  rule.units = darray_new(sizeof(VpaUnit), 0);
-  VpaUnit ref = {.kind = VPA_REF, .name = strdup("*nonexistent")};
-  darray_push(rule.units, ref);
-  darray_push(ps->vpa_rules, rule);
+  VpaScope main_s = _make_scope("main", 0, false);
+  VpaUnit ref = _make_macro_ref("nonexistent");
+  darray_push(main_s.children, ref);
+  darray_push(ps->vpa_scopes, main_s);
 
   bool ok = pp_inline_macros(ps);
   assert(!ok);
@@ -94,10 +169,11 @@ TEST(test_inline_macros_missing) {
 
 TEST(test_auto_tag_branches) {
   ParseState* ps = parse_state_new();
+  _init_symtabs(ps);
   ps->peg_rules = darray_new(sizeof(PegRule), 0);
 
   // item = [ @id  |  @num ]   (no explicit tags)
-  PegRule rule = {.name = strdup("item"), .seq = {.kind = PEG_SEQ}};
+  PegRule rule = {.global_id = symtab_intern(&ps->rule_names, "item"), .scope_id = -1, .seq = {.kind = PEG_SEQ}};
   rule.seq.children = darray_new(sizeof(PegUnit), 0);
 
   PegUnit branches = {.kind = PEG_BRANCHES};
@@ -105,13 +181,13 @@ TEST(test_auto_tag_branches) {
 
   PegUnit b1 = {.kind = PEG_SEQ};
   b1.children = darray_new(sizeof(PegUnit), 0);
-  PegUnit t1 = {.kind = PEG_TOK, .name = strdup("id")};
+  PegUnit t1 = {.kind = PEG_TOK, .id = symtab_intern(&ps->tokens, "id")};
   darray_push(b1.children, t1);
   darray_push(branches.children, b1);
 
   PegUnit b2 = {.kind = PEG_SEQ};
   b2.children = darray_new(sizeof(PegUnit), 0);
-  PegUnit t2 = {.kind = PEG_TOK, .name = strdup("num")};
+  PegUnit t2 = {.kind = PEG_TOK, .id = symtab_intern(&ps->tokens, "num")};
   darray_push(b2.children, t2);
   darray_push(branches.children, b2);
 
@@ -135,10 +211,11 @@ TEST(test_auto_tag_branches) {
 
 TEST(test_duplicate_tag_error) {
   ParseState* ps = parse_state_new();
+  _init_symtabs(ps);
   ps->peg_rules = darray_new(sizeof(PegRule), 0);
 
   // item = [ @tok_a : dup  |  @tok_b : dup ]
-  PegRule rule = {.name = strdup("item"), .seq = {.kind = PEG_SEQ}};
+  PegRule rule = {.global_id = symtab_intern(&ps->rule_names, "item"), .scope_id = -1, .seq = {.kind = PEG_SEQ}};
   rule.seq.children = darray_new(sizeof(PegUnit), 0);
 
   PegUnit branches = {.kind = PEG_BRANCHES};
@@ -146,13 +223,13 @@ TEST(test_duplicate_tag_error) {
 
   PegUnit b1 = {.kind = PEG_SEQ, .tag = strdup("dup")};
   b1.children = darray_new(sizeof(PegUnit), 0);
-  PegUnit t1 = {.kind = PEG_TOK, .name = strdup("tok_a")};
+  PegUnit t1 = {.kind = PEG_TOK, .id = symtab_intern(&ps->tokens, "tok_a")};
   darray_push(b1.children, t1);
   darray_push(branches.children, b1);
 
   PegUnit b2 = {.kind = PEG_SEQ, .tag = strdup("dup")};
   b2.children = darray_new(sizeof(PegUnit), 0);
-  PegUnit t2 = {.kind = PEG_TOK, .name = strdup("tok_b")};
+  PegUnit t2 = {.kind = PEG_TOK, .id = symtab_intern(&ps->tokens, "tok_b")};
   darray_push(b2.children, t2);
   darray_push(branches.children, b2);
 
@@ -169,9 +246,10 @@ TEST(test_duplicate_tag_error) {
 
 TEST(test_no_duplicate_tags) {
   ParseState* ps = parse_state_new();
+  _init_symtabs(ps);
   ps->peg_rules = darray_new(sizeof(PegRule), 0);
 
-  PegRule rule = {.name = strdup("item"), .seq = {.kind = PEG_SEQ}};
+  PegRule rule = {.global_id = symtab_intern(&ps->rule_names, "item"), .scope_id = -1, .seq = {.kind = PEG_SEQ}};
   rule.seq.children = darray_new(sizeof(PegUnit), 0);
 
   PegUnit branches = {.kind = PEG_BRANCHES};
@@ -199,17 +277,18 @@ TEST(test_no_duplicate_tags) {
 // ============================================================================
 
 static void _make_left_rec_peg(ParseState* ps) {
+  _init_symtabs(ps);
   ps->peg_rules = darray_new(sizeof(PegRule), 0);
 
   // main = expr
-  PegRule main_rule = {.name = strdup("main"), .seq = {.kind = PEG_SEQ}};
+  PegRule main_rule = {.global_id = symtab_intern(&ps->rule_names, "main"), .scope_id = -1, .seq = {.kind = PEG_SEQ}};
   main_rule.seq.children = darray_new(sizeof(PegUnit), 0);
-  PegUnit expr_ref = {.kind = PEG_ID, .name = strdup("expr")};
+  PegUnit expr_ref = {.kind = PEG_CALL, .id = symtab_intern(&ps->rule_names, "expr")};
   darray_push(main_rule.seq.children, expr_ref);
   darray_push(ps->peg_rules, main_rule);
 
   // expr = [ @id : id | expr @id : binop ]
-  PegRule expr_rule = {.name = strdup("expr"), .seq = {.kind = PEG_SEQ}};
+  PegRule expr_rule = {.global_id = symtab_intern(&ps->rule_names, "expr"), .scope_id = -1, .seq = {.kind = PEG_SEQ}};
   expr_rule.seq.children = darray_new(sizeof(PegUnit), 0);
 
   PegUnit branches = {.kind = PEG_BRANCHES};
@@ -217,15 +296,15 @@ static void _make_left_rec_peg(ParseState* ps) {
 
   PegUnit branch1 = {.kind = PEG_SEQ, .tag = strdup("id")};
   branch1.children = darray_new(sizeof(PegUnit), 0);
-  PegUnit tok_id1 = {.kind = PEG_TOK, .name = strdup("id")};
+  PegUnit tok_id1 = {.kind = PEG_TOK, .id = symtab_intern(&ps->tokens, "id")};
   darray_push(branch1.children, tok_id1);
   darray_push(branches.children, branch1);
 
   PegUnit branch2 = {.kind = PEG_SEQ, .tag = strdup("binop")};
   branch2.children = darray_new(sizeof(PegUnit), 0);
-  PegUnit self_ref = {.kind = PEG_ID, .name = strdup("expr")};
+  PegUnit self_ref = {.kind = PEG_CALL, .id = symtab_intern(&ps->rule_names, "expr")};
   darray_push(branch2.children, self_ref);
-  PegUnit tok_id2 = {.kind = PEG_TOK, .name = strdup("id")};
+  PegUnit tok_id2 = {.kind = PEG_TOK, .id = symtab_intern(&ps->tokens, "id")};
   darray_push(branch2.children, tok_id2);
   darray_push(branches.children, branch2);
 
@@ -247,14 +326,15 @@ TEST(test_detect_left_recursion) {
 
 TEST(test_no_left_recursion) {
   ParseState* ps = parse_state_new();
+  _init_symtabs(ps);
   ps->peg_rules = darray_new(sizeof(PegRule), 0);
 
   // main = @id+ @num?
-  PegRule main_rule = {.name = strdup("main"), .seq = {.kind = PEG_SEQ}};
+  PegRule main_rule = {.global_id = symtab_intern(&ps->rule_names, "main"), .scope_id = -1, .seq = {.kind = PEG_SEQ}};
   main_rule.seq.children = darray_new(sizeof(PegUnit), 0);
-  PegUnit tok1 = {.kind = PEG_TOK, .name = strdup("id"), .multiplier = '+'};
+  PegUnit tok1 = {.kind = PEG_TOK, .id = symtab_intern(&ps->tokens, "id"), .multiplier = '+'};
   darray_push(main_rule.seq.children, tok1);
-  PegUnit tok2 = {.kind = PEG_TOK, .name = strdup("num"), .multiplier = '?'};
+  PegUnit tok2 = {.kind = PEG_TOK, .id = symtab_intern(&ps->tokens, "num"), .multiplier = '?'};
   darray_push(main_rule.seq.children, tok2);
   darray_push(ps->peg_rules, main_rule);
 
@@ -270,47 +350,52 @@ TEST(test_no_left_recursion) {
 
 TEST(test_inline_macros_literals) {
   ParseState* ps = parse_state_new();
-  ps->vpa_rules = darray_new(sizeof(VpaRule), 0);
+  _init_symtabs(ps);
+  ps->vpa_scopes = darray_new(sizeof(VpaScope), 0);
 
   // main = { /a/ @word *kw }
-  VpaRule main_rule = {.name = strdup("main"), .is_scope = true};
-  main_rule.units = darray_new(sizeof(VpaUnit), 0);
-  VpaUnit word_u = {.kind = VPA_REGEXP, .re = re_ir_new(), .name = strdup("word")};
-  word_u.re = re_ir_emit_ch(word_u.re, 'a');
-  darray_push(main_rule.units, word_u);
-  VpaUnit kw_ref = {.kind = VPA_REF, .name = strdup("*kw")};
-  darray_push(main_rule.units, kw_ref);
-  darray_push(ps->vpa_rules, main_rule);
+  VpaScope main_s = _make_scope("main", 0, false);
+  VpaUnit word_u = _make_re_unit('a', "word", &ps->tokens);
+  darray_push(main_s.children, word_u);
+  VpaUnit kw_ref = _make_macro_ref("kw");
+  darray_push(main_s.children, kw_ref);
+  darray_push(ps->vpa_scopes, main_s);
 
-  // *kw = @{ "+" "-" }
-  VpaRule kw_macro = {.name = strdup("kw"), .is_scope = true, .is_macro = true};
-  kw_macro.units = darray_new(sizeof(VpaUnit), 0);
-  VpaUnit plus_u = {.kind = VPA_REGEXP, .re = re_ir_new()};
+  // *kw = @{ "+" "-" } — literals are pre-named by _parse_lit_scope during parsing
+  // Simulate: create units with lit.+ and lit.- tokens already resolved in the unified tokens symtab
+  int32_t lit_plus = symtab_intern(&ps->tokens, "lit.+");
+  int32_t lit_minus = symtab_intern(&ps->tokens, "lit.-");
+
+  VpaScope kw_macro = _make_scope("kw", 100, true);
+  VpaUnit plus_u = {.kind = VPA_RE, .re = re_ir_new(), .action_units = darray_new(sizeof(int32_t), 0)};
   plus_u.re = re_ir_emit_ch(plus_u.re, '+');
-  darray_push(kw_macro.units, plus_u);
-  VpaUnit minus_u = {.kind = VPA_REGEXP, .re = re_ir_new()};
+  darray_push(plus_u.action_units, lit_plus);
+  darray_push(kw_macro.children, plus_u);
+  VpaUnit minus_u = {.kind = VPA_RE, .re = re_ir_new(), .action_units = darray_new(sizeof(int32_t), 0)};
   minus_u.re = re_ir_emit_ch(minus_u.re, '-');
-  darray_push(kw_macro.units, minus_u);
-  darray_push(ps->vpa_rules, kw_macro);
+  darray_push(minus_u.action_units, lit_minus);
+  darray_push(kw_macro.children, minus_u);
+  darray_push(ps->vpa_scopes, kw_macro);
 
   bool ok = pp_inline_macros(ps);
   assert(ok);
 
-  // literals symtab should have lit.+ and lit.-
-  assert(symtab_find(&ps->literals, "lit.+") >= 0);
-  assert(symtab_find(&ps->literals, "lit.-") >= 0);
+  // literal tokens should still be in the unified tokens symtab
+  assert(symtab_find(&ps->tokens, "lit.+") >= 0);
+  assert(symtab_find(&ps->tokens, "lit.-") >= 0);
 
-  // inlined units in main should have names
-  VpaRule* mr = &ps->vpa_rules[0];
+  // inlined units in main should have the literal tokens
+  VpaScope* mr = &ps->vpa_scopes[0];
   bool found_plus = false;
   bool found_minus = false;
-  for (int32_t j = 0; j < (int32_t)darray_size(mr->units); j++) {
-    VpaUnit* u = &mr->units[j];
-    if (u->kind == VPA_REGEXP && u->name) {
-      if (strcmp(u->name, "lit.+") == 0) {
+  for (int32_t j = 0; j < (int32_t)darray_size(mr->children); j++) {
+    VpaUnit* u = &mr->children[j];
+    const char* tok = _unit_tok_name(u, &ps->tokens);
+    if (u->kind == VPA_RE && tok) {
+      if (strcmp(tok, "lit.+") == 0) {
         found_plus = true;
       }
-      if (strcmp(u->name, "lit.-") == 0) {
+      if (strcmp(tok, "lit.-") == 0) {
         found_minus = true;
       }
     }
@@ -322,69 +407,16 @@ TEST(test_inline_macros_literals) {
 }
 
 // ============================================================================
-// pp_desugar_literal_tokens
-// ============================================================================
-
-TEST(test_desugar_literal_tokens) {
-  ParseState* ps = parse_state_new();
-  symtab_init(&ps->literals, 0);
-  symtab_intern(&ps->literals, "lit.+");
-  symtab_intern(&ps->literals, "lit.-");
-
-  ps->peg_rules = darray_new(sizeof(PegRule), 0);
-
-  // expr = @num "+" @num
-  PegRule rule = {.name = strdup("expr"), .seq = {.kind = PEG_SEQ}};
-  rule.seq.children = darray_new(sizeof(PegUnit), 0);
-  PegUnit t1 = {.kind = PEG_TOK, .name = strdup("num")};
-  darray_push(rule.seq.children, t1);
-  PegUnit kw = {.kind = PEG_KEYWORD_TOK, .name = strdup("+")};
-  darray_push(rule.seq.children, kw);
-  PegUnit t2 = {.kind = PEG_TOK, .name = strdup("num")};
-  darray_push(rule.seq.children, t2);
-  darray_push(ps->peg_rules, rule);
-
-  bool ok = pp_desugar_literal_tokens(ps);
-  assert(ok);
-
-  PegUnit* desugared = &ps->peg_rules[0].seq.children[1];
-  assert(desugared->kind == PEG_TOK);
-  assert(strcmp(desugared->name, "lit.+") == 0);
-
-  parse_state_del(ps);
-}
-
-TEST(test_desugar_literal_tokens_missing) {
-  ParseState* ps = parse_state_new();
-  symtab_init(&ps->literals, 0);
-
-  ps->peg_rules = darray_new(sizeof(PegRule), 0);
-
-  PegRule rule = {.name = strdup("expr"), .seq = {.kind = PEG_SEQ}};
-  rule.seq.children = darray_new(sizeof(PegUnit), 0);
-  PegUnit kw = {.kind = PEG_KEYWORD_TOK, .name = strdup("?")};
-  darray_push(rule.seq.children, kw);
-  darray_push(ps->peg_rules, rule);
-
-  bool ok = pp_desugar_literal_tokens(ps);
-  assert(!ok);
-  assert(parse_has_error(ps));
-  assert(strstr(parse_get_error(ps), "?") != NULL);
-
-  parse_state_del(ps);
-}
-
-// ============================================================================
 // pp_validate_vpa_scopes
 // ============================================================================
 
 TEST(test_validate_vpa_missing_main) {
   ParseState* ps = parse_state_new();
-  ps->vpa_rules = darray_new(sizeof(VpaRule), 0);
+  ps->vpa_scopes = darray_new(sizeof(VpaScope), 0);
+  ps->effect_decls = darray_new(sizeof(EffectDecl), 0);
 
-  VpaRule rule = {.name = strdup("other"), .is_scope = true};
-  rule.units = darray_new(sizeof(VpaUnit), 0);
-  darray_push(ps->vpa_rules, rule);
+  VpaScope scope = _make_scope("other", 0, false);
+  darray_push(ps->vpa_scopes, scope);
 
   bool ok = pp_validate_vpa_scopes(ps);
   assert(!ok);
@@ -396,32 +428,24 @@ TEST(test_validate_vpa_missing_main) {
 
 TEST(test_validate_vpa_duplicate_scope) {
   ParseState* ps = parse_state_new();
-  ps->vpa_rules = darray_new(sizeof(VpaRule), 0);
-  ps->effects = darray_new(sizeof(EffectDecl), 0);
+  ps->vpa_scopes = darray_new(sizeof(VpaScope), 0);
+  ps->effect_decls = darray_new(sizeof(EffectDecl), 0);
 
-  VpaRule main_r = {.name = strdup("main"), .is_scope = true};
-  main_r.units = darray_new(sizeof(VpaUnit), 0);
-  darray_push(ps->vpa_rules, main_r);
+  VpaScope main_s = _make_scope("main", 0, false);
+  darray_push(ps->vpa_scopes, main_s);
 
-  VpaRule dup1 = {.name = strdup("foo"), .is_scope = true};
-  dup1.units = darray_new(sizeof(VpaUnit), 0);
-  VpaUnit begin1 = {.kind = VPA_REGEXP, .re = re_ir_new(), .hook = TOK_HOOK_BEGIN};
-  begin1.re = re_ir_emit_ch(begin1.re, '(');
-  darray_push(dup1.units, begin1);
-  VpaUnit end1 = {.kind = VPA_REGEXP, .re = re_ir_new(), .hook = TOK_HOOK_END};
-  end1.re = re_ir_emit_ch(end1.re, ')');
-  darray_push(dup1.units, end1);
-  darray_push(ps->vpa_rules, dup1);
+  // foo: scoped with leader='(' .begin, children: ')' .end
+  VpaUnit leader1 = _make_re_unit_hook('(', HOOK_ID_BEGIN);
+  VpaScope dup1 = _make_scoped("foo", 1, leader1);
+  VpaUnit end1 = _make_re_unit_hook(')', HOOK_ID_END);
+  darray_push(dup1.children, end1);
+  darray_push(ps->vpa_scopes, dup1);
 
-  VpaRule dup2 = {.name = strdup("foo"), .is_scope = true};
-  dup2.units = darray_new(sizeof(VpaUnit), 0);
-  VpaUnit begin2 = {.kind = VPA_REGEXP, .re = re_ir_new(), .hook = TOK_HOOK_BEGIN};
-  begin2.re = re_ir_emit_ch(begin2.re, '[');
-  darray_push(dup2.units, begin2);
-  VpaUnit end2 = {.kind = VPA_REGEXP, .re = re_ir_new(), .hook = TOK_HOOK_END};
-  end2.re = re_ir_emit_ch(end2.re, ']');
-  darray_push(dup2.units, end2);
-  darray_push(ps->vpa_rules, dup2);
+  VpaUnit leader2 = _make_re_unit_hook('[', HOOK_ID_BEGIN);
+  VpaScope dup2 = _make_scoped("foo", 1, leader2);
+  VpaUnit end2 = _make_re_unit_hook(']', HOOK_ID_END);
+  darray_push(dup2.children, end2);
+  darray_push(ps->vpa_scopes, dup2);
 
   bool ok = pp_validate_vpa_scopes(ps);
   assert(!ok);
@@ -433,22 +457,18 @@ TEST(test_validate_vpa_duplicate_scope) {
 
 TEST(test_validate_vpa_leading_re_empty) {
   ParseState* ps = parse_state_new();
-  ps->vpa_rules = darray_new(sizeof(VpaRule), 0);
-  ps->effects = darray_new(sizeof(EffectDecl), 0);
+  ps->vpa_scopes = darray_new(sizeof(VpaScope), 0);
+  ps->effect_decls = darray_new(sizeof(EffectDecl), 0);
 
-  VpaRule main_r = {.name = strdup("main"), .is_scope = true};
-  main_r.units = darray_new(sizeof(VpaUnit), 0);
-  darray_push(ps->vpa_rules, main_r);
+  VpaScope main_s = _make_scope("main", 0, false);
+  darray_push(ps->vpa_scopes, main_s);
 
-  // scope with empty leading re
-  VpaRule scope = {.name = strdup("str"), .is_scope = true};
-  scope.units = darray_new(sizeof(VpaUnit), 0);
-  VpaUnit leader = {.kind = VPA_REGEXP, .re = re_ir_new(), .hook = TOK_HOOK_BEGIN};
-  darray_push(scope.units, leader);
-  VpaUnit body_end = {.kind = VPA_REGEXP, .re = re_ir_new(), .hook = TOK_HOOK_END};
-  body_end.re = re_ir_emit_ch(body_end.re, '"');
-  darray_push(scope.units, body_end);
-  darray_push(ps->vpa_rules, scope);
+  // scope with empty leading re (no char emitted)
+  VpaUnit leader = _make_re_unit_hook(-1, HOOK_ID_BEGIN); // -1 ch = empty re
+  VpaScope scope = _make_scoped("str", 1, leader);
+  VpaUnit body_end = _make_re_unit_hook('"', HOOK_ID_END);
+  darray_push(scope.children, body_end);
+  darray_push(ps->vpa_scopes, scope);
 
   bool ok = pp_validate_vpa_scopes(ps);
   assert(!ok);
@@ -460,17 +480,15 @@ TEST(test_validate_vpa_leading_re_empty) {
 
 TEST(test_validate_vpa_empty_re_needs_hook) {
   ParseState* ps = parse_state_new();
-  ps->vpa_rules = darray_new(sizeof(VpaRule), 0);
-  ps->effects = darray_new(sizeof(EffectDecl), 0);
+  _init_symtabs(ps);
+  ps->vpa_scopes = darray_new(sizeof(VpaScope), 0);
+  ps->effect_decls = darray_new(sizeof(EffectDecl), 0);
 
-  VpaRule main_r = {.name = strdup("main"), .is_scope = true};
-  main_r.units = darray_new(sizeof(VpaUnit), 0);
-
-  // empty fallback without .end or .fail
-  VpaUnit fallback = {.kind = VPA_REGEXP, .re = re_ir_new(), .name = strdup("bad")};
-  darray_push(main_r.units, fallback);
-
-  darray_push(ps->vpa_rules, main_r);
+  // main with an empty fallback RE that has no .end or .fail
+  VpaScope main_s = _make_scope("main", 0, false);
+  VpaUnit fallback = _make_re_unit(-1, "bad", &ps->tokens); // empty re, named "bad", no hook
+  darray_push(main_s.children, fallback);
+  darray_push(ps->vpa_scopes, main_s);
 
   bool ok = pp_validate_vpa_scopes(ps);
   assert(!ok);
@@ -482,17 +500,14 @@ TEST(test_validate_vpa_empty_re_needs_hook) {
 
 TEST(test_validate_vpa_empty_re_with_end_ok) {
   ParseState* ps = parse_state_new();
-  ps->vpa_rules = darray_new(sizeof(VpaRule), 0);
-  ps->effects = darray_new(sizeof(EffectDecl), 0);
+  _init_symtabs(ps);
+  ps->vpa_scopes = darray_new(sizeof(VpaScope), 0);
+  ps->effect_decls = darray_new(sizeof(EffectDecl), 0);
 
-  VpaRule main_r = {.name = strdup("main"), .is_scope = true};
-  main_r.units = darray_new(sizeof(VpaUnit), 0);
-
-  VpaUnit tok = {.kind = VPA_REGEXP, .re = re_ir_new(), .name = strdup("id")};
-  tok.re = re_ir_emit_ch(tok.re, 'a');
-  darray_push(main_r.units, tok);
-
-  darray_push(ps->vpa_rules, main_r);
+  VpaScope main_s = _make_scope("main", 0, false);
+  VpaUnit tok = _make_re_unit('a', "id", &ps->tokens);
+  darray_push(main_s.children, tok);
+  darray_push(ps->vpa_scopes, main_s);
 
   bool ok = pp_validate_vpa_scopes(ps);
   assert(ok);
@@ -502,18 +517,15 @@ TEST(test_validate_vpa_empty_re_with_end_ok) {
 
 TEST(test_validate_vpa_two_empty_re) {
   ParseState* ps = parse_state_new();
-  ps->vpa_rules = darray_new(sizeof(VpaRule), 0);
-  ps->effects = darray_new(sizeof(EffectDecl), 0);
+  ps->vpa_scopes = darray_new(sizeof(VpaScope), 0);
+  ps->effect_decls = darray_new(sizeof(EffectDecl), 0);
 
-  VpaRule main_r = {.name = strdup("main"), .is_scope = true};
-  main_r.units = darray_new(sizeof(VpaUnit), 0);
-
-  VpaUnit e1 = {.kind = VPA_REGEXP, .re = re_ir_new(), .hook = TOK_HOOK_END};
-  darray_push(main_r.units, e1);
-  VpaUnit e2 = {.kind = VPA_REGEXP, .re = re_ir_new(), .hook = TOK_HOOK_FAIL};
-  darray_push(main_r.units, e2);
-
-  darray_push(ps->vpa_rules, main_r);
+  VpaScope main_s = _make_scope("main", 0, false);
+  VpaUnit e1 = _make_re_unit_hook(-1, HOOK_ID_END);
+  darray_push(main_s.children, e1);
+  VpaUnit e2 = _make_re_unit_hook(-1, HOOK_ID_FAIL);
+  darray_push(main_s.children, e2);
+  darray_push(ps->vpa_scopes, main_s);
 
   bool ok = pp_validate_vpa_scopes(ps);
   assert(!ok);
@@ -528,9 +540,10 @@ TEST(test_validate_vpa_two_empty_re) {
 
 TEST(test_validate_peg_missing_main) {
   ParseState* ps = parse_state_new();
+  _init_symtabs(ps);
   ps->peg_rules = darray_new(sizeof(PegRule), 0);
 
-  PegRule pr = {.name = strdup("helper"), .seq = {.kind = PEG_SEQ}};
+  PegRule pr = {.global_id = symtab_intern(&ps->rule_names, "helper"), .scope_id = -1, .seq = {.kind = PEG_SEQ}};
   pr.seq.children = darray_new(sizeof(PegUnit), 0);
   darray_push(ps->peg_rules, pr);
 
@@ -544,17 +557,21 @@ TEST(test_validate_peg_missing_main) {
 
 TEST(test_validate_peg_duplicate_rule) {
   ParseState* ps = parse_state_new();
+  _init_symtabs(ps);
   ps->peg_rules = darray_new(sizeof(PegRule), 0);
 
-  PegRule main_r = {.name = strdup("main"), .seq = {.kind = PEG_SEQ}};
+  int32_t main_id = symtab_intern(&ps->rule_names, "main");
+  int32_t expr_id = symtab_intern(&ps->rule_names, "expr");
+
+  PegRule main_r = {.global_id = main_id, .scope_id = -1, .seq = {.kind = PEG_SEQ}};
   main_r.seq.children = darray_new(sizeof(PegUnit), 0);
   darray_push(ps->peg_rules, main_r);
 
-  PegRule dup1 = {.name = strdup("expr"), .seq = {.kind = PEG_SEQ}};
+  PegRule dup1 = {.global_id = expr_id, .scope_id = -1, .seq = {.kind = PEG_SEQ}};
   dup1.seq.children = darray_new(sizeof(PegUnit), 0);
   darray_push(ps->peg_rules, dup1);
 
-  PegRule dup2 = {.name = strdup("expr"), .seq = {.kind = PEG_SEQ}};
+  PegRule dup2 = {.global_id = expr_id, .scope_id = -1, .seq = {.kind = PEG_SEQ}};
   dup2.seq.children = darray_new(sizeof(PegUnit), 0);
   darray_push(ps->peg_rules, dup2);
 
@@ -572,26 +589,24 @@ TEST(test_validate_peg_duplicate_rule) {
 
 TEST(test_match_scopes_token_mismatch) {
   ParseState* ps = parse_state_new();
-  ps->vpa_rules = darray_new(sizeof(VpaRule), 0);
+  _init_symtabs(ps);
+  ps->vpa_scopes = darray_new(sizeof(VpaScope), 0);
   ps->peg_rules = darray_new(sizeof(PegRule), 0);
-  ps->effects = darray_new(sizeof(EffectDecl), 0);
-  ps->ignores.names = (Symtab){0};
+  ps->effect_decls = darray_new(sizeof(EffectDecl), 0);
   symtab_init(&ps->ignores.names, 0);
 
   // VPA main emits @id only
-  VpaRule vr = {.name = strdup("main"), .is_scope = true};
-  vr.units = darray_new(sizeof(VpaUnit), 0);
-  VpaUnit u = {.kind = VPA_REGEXP, .re = re_ir_new(), .name = strdup("id")};
-  u.re = re_ir_emit_ch(u.re, 'a');
-  darray_push(vr.units, u);
-  darray_push(ps->vpa_rules, vr);
+  VpaScope vr = _make_scope("main", 0, false);
+  VpaUnit u = _make_re_unit('a', "id", &ps->tokens);
+  darray_push(vr.children, u);
+  darray_push(ps->vpa_scopes, vr);
 
   // PEG main uses @id and @num (num not emitted by VPA)
-  PegRule pr = {.name = strdup("main"), .seq = {.kind = PEG_SEQ}};
+  PegRule pr = {.global_id = symtab_intern(&ps->rule_names, "main"), .scope_id = -1, .seq = {.kind = PEG_SEQ}};
   pr.seq.children = darray_new(sizeof(PegUnit), 0);
-  PegUnit t1 = {.kind = PEG_TOK, .name = strdup("id")};
+  PegUnit t1 = {.kind = PEG_TOK, .id = symtab_intern(&ps->tokens, "id")};
   darray_push(pr.seq.children, t1);
-  PegUnit t2 = {.kind = PEG_TOK, .name = strdup("num")};
+  PegUnit t2 = {.kind = PEG_TOK, .id = symtab_intern(&ps->tokens, "num")};
   darray_push(pr.seq.children, t2);
   darray_push(ps->peg_rules, pr);
 
@@ -604,88 +619,84 @@ TEST(test_match_scopes_token_mismatch) {
 
 TEST(test_match_scopes_ok) {
   ParseState* ps = parse_state_new();
-  ps->vpa_rules = darray_new(sizeof(VpaRule), 0);
+  _init_symtabs(ps);
+  ps->vpa_scopes = darray_new(sizeof(VpaScope), 0);
   ps->peg_rules = darray_new(sizeof(PegRule), 0);
-  ps->effects = darray_new(sizeof(EffectDecl), 0);
-  ps->ignores.names = (Symtab){0};
+  ps->effect_decls = darray_new(sizeof(EffectDecl), 0);
   symtab_init(&ps->ignores.names, 0);
 
   // VPA main emits @id, @num, @space; %ignore @space
-  VpaRule vr = {.name = strdup("main"), .is_scope = true};
-  vr.units = darray_new(sizeof(VpaUnit), 0);
-  VpaUnit u1 = {.kind = VPA_REGEXP, .re = re_ir_new(), .name = strdup("id")};
-  u1.re = re_ir_emit_ch(u1.re, 'a');
-  darray_push(vr.units, u1);
-  VpaUnit u2 = {.kind = VPA_REGEXP, .re = re_ir_new(), .name = strdup("num")};
-  u2.re = re_ir_emit_ch(u2.re, '0');
-  darray_push(vr.units, u2);
-  VpaUnit u3 = {.kind = VPA_REGEXP, .re = re_ir_new(), .name = strdup("space")};
-  u3.re = re_ir_emit_ch(u3.re, ' ');
-  darray_push(vr.units, u3);
-  darray_push(ps->vpa_rules, vr);
+  VpaScope vr = _make_scope("main", 0, false);
+  VpaUnit u1 = _make_re_unit('a', "id", &ps->tokens);
+  darray_push(vr.children, u1);
+  VpaUnit u2 = _make_re_unit('0', "num", &ps->tokens);
+  darray_push(vr.children, u2);
+  VpaUnit u3 = _make_re_unit(' ', "space", &ps->tokens);
+  darray_push(vr.children, u3);
+  darray_push(ps->vpa_scopes, vr);
 
   symtab_intern(&ps->ignores.names, "space");
 
   // PEG main uses @id and @num
-  PegRule pr = {.name = strdup("main"), .seq = {.kind = PEG_SEQ}};
+  PegRule pr = {.global_id = symtab_intern(&ps->rule_names, "main"), .scope_id = -1, .seq = {.kind = PEG_SEQ}};
   pr.seq.children = darray_new(sizeof(PegUnit), 0);
-  PegUnit t1 = {.kind = PEG_TOK, .name = strdup("id")};
+  PegUnit t1 = {.kind = PEG_TOK, .id = symtab_intern(&ps->tokens, "id")};
   darray_push(pr.seq.children, t1);
-  PegUnit t2 = {.kind = PEG_TOK, .name = strdup("num")};
+  PegUnit t2 = {.kind = PEG_TOK, .id = symtab_intern(&ps->tokens, "num")};
   darray_push(pr.seq.children, t2);
   darray_push(ps->peg_rules, pr);
 
   bool ok = pp_match_scopes(ps);
   assert(ok);
 
+  // Check that VpaScopes were built
+  assert(ps->vpa_scopes != NULL);
+  assert((int32_t)darray_size(ps->vpa_scopes) == 1);
+  assert(strcmp(ps->vpa_scopes[0].name, "main") == 0);
+
   parse_state_del(ps);
 }
 
 TEST(test_match_scopes_scope_ref_in_sets) {
   ParseState* ps = parse_state_new();
-  ps->vpa_rules = darray_new(sizeof(VpaRule), 0);
+  _init_symtabs(ps);
+  symtab_intern(&ps->scope_names, "main"); // 0
+  symtab_intern(&ps->scope_names, "foo");  // 1
+  ps->vpa_scopes = darray_new(sizeof(VpaScope), 0);
   ps->peg_rules = darray_new(sizeof(PegRule), 0);
-  ps->effects = darray_new(sizeof(EffectDecl), 0);
-  ps->ignores.names = (Symtab){0};
+  ps->effect_decls = darray_new(sizeof(EffectDecl), 0);
   symtab_init(&ps->ignores.names, 0);
 
-  // VPA: foo = /.../ { @a ... }  (a scope)
-  VpaRule foo_vr = {.name = strdup("foo"), .is_scope = true};
-  foo_vr.units = darray_new(sizeof(VpaUnit), 0);
-  VpaUnit foo_leader = {.kind = VPA_REGEXP, .re = re_ir_new(), .hook = TOK_HOOK_BEGIN};
-  foo_leader.re = re_ir_emit_ch(foo_leader.re, '(');
-  darray_push(foo_vr.units, foo_leader);
-  VpaUnit foo_a = {.kind = VPA_REGEXP, .re = re_ir_new(), .name = strdup("a")};
-  foo_a.re = re_ir_emit_ch(foo_a.re, 'x');
-  darray_push(foo_vr.units, foo_a);
-  VpaUnit foo_end = {.kind = VPA_REGEXP, .re = re_ir_new(), .hook = TOK_HOOK_END};
-  foo_end.re = re_ir_emit_ch(foo_end.re, ')');
-  darray_push(foo_vr.units, foo_end);
-  darray_push(ps->vpa_rules, foo_vr);
+  // VPA: foo = /.../ { @a ... }  (a scope with leader)
+  VpaUnit foo_leader = _make_re_unit_hook('(', HOOK_ID_BEGIN);
+  VpaScope foo_vr = _make_scoped("foo", 1, foo_leader);
+  VpaUnit foo_a = _make_re_unit('x', "a", &ps->tokens);
+  darray_push(foo_vr.children, foo_a);
+  VpaUnit foo_end = _make_re_unit_hook(')', HOOK_ID_END);
+  darray_push(foo_vr.children, foo_end);
+  darray_push(ps->vpa_scopes, foo_vr);
 
   // VPA: main = { @b foo }  (emit_set = {@b, foo})
-  VpaRule main_vr = {.name = strdup("main"), .is_scope = true};
-  main_vr.units = darray_new(sizeof(VpaUnit), 0);
-  VpaUnit main_b = {.kind = VPA_REGEXP, .re = re_ir_new(), .name = strdup("b")};
-  main_b.re = re_ir_emit_ch(main_b.re, 'b');
-  darray_push(main_vr.units, main_b);
-  VpaUnit main_foo_ref = {.kind = VPA_REF, .name = strdup("foo")};
-  darray_push(main_vr.units, main_foo_ref);
-  darray_push(ps->vpa_rules, main_vr);
+  VpaScope main_vr = _make_scope("main", 0, false);
+  VpaUnit main_b = _make_re_unit('b', "b", &ps->tokens);
+  darray_push(main_vr.children, main_b);
+  VpaUnit main_foo_ref = _make_call_unit(1);
+  darray_push(main_vr.children, main_foo_ref);
+  darray_push(ps->vpa_scopes, main_vr);
 
   // PEG: foo = @a  (foo is a scope, won't be expanded)
-  PegRule foo_pr = {.name = strdup("foo"), .seq = {.kind = PEG_SEQ}};
+  PegRule foo_pr = {.global_id = symtab_intern(&ps->rule_names, "foo"), .scope_id = -1, .seq = {.kind = PEG_SEQ}};
   foo_pr.seq.children = darray_new(sizeof(PegUnit), 0);
-  PegUnit foo_tok = {.kind = PEG_TOK, .name = strdup("a")};
+  PegUnit foo_tok = {.kind = PEG_TOK, .id = symtab_intern(&ps->tokens, "a")};
   darray_push(foo_pr.seq.children, foo_tok);
   darray_push(ps->peg_rules, foo_pr);
 
   // PEG: main = foo @b  (used_set = {foo, @b})
-  PegRule main_pr = {.name = strdup("main"), .seq = {.kind = PEG_SEQ}};
+  PegRule main_pr = {.global_id = symtab_intern(&ps->rule_names, "main"), .scope_id = -1, .seq = {.kind = PEG_SEQ}};
   main_pr.seq.children = darray_new(sizeof(PegUnit), 0);
-  PegUnit main_foo = {.kind = PEG_ID, .name = strdup("foo")};
+  PegUnit main_foo = {.kind = PEG_CALL, .id = symtab_intern(&ps->rule_names, "foo")};
   darray_push(main_pr.seq.children, main_foo);
-  PegUnit main_tok = {.kind = PEG_TOK, .name = strdup("b")};
+  PegUnit main_tok = {.kind = PEG_TOK, .id = symtab_intern(&ps->tokens, "b")};
   darray_push(main_pr.seq.children, main_tok);
   darray_push(ps->peg_rules, main_pr);
 
@@ -697,40 +708,35 @@ TEST(test_match_scopes_scope_ref_in_sets) {
 
 TEST(test_match_scopes_scope_ref_mismatch) {
   ParseState* ps = parse_state_new();
-  ps->vpa_rules = darray_new(sizeof(VpaRule), 0);
+  _init_symtabs(ps);
+  symtab_intern(&ps->scope_names, "main"); // 0
+  symtab_intern(&ps->scope_names, "foo");  // 1
+  ps->vpa_scopes = darray_new(sizeof(VpaScope), 0);
   ps->peg_rules = darray_new(sizeof(PegRule), 0);
-  ps->effects = darray_new(sizeof(EffectDecl), 0);
-  ps->ignores.names = (Symtab){0};
+  ps->effect_decls = darray_new(sizeof(EffectDecl), 0);
   symtab_init(&ps->ignores.names, 0);
 
-  // VPA: foo = /.../ { @a ... }  (a scope)
-  VpaRule foo_vr = {.name = strdup("foo"), .is_scope = true};
-  foo_vr.units = darray_new(sizeof(VpaUnit), 0);
-  VpaUnit foo_leader = {.kind = VPA_REGEXP, .re = re_ir_new(), .hook = TOK_HOOK_BEGIN};
-  foo_leader.re = re_ir_emit_ch(foo_leader.re, '(');
-  darray_push(foo_vr.units, foo_leader);
-  VpaUnit foo_a = {.kind = VPA_REGEXP, .re = re_ir_new(), .name = strdup("a")};
-  foo_a.re = re_ir_emit_ch(foo_a.re, 'x');
-  darray_push(foo_vr.units, foo_a);
-  VpaUnit foo_end = {.kind = VPA_REGEXP, .re = re_ir_new(), .hook = TOK_HOOK_END};
-  foo_end.re = re_ir_emit_ch(foo_end.re, ')');
-  darray_push(foo_vr.units, foo_end);
-  darray_push(ps->vpa_rules, foo_vr);
+  // VPA: foo = /.../ { @a ... }  (a scope with leader)
+  VpaUnit foo_leader = _make_re_unit_hook('(', HOOK_ID_BEGIN);
+  VpaScope foo_vr = _make_scoped("foo", 1, foo_leader);
+  VpaUnit foo_a = _make_re_unit('x', "a", &ps->tokens);
+  darray_push(foo_vr.children, foo_a);
+  VpaUnit foo_end = _make_re_unit_hook(')', HOOK_ID_END);
+  darray_push(foo_vr.children, foo_end);
+  darray_push(ps->vpa_scopes, foo_vr);
 
   // VPA: main = { @b foo }  (emit_set = {@b, foo})
-  VpaRule main_vr = {.name = strdup("main"), .is_scope = true};
-  main_vr.units = darray_new(sizeof(VpaUnit), 0);
-  VpaUnit main_b = {.kind = VPA_REGEXP, .re = re_ir_new(), .name = strdup("b")};
-  main_b.re = re_ir_emit_ch(main_b.re, 'b');
-  darray_push(main_vr.units, main_b);
-  VpaUnit main_foo_ref = {.kind = VPA_REF, .name = strdup("foo")};
-  darray_push(main_vr.units, main_foo_ref);
-  darray_push(ps->vpa_rules, main_vr);
+  VpaScope main_vr = _make_scope("main", 0, false);
+  VpaUnit main_b = _make_re_unit('b', "b", &ps->tokens);
+  darray_push(main_vr.children, main_b);
+  VpaUnit main_foo_ref = _make_call_unit(1);
+  darray_push(main_vr.children, main_foo_ref);
+  darray_push(ps->vpa_scopes, main_vr);
 
   // PEG: main = @b  (used_set = {@b}, missing foo)
-  PegRule main_pr = {.name = strdup("main"), .seq = {.kind = PEG_SEQ}};
+  PegRule main_pr = {.global_id = symtab_intern(&ps->rule_names, "main"), .scope_id = -1, .seq = {.kind = PEG_SEQ}};
   main_pr.seq.children = darray_new(sizeof(PegUnit), 0);
-  PegUnit main_tok = {.kind = PEG_TOK, .name = strdup("b")};
+  PegUnit main_tok = {.kind = PEG_TOK, .id = symtab_intern(&ps->tokens, "b")};
   darray_push(main_pr.seq.children, main_tok);
   darray_push(ps->peg_rules, main_pr);
 
@@ -752,8 +758,6 @@ int main(void) {
   RUN(test_no_duplicate_tags);
   RUN(test_detect_left_recursion);
   RUN(test_no_left_recursion);
-  RUN(test_desugar_literal_tokens);
-  RUN(test_desugar_literal_tokens_missing);
   RUN(test_validate_vpa_missing_main);
   RUN(test_validate_vpa_duplicate_scope);
   RUN(test_validate_vpa_leading_re_empty);

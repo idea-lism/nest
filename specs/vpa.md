@@ -12,20 +12,27 @@ It iterates the parsed & desugared AST, utilize src/re.h to generate DFA, utiliz
 ### Input & input processing
 
 ```c
+typedef enum {
+  VPA_RE, // for literals, we have VpaUnit.re built from string, and action_units = { literal_tok_id }
+  VPA_CALL,
+  VPA_MACRO_REF,
+} VpaUnitKind;
+
 typedef int32_t* VpaActionUnits;
 
 typedef struct {
   VpaUnitKind kind;
 
-  // kind = re
+  // kind = VPA_RE
   ReIr re;           // a flattened regexp representation
   bool binary_mode;  // true if tagged with 'b' mode
 
-  // kind = token
-  int32_t tok_id;
-
-  // kind = call
+  // kind = VPA_CALL
   int32_t call_scope_id;
+
+  // kind = VPA_MACRO_REF
+  // expanded in post_process
+  char* macro_name;
 
   // see the `action` rule in bootstrap.nest and numbering in parse.md
   // action_unit_id > 0: maps to token_id
@@ -37,10 +44,11 @@ typedef struct {
 typedef VpaUnit* VpaUnits;
 
 typedef struct {
-  int32_t scope_id;
-  char* name;     // (owned)
+  int32_t scope_id; // only non-macro scopes have scope_id, incremental
+  char* name;       // (owned)
   VpaUnit leader;
   VpaUnits children;
+  bool is_macro; // after pp_inline_macros no macro scope is left
   bool has_parser;
 } VpaScope;
 

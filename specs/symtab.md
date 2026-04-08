@@ -29,6 +29,7 @@ typedef struct {
 void     symtab_init(Symtab* st, int32_t start_num);      // validation: start_num must be >= 0
 void     symtab_free(Symtab* st);
 int32_t  symtab_intern(Symtab* st, const char* name);     // intern, returns id
+int32_t symtab_intern_f(Symtab* st, const char* fmt_str, ...);
 int32_t  symtab_find(const Symtab* st, const char* name); // lookup, returns id or -1 (not found)
 const char* symtab_get(const Symtab* st, int32_t id);     // get string by id
 int32_t  symtab_count(const Symtab* st);                  // number of interned strings

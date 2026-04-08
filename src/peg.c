@@ -15,13 +15,19 @@
 
 // --- Helpers ---
 
-static const char* _scope_name(PegRule* rule) { return (rule->scope && rule->scope[0]) ? rule->scope : "main"; }
+static const char* _scope_name(PegGenInput* input, PegRule* rule) {
+  return rule->scope_id >= 0 ? symtab_get(&input->scope_names, rule->scope_id) : "main";
+}
 
-static int32_t _is_scope_entry(PegRule* rule) { return rule->scope && rule->scope[0]; }
+static int32_t _is_scope_entry(PegRule* rule) { return rule->scope_id >= 0; }
 
-static int32_t _global_rule_index(PegRule* rules, int32_t n_rules, const char* name) {
+static const char* _rule_name(PegGenInput* input, PegRule* rule) {
+  return symtab_get(&input->rule_names, rule->global_id);
+}
+
+static int32_t _global_rule_index(PegGenInput* input, PegRule* rules, int32_t n_rules, const char* name) {
   for (int32_t i = 0; i < n_rules; i++) {
-    if (strcmp(rules[i].name, name) == 0) {
+    if (strcmp(symtab_get(&input->rule_names, rules[i].global_id), name) == 0) {
       return i;
     }
   }
@@ -58,18 +64,35 @@ static char* _synth_name(const char* owner, int32_t id) {
 // For CALL: uses defined_rules symtab to resolve. Unresolvable calls get as.call = -1.
 
 static int32_t _breakdown(ScopeClosure* cl, PegUnit* unit, const char* owner_name, int32_t* next_synth,
-                          PegRule* all_rules, int32_t n_rules, Symtab* tokens);
+                          PegRule* all_rules, int32_t n_rules, PegGenInput* input);
 
 static int32_t _breakdown_leaf(ScopeClosure* cl, PegUnit* unit, const char* owner_name, int32_t* next_synth,
-                               PegRule* all_rules, int32_t n_rules, Symtab* tokens) {
+                               PegRule* all_rules, int32_t n_rules, PegGenInput* input) {
   // Interlace => JOIN
-  if (unit->interlace && unit->ninterlace > 0) {
+  if (unit->interlace_rhs_kind != 0) {
     PegUnit plain = *unit;
     plain.multiplier = 0;
-    plain.interlace = NULL;
-    plain.ninterlace = 0;
-    int32_t lhs = _breakdown(cl, &plain, owner_name, next_synth, all_rules, n_rules, tokens);
-    int32_t rhs = _breakdown(cl, unit->interlace, owner_name, next_synth, all_rules, n_rules, tokens);
+    plain.interlace_rhs_kind = 0;
+    int32_t lhs = _breakdown(cl, &plain, owner_name, next_synth, all_rules, n_rules, input);
+
+    // Create rhs ScopedRule directly from interlace_rhs_kind/interlace_rhs_id
+    ScopedRule rhs_sr;
+    if (unit->interlace_rhs_kind == PEG_TOK) {
+      rhs_sr = (ScopedRule){
+          .name = strdup(symtab_get(&input->tokens, unit->interlace_rhs_id)),
+          .kind = SCOPED_RULE_KIND_TOK,
+          .as.tok = unit->interlace_rhs_id,
+      };
+    } else { // PEG_CALL
+      const char* rhs_name = symtab_get(&input->rule_names, unit->interlace_rhs_id);
+      rhs_sr = (ScopedRule){
+          .name = strdup(rhs_name),
+          .kind = SCOPED_RULE_KIND_CALL,
+          .as.call = symtab_find(&cl->defined_rules, rhs_name),
+      };
+    }
+    int32_t rhs = _push_rule(cl, rhs_sr);
+
     char* name = _synth_name(owner_name, (*next_synth)++);
     ScopedRule sr = {
         .name = name,
@@ -80,21 +103,22 @@ static int32_t _breakdown_leaf(ScopeClosure* cl, PegUnit* unit, const char* owne
     return _push_rule(cl, sr);
   }
 
-  if (unit->kind == PEG_TOK || unit->kind == PEG_KEYWORD_TOK) {
+  if (unit->kind == PEG_TOK) {
     ScopedRule sr = {
-        .name = strdup(unit->name),
+        .name = strdup(symtab_get(&input->tokens, unit->id)),
         .kind = SCOPED_RULE_KIND_TOK,
-        .as.tok = symtab_intern(tokens, unit->name),
+        .as.tok = unit->id,
         .multiplier = (char)unit->multiplier,
     };
     return _push_rule(cl, sr);
   }
 
-  // PEG_ID
-  int32_t gi = _global_rule_index(all_rules, n_rules, unit->name);
+  // PEG_CALL
+  const char* call_name = symtab_get(&input->rule_names, unit->id);
+  int32_t gi = _global_rule_index(input, all_rules, n_rules, call_name);
   if (gi >= 0 && _is_scope_entry(&all_rules[gi])) {
     ScopedRule sr = {
-        .name = strdup(unit->name),
+        .name = strdup(call_name),
         .kind = SCOPED_RULE_KIND_EXTERNAL_SCOPE,
         .as.external_scope = gi,
         .multiplier = (char)unit->multiplier,
@@ -103,20 +127,20 @@ static int32_t _breakdown_leaf(ScopeClosure* cl, PegUnit* unit, const char* owne
   }
 
   // Regular call — resolve via defined_rules
-  int32_t target = symtab_find(&cl->defined_rules, unit->name);
+  int32_t target = symtab_find(&cl->defined_rules, call_name);
   ScopedRule sr = {
-      .name = strdup(unit->name),
+      .name = strdup(call_name),
       .kind = SCOPED_RULE_KIND_CALL,
-      .as.call = target, // resolved if rule was pre-registered, -1 otherwise
+      .as.call = target,
       .multiplier = (char)unit->multiplier,
   };
   return _push_rule(cl, sr);
 }
 
 static int32_t _breakdown(ScopeClosure* cl, PegUnit* unit, const char* owner_name, int32_t* next_synth,
-                          PegRule* all_rules, int32_t n_rules, Symtab* tokens) {
-  if (unit->kind == PEG_TOK || unit->kind == PEG_KEYWORD_TOK || unit->kind == PEG_ID) {
-    return _breakdown_leaf(cl, unit, owner_name, next_synth, all_rules, n_rules, tokens);
+                          PegRule* all_rules, int32_t n_rules, PegGenInput* input) {
+  if (unit->kind == PEG_TOK || unit->kind == PEG_CALL) {
+    return _breakdown_leaf(cl, unit, owner_name, next_synth, all_rules, n_rules, input);
   }
 
   if (unit->kind == PEG_SEQ) {
@@ -127,10 +151,10 @@ static int32_t _breakdown(ScopeClosure* cl, PegUnit* unit, const char* owner_nam
       int32_t child_id;
       if (child->kind == PEG_BRANCHES) {
         char* sname = _synth_name(owner_name, (*next_synth)++);
-        child_id = _breakdown(cl, child, sname, next_synth, all_rules, n_rules, tokens);
+        child_id = _breakdown(cl, child, sname, next_synth, all_rules, n_rules, input);
         cl->rules[child_id].name = sname;
       } else {
-        child_id = _breakdown(cl, child, owner_name, next_synth, all_rules, n_rules, tokens);
+        child_id = _breakdown(cl, child, owner_name, next_synth, all_rules, n_rules, input);
       }
       darray_push(child_ids, child_id);
     }
@@ -147,7 +171,7 @@ static int32_t _breakdown(ScopeClosure* cl, PegUnit* unit, const char* owner_nam
     int32_t n = unit->children ? (int32_t)darray_size(unit->children) : 0;
     int32_t* branch_ids = darray_new(sizeof(int32_t), 0);
     for (int32_t i = 0; i < n; i++) {
-      int32_t alt_id = _breakdown(cl, &unit->children[i], owner_name, next_synth, all_rules, n_rules, tokens);
+      int32_t alt_id = _breakdown(cl, &unit->children[i], owner_name, next_synth, all_rules, n_rules, input);
       darray_push(branch_ids, alt_id);
     }
     ScopedRule sr = {.name = strdup(owner_name), .kind = SCOPED_RULE_KIND_BRANCHES, .as.branches = branch_ids};
@@ -205,38 +229,47 @@ static void _resolve_and_wrap(ScopeClosure* cl) {
 // --- Scope closure gathering + breakdown ---
 
 static void _walk_closure_units(PegUnit* unit, PegRule* rules, int32_t n_rules, Bitset* visited,
-                                int32_t** out_indices) {
-  if (unit->kind == PEG_ID) {
-    int32_t ri = _global_rule_index(rules, n_rules, unit->name);
+                                int32_t** out_indices, PegGenInput* input) {
+  if (unit->kind == PEG_CALL) {
+    const char* call_name = symtab_get(&input->rule_names, unit->id);
+    int32_t ri = _global_rule_index(input, rules, n_rules, call_name);
     if (ri >= 0 && !bitset_contains(visited, (uint32_t)ri)) {
       if (_is_scope_entry(&rules[ri])) {
         return;
       }
       bitset_add_bit(visited, (uint32_t)ri);
       darray_push(*out_indices, ri);
-      _walk_closure_units(&rules[ri].seq, rules, n_rules, visited, out_indices);
+      _walk_closure_units(&rules[ri].seq, rules, n_rules, visited, out_indices, input);
     }
     return;
   }
   if (unit->children) {
     for (int32_t i = 0; i < (int32_t)darray_size(unit->children); i++) {
-      _walk_closure_units(&unit->children[i], rules, n_rules, visited, out_indices);
+      _walk_closure_units(&unit->children[i], rules, n_rules, visited, out_indices, input);
     }
   }
-  if (unit->interlace) {
-    _walk_closure_units(unit->interlace, rules, n_rules, visited, out_indices);
+  // Walk interlace if it's a PEG_CALL
+  if (unit->interlace_rhs_kind == PEG_CALL) {
+    const char* call_name = symtab_get(&input->rule_names, unit->interlace_rhs_id);
+    int32_t ri = _global_rule_index(input, rules, n_rules, call_name);
+    if (ri >= 0 && !bitset_contains(visited, (uint32_t)ri)) {
+      if (!_is_scope_entry(&rules[ri])) {
+        bitset_add_bit(visited, (uint32_t)ri);
+        darray_push(*out_indices, ri);
+        _walk_closure_units(&rules[ri].seq, rules, n_rules, visited, out_indices, input);
+      }
+    }
   }
 }
 
 // Build scope closures, break down rules, resolve calls.
 // Returns darray of ScopeClosure.
-// Also populates root_ids[closure_idx] = darray of (global_rule_idx, root_scoped_rule_id) pairs.
-static ScopeClosure* _build_closures(PegRule* rules, int32_t n_rules, Symtab* tokens) {
+static ScopeClosure* _build_closures(PegRule* rules, int32_t n_rules, PegGenInput* input) {
   ScopeClosure* closures = darray_new(sizeof(ScopeClosure), 0);
   int32_t** all_seeds = darray_new(sizeof(int32_t*), 0);
 
   for (int32_t i = 0; i < n_rules; i++) {
-    const char* sname = _scope_name(&rules[i]);
+    const char* sname = _scope_name(input, &rules[i]);
     int32_t si = _closure_index(closures, sname);
     if (si < 0) {
       ScopeClosure cl = {0};
@@ -259,36 +292,35 @@ static ScopeClosure* _build_closures(PegRule* rules, int32_t n_rules, Symtab* to
       bitset_add_bit(visited, (uint32_t)all_seeds[si][j]);
     }
     for (int32_t j = 0; j < seed_count; j++) {
-      _walk_closure_units(&rules[all_seeds[si][j]].seq, rules, n_rules, visited, &all_seeds[si]);
+      _walk_closure_units(&rules[all_seeds[si][j]].seq, rules, n_rules, visited, &all_seeds[si], input);
     }
     bitset_del(visited);
 
-    // Reserve slots for user-visible rules. The symtab will assign IDs 0, 1, 2, ...
-    // We push placeholder ScopedRules at those positions.
+    // Reserve slots for user-visible rules
     int32_t n_scope = (int32_t)darray_size(all_seeds[si]);
     for (int32_t j = 0; j < n_scope; j++) {
       int32_t gi = all_seeds[si][j];
-      ScopedRule placeholder = {.name = strdup(rules[gi].name), .kind = SCOPED_RULE_KIND_SEQ};
-      placeholder.as.seq = NULL; // will be filled in
+      const char* rname = _rule_name(input, &rules[gi]);
+      ScopedRule placeholder = {.name = strdup(rname), .kind = SCOPED_RULE_KIND_SEQ};
+      placeholder.as.seq = NULL;
       _push_rule(&closures[si], placeholder);
-      symtab_intern(&closures[si].defined_rules, rules[gi].name);
-      // Now symtab_find(name) == j, and rules[j] is the placeholder
+      symtab_intern(&closures[si].defined_rules, rname);
     }
 
     // Break down each rule body and fill in the reserved slot
     for (int32_t j = 0; j < n_scope; j++) {
       int32_t gi = all_seeds[si][j];
+      const char* rname = _rule_name(input, &rules[gi]);
       int32_t next_synth = 1;
 
-      // Breakdown the rule body. This appends intermediates to cl->rules after the reserved slots.
-      int32_t body_id = _breakdown(&closures[si], &rules[gi].seq, rules[gi].name, &next_synth, rules, n_rules, tokens);
+      int32_t body_id = _breakdown(&closures[si], &rules[gi].seq, rname, &next_synth, rules, n_rules, input);
 
       // Copy the broken-down body into the reserved slot
       ScopedRule body = closures[si].rules[body_id];
       free((char*)closures[si].rules[j].name);
       closures[si].rules[j] = body;
       free((char*)closures[si].rules[j].name);
-      closures[si].rules[j].name = strdup(rules[gi].name);
+      closures[si].rules[j].name = strdup(rname);
 
       // Null out the original to prevent double-free
       if (body_id != j) {
@@ -520,7 +552,6 @@ static void _make_struct_name(const char* rule_name, char* out, int32_t out_size
 }
 
 // Collect user-visible branch info from PegUnit tree (for header node type generation)
-// Returns darray of PegUnit* pointing to branch alternatives
 static PegUnit** _collect_branches(PegRule* rule) {
   PegUnit** all = darray_new(sizeof(PegUnit*), 0);
   if (!rule->seq.children) {
@@ -571,9 +602,10 @@ static void _gen_ref_type(HeaderWriter* hw) {
 
 // --- Header: node type for a user-visible rule ---
 
-static void _gen_node_type(HeaderWriter* hw, PegRule* rule) {
+static void _gen_node_type(HeaderWriter* hw, PegRule* rule, PegGenInput* input) {
+  const char* rname = _rule_name(input, rule);
   char struct_name[128];
-  _make_struct_name(rule->name, struct_name, sizeof(struct_name));
+  _make_struct_name(rname, struct_name, sizeof(struct_name));
 
   hw_struct_begin(hw, struct_name);
 
@@ -595,8 +627,14 @@ static void _gen_node_type(HeaderWriter* hw, PegRule* rule) {
       PegUnit* b = branches[i];
       for (int32_t j = 0; j < (int32_t)darray_size(b->children); j++) {
         PegUnit* child = &b->children[j];
-        if (child->name && child->name[0]) {
-          hw_field(hw, "PegRef", child->name);
+        const char* child_name = NULL;
+        if (child->kind == PEG_CALL) {
+          child_name = symtab_get(&input->rule_names, child->id);
+        } else if (child->kind == PEG_TOK) {
+          child_name = symtab_get(&input->tokens, child->id);
+        }
+        if (child_name && child_name[0]) {
+          hw_field(hw, "PegRef", child_name);
         }
       }
     }
@@ -604,8 +642,14 @@ static void _gen_node_type(HeaderWriter* hw, PegRule* rule) {
     if (rule->seq.children) {
       for (int32_t i = 0; i < (int32_t)darray_size(rule->seq.children); i++) {
         PegUnit* child = &rule->seq.children[i];
-        if (child->name && child->name[0]) {
-          hw_field(hw, "PegRef", child->name);
+        const char* child_name = NULL;
+        if (child->kind == PEG_CALL) {
+          child_name = symtab_get(&input->rule_names, child->id);
+        } else if (child->kind == PEG_TOK) {
+          child_name = symtab_get(&input->tokens, child->id);
+        }
+        if (child_name && child_name[0]) {
+          hw_field(hw, "PegRef", child_name);
         }
       }
     }
@@ -652,18 +696,16 @@ static void _define_col_type_ir(IrWriter* w, ScopeClosure* cl) {
 
 // --- Header: load functions ---
 
-// Build branch alt info from ScopedRule graph
 typedef struct {
-  int32_t slot_val;   // scoped_rule_id for rule-ref, -(idx+1) for non-rule
-  int32_t child_slot; // slot_idx of the child rule, -1 for non-rule
+  int32_t slot_val;
+  int32_t child_slot;
   int32_t is_rule_ref;
 } BranchAltInfo;
 
 static BranchAltInfo* _build_branch_alts(ScopeClosure* cl, int32_t rule_id, int32_t* out_count) {
   ScopedRule* sr = &cl->rules[rule_id];
 
-  // Find BRANCHES children
-  int32_t* branch_rule_ids = NULL; // darray of scoped_rule_ids pointing to BRANCHES
+  int32_t* branch_rule_ids = NULL;
   if (sr->kind == SCOPED_RULE_KIND_BRANCHES) {
     branch_rule_ids = darray_new(sizeof(int32_t), 0);
     darray_push(branch_rule_ids, rule_id);
@@ -685,7 +727,6 @@ static BranchAltInfo* _build_branch_alts(ScopeClosure* cl, int32_t rule_id, int3
     return NULL;
   }
 
-  // Count total alts
   int32_t total = 0;
   for (int32_t i = 0; i < (int32_t)darray_size(branch_rule_ids); i++) {
     total += (int32_t)darray_size(cl->rules[branch_rule_ids[i]].as.branches);
@@ -699,7 +740,6 @@ static BranchAltInfo* _build_branch_alts(ScopeClosure* cl, int32_t rule_id, int3
       int32_t alt_id = br->as.branches[j];
       ScopedRule* alt = &cl->rules[alt_id];
 
-      // Check if this alt is a CALL (or a SEQ wrapping a CALL) to a user-visible rule
       int32_t target = -1;
       if (alt->kind == SCOPED_RULE_KIND_CALL && alt->as.call >= 0) {
         target = alt->as.call;
@@ -728,18 +768,25 @@ static BranchAltInfo* _build_branch_alts(ScopeClosure* cl, int32_t rule_id, int3
   return alts;
 }
 
-static void _emit_child_load(HeaderWriter* hw, PegUnit* child, const char* cur_var, int32_t indent, ScopeClosure* cl) {
+static void _emit_child_load(HeaderWriter* hw, PegUnit* child, const char* cur_var, int32_t indent, ScopeClosure* cl,
+                             PegGenInput* input) {
   const char* sp = indent >= 2 ? "    " : "  ";
   const char* inner = indent >= 2 ? "      " : "    ";
-  const char* var = (child->name && child->name[0]) ? child->name : NULL;
+
+  const char* child_name = NULL;
+  if (child->kind == PEG_CALL) {
+    child_name = symtab_get(&input->rule_names, child->id);
+  } else if (child->kind == PEG_TOK) {
+    child_name = symtab_get(&input->tokens, child->id);
+  }
+  const char* var = (child_name && child_name[0]) ? child_name : NULL;
 
   if (var) {
     hw_fmt(hw, "%snode.%s = (PegRef){table, %s, -1};\n", sp, var, cur_var);
   }
 
-  if (child->kind == PEG_ID) {
-    // Look up the child rule in this closure
-    int32_t rid = symtab_find(&cl->defined_rules, child->name);
+  if (child->kind == PEG_CALL) {
+    int32_t rid = symtab_find(&cl->defined_rules, child_name);
     int32_t slot = (rid >= 0) ? (int32_t)cl->rules[rid].slot_index : 0;
     int32_t child_has_branches = (rid >= 0) ? _has_branches(cl, rid) : 0;
 
@@ -779,12 +826,14 @@ static void _emit_child_load(HeaderWriter* hw, PegUnit* child, const char* cur_v
   }
 }
 
-static void _gen_load_impl(HeaderWriter* hw, PegRule* rule, int32_t rule_id, ScopeClosure* cl, const char* prefix) {
+static void _gen_load_impl(HeaderWriter* hw, PegRule* rule, int32_t rule_id, ScopeClosure* cl, const char* prefix,
+                           PegGenInput* input) {
+  const char* rname = _rule_name(input, rule);
   char struct_name[128];
-  _make_struct_name(rule->name, struct_name, sizeof(struct_name));
+  _make_struct_name(rname, struct_name, sizeof(struct_name));
 
   hw_blank(hw);
-  hw_fmt(hw, "static inline %s %s_load_%s(PegRef ref) {\n", struct_name, prefix, rule->name);
+  hw_fmt(hw, "static inline %s %s_load_%s(PegRef ref) {\n", struct_name, prefix, rname);
   hw_fmt(hw, "  %s node = {0};\n", struct_name);
   hw_fmt(hw, "  %s* table = (%s*)ref.table;\n", cl->hdr_col_type, cl->hdr_col_type);
   hw_fmt(hw, "  int32_t col = ref.col;\n");
@@ -835,20 +884,20 @@ static void _gen_load_impl(HeaderWriter* hw, PegRule* rule, int32_t rule_id, Sco
 
           hw_fmt(hw, "    int32_t bcur = cur;\n");
           for (int32_t j = 0; j < (int32_t)darray_size(branch->children); j++) {
-            _emit_child_load(hw, &branch->children[j], "bcur", 2, cl);
+            _emit_child_load(hw, &branch->children[j], "bcur", 2, cl, input);
           }
           hw_fmt(hw, "  }\n");
         }
         branch_idx += bn;
       } else {
-        _emit_child_load(hw, child, "cur", 1, cl);
+        _emit_child_load(hw, child, "cur", 1, cl, input);
       }
     }
     free(alts);
   } else {
     if (rule->seq.children) {
       for (int32_t i = 0; i < (int32_t)darray_size(rule->seq.children); i++) {
-        _emit_child_load(hw, &rule->seq.children[i], "cur", 1, cl);
+        _emit_child_load(hw, &rule->seq.children[i], "cur", 1, cl, input);
       }
     }
   }
@@ -1063,12 +1112,10 @@ void peg_gen(PegGenInput* input, HeaderWriter* hw, IrWriter* w, bool compress_me
     return;
   }
 
-  Symtab tokens = {0};
-  symtab_init(&tokens, 0);
   Symtab analysis_symbols = {0};
   symtab_init(&analysis_symbols, 0);
 
-  ScopeClosure* closures = _build_closures(rules, n_rules, &tokens);
+  ScopeClosure* closures = _build_closures(rules, n_rules, input);
   int32_t n_closures = (int32_t)darray_size(closures);
 
   // Assign scoped_rule_id and run nullable/first/last analysis
@@ -1084,7 +1131,7 @@ void peg_gen(PegGenInput* input, HeaderWriter* hw, IrWriter* w, bool compress_me
   // --- Header: PegRef + node types ---
   _gen_ref_type(hw);
   for (int32_t i = 0; i < n_rules; i++) {
-    _gen_node_type(hw, &rules[i]);
+    _gen_node_type(hw, &rules[i], input);
   }
   hw_blank(hw);
 
@@ -1127,7 +1174,6 @@ void peg_gen(PegGenInput* input, HeaderWriter* hw, IrWriter* w, bool compress_me
         }
       }
 
-      // Compute segment_mask (OR of all rule_bit_masks sharing the same segment_index)
       for (int32_t j = 0; j < n_defined; j++) {
         uint32_t seg = cl->rules[j].segment_index;
         uint32_t mask = 0;
@@ -1156,11 +1202,12 @@ void peg_gen(PegGenInput* input, HeaderWriter* hw, IrWriter* w, bool compress_me
 
   // --- Header: load functions ---
   for (int32_t i = 0; i < n_rules; i++) {
-    const char* sn = _scope_name(&rules[i]);
+    const char* sn = _scope_name(input, &rules[i]);
     int32_t si = _closure_index(closures, sn);
-    int32_t rid = symtab_find(&closures[si].defined_rules, rules[i].name);
+    const char* rname = _rule_name(input, &rules[i]);
+    int32_t rid = symtab_find(&closures[si].defined_rules, rname);
     if (rid >= 0) {
-      _gen_load_impl(hw, &rules[i], rid, &closures[si], prefix);
+      _gen_load_impl(hw, &rules[i], rid, &closures[si], prefix, input);
     }
   }
 
@@ -1175,11 +1222,11 @@ void peg_gen(PegGenInput* input, HeaderWriter* hw, IrWriter* w, bool compress_me
 
   // --- IR: token ID legend ---
   {
-    int32_t n_tok = symtab_count(&tokens);
+    int32_t n_tok = symtab_count(&input->tokens);
     if (n_tok > 0) {
       irwriter_rawf(w, "\n; Token IDs:\n");
       for (int32_t t = 0; t < n_tok; t++) {
-        irwriter_rawf(w, ";   %d = @%s\n", t, symtab_get(&tokens, t));
+        irwriter_rawf(w, ";   %d = @%s\n", t, symtab_get(&input->tokens, t));
       }
     }
   }
@@ -1210,9 +1257,10 @@ void peg_gen(PegGenInput* input, HeaderWriter* hw, IrWriter* w, bool compress_me
 
   // --- IR: rule functions ---
   for (int32_t i = 0; i < n_rules; i++) {
-    const char* sn = _scope_name(&rules[i]);
+    const char* sn = _scope_name(input, &rules[i]);
     int32_t si = _closure_index(closures, sn);
-    int32_t rid = symtab_find(&closures[si].defined_rules, rules[i].name);
+    const char* rname = _rule_name(input, &rules[i]);
+    int32_t rid = symtab_find(&closures[si].defined_rules, rname);
     if (rid < 0) {
       continue;
     }
@@ -1224,7 +1272,6 @@ void peg_gen(PegGenInput* input, HeaderWriter* hw, IrWriter* w, bool compress_me
   }
 
   // --- Cleanup ---
-  symtab_free(&tokens);
   symtab_free(&analysis_symbols);
   _free_closures(closures);
 }

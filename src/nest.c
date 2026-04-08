@@ -266,12 +266,20 @@ static int32_t _cmd_compile(int32_t argc, char** argv) {
   }
 
   bool compress_memoize = !(arg_k && strcmp(arg_k, "false") == 0);
-  peg_gen(&(PegGenInput){.rules = ps->peg_rules}, hw, w, compress_memoize, prefix);
+  peg_gen(
+      &(PegGenInput){
+          .rules = ps->peg_rules,
+          .tokens = ps->tokens,
+          .scope_names = ps->scope_names,
+          .rule_names = ps->rule_names,
+      },
+      hw, w, compress_memoize, prefix);
   vpa_gen(
       &(VpaGenInput){
-          .rules = ps->vpa_rules,
-          .effects = ps->effects,
-          .src = ps->src,
+          .scopes = ps->vpa_scopes,
+          .effect_decls = ps->effect_decls,
+          .tokens = ps->tokens,
+          .hooks = ps->hooks,
       },
       hw, w, prefix);
 

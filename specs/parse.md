@@ -62,7 +62,9 @@ Some tokens and their meanings (details in bootstrap.nest):
 - `(b|i|ib|bi)?\/` ... `/` regexp (must not be empty) -- should handle it with child DFA
 - `.` sets `.` quoted string literal, also generates automata
 - `{` begins a scope
-- `@{` begins a literal module, which is syntax sugar which will be expanded at [post_process](post_process.md)
+- `@{` begins a literal module, which is syntax sugar which will be expanded at [post process](post_process.md)
+  - For each string literal, auto-create token and [re_ir](re_ir.md).
+    - for example, `@{ "+" }` auto-creates token `@lit.+` and a regexp IR that recognizes `"+"`.
 - `\n[[peg]]` unparse the token, and ends the vpa parser, then the main lexing will start the peg scope
 
 First implementation of the syntax, must be a manual recursive descend parser.
@@ -106,6 +108,8 @@ Some tokens and their meanings (details in bootstrap.nest):
 - `?` maybe, greedy
 - `+` plus, PEG possesive matching
 - `*` star, PEG possesive matching
+- string literals, replace them with auto-generated token the same way as in vpa parser.
+  - for example, `"+"` auto-creates token `@lit.+`.
 
 More on the semantics (see also validations in [post_process](post_process.md)):
 - if there's id named `main` , it is the entrance. there must be one entrance

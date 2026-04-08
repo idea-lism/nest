@@ -2,57 +2,69 @@
 
 #include "header_writer.h"
 #include "irwriter.h"
-#include "peg.h"
 #include "re_ir.h"
 #include "symtab.h"
 
 #include <stdbool.h>
 #include <stdint.h>
 
-// VPA unit: one element in a VPA rule body
+// builtin hook ids in the hooks symtab (start_num=0)
+#define HOOK_ID_BEGIN 0
+#define HOOK_ID_END 1
+#define HOOK_ID_FAIL 2
+#define HOOK_ID_UNPARSE 3
+#define HOOK_ID_BUILTIN_COUNT 4
+
+// action_unit_id > 0: maps to token_id
+// action_unit_id <= 0: maps to -hook_id
+typedef int32_t* VpaActionUnits;
+
 typedef enum {
-  VPA_REGEXP,
-  VPA_REF,
-  VPA_SCOPE,
+  VPA_RE, // for literals, we have VpaUnit.re built from string, and action_units = { literal_tok_id }
+  VPA_CALL,
+  VPA_MACRO_REF,
 } VpaUnitKind;
 
-typedef struct VpaUnit VpaUnit;
-
-struct VpaUnit {
+typedef struct {
   VpaUnitKind kind;
-  ReIr re;           // a flattened regexp representation
-  bool binary_mode;  // true if tagged with 'b' mode
-  char* name;        // tok_id name (without @) or ref name (owned)
-  int32_t hook;      // TOK_HOOK_BEGIN, _END, _FAIL, _UNPARSE, or 0
-  char* user_hook;   // (owned, may be NULL)
-  VpaUnit* children; // darray
-};
 
-// VPA rule
-typedef struct {
-  char* name;     // (owned)
-  VpaUnit* units; // darray
-  bool is_scope;
-  bool is_macro;
-  bool has_parser; // set by pp_match_scopes when a matching PEG rule exists
-} VpaRule;
+  // kind = VPA_RE
+  ReIr re;          // a flattened regexp representation
+  bool binary_mode; // true if tagged with 'b' mode
 
-// Effect declaration
+  // kind = VPA_CALL
+  int32_t call_scope_id;
+
+  // kind = VPA_MACRO_REF, expanded in post_process
+  char* macro_name;
+
+  // see the `action` rule in bootstrap.nest and numbering in parse.md
+  VpaActionUnits action_units;
+} VpaUnit;
+
+// use `VpaUnits` when we mean a darray
+typedef VpaUnit* VpaUnits;
+
 typedef struct {
-  char* hook_name;  // (owned)
-  int32_t* effects; // darray
+  int32_t scope_id;
+  char* name; // (owned)
+  VpaUnit leader;
+  VpaUnits children;
+  bool has_parser;
+  bool is_macro; // parse-time: macro rule, removed after inlining
+} VpaScope;
+
+typedef struct {
+  int32_t hook_id;
+  VpaActionUnits effects;
 } EffectDecl;
+typedef EffectDecl* EffectDecls;
 
-// Ignore entry
 typedef struct {
-  Symtab names;
-} IgnoreSet;
-
-// Input to vpa_gen
-typedef struct {
-  VpaRule* rules;      // darray
-  EffectDecl* effects; // darray
-  const char* src;
+  VpaScope* scopes;
+  EffectDecls effect_decls; // owned by ParseState
+  Symtab tokens;            // owned by ParseState, can be used to lookup token name, start from 1
+  Symtab hooks;             // owned by ParseState, can be used to lookup hook name, start from 0
 } VpaGenInput;
 
 void vpa_gen(VpaGenInput* input, HeaderWriter* hw, IrWriter* w, const char* prefix);

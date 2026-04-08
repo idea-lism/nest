@@ -385,3 +385,36 @@ char* ustr_slice(const char* s, int32_t start, int32_t end) {
 
   return ustr_new((size_t)(byte_end - byte_start), s + byte_start);
 }
+
+UstrByteSlice ustr_slice_bytes(const char* s, int32_t cp_start, int32_t cp_end) {
+  int32_t size = ustr_bytesize(s);
+  int32_t cplen = ustr_size(s);
+  const uint8_t* marks = _marks_ptr_const(s, size);
+
+  if (cp_start < 0) {
+    cp_start += cplen;
+  }
+  if (cp_end < 0) {
+    cp_end += cplen;
+  }
+  if (cp_start < 0) {
+    cp_start = 0;
+  }
+  if (cp_end > cplen) {
+    cp_end = cplen;
+  }
+  if (cp_start >= cp_end) {
+    return (UstrByteSlice){.s = s, .size = size};
+  }
+
+  int32_t byte_start = _marks_nth_cp(marks, size, cp_start);
+  int32_t byte_end = (cp_end >= cplen) ? size : _marks_nth_cp(marks, size, cp_end);
+  if (byte_start < 0) {
+    byte_start = size;
+  }
+  if (byte_end < 0) {
+    byte_end = size;
+  }
+
+  return (UstrByteSlice){.s = s + byte_start, .size = byte_end - byte_start};
+}

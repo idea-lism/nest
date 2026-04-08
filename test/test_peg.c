@@ -2,6 +2,7 @@
 #include "../src/header_writer.h"
 #include "../src/irwriter.h"
 #include "../src/peg.h"
+#include "../src/symtab.h"
 #include "compat.h"
 
 #include <assert.h>
@@ -30,8 +31,18 @@ static void _compile_test(const char* h_file, const char* ir_file) {
 }
 
 TEST(test_empty_input) {
+  Symtab tokens = {0};
+  symtab_init(&tokens, 0);
+  Symtab rule_names = {0};
+  symtab_init(&rule_names, 0);
+  Symtab scope_names = {0};
+  symtab_init(&scope_names, 0);
+
   PegGenInput input = {0};
   input.rules = darray_new(sizeof(PegRule), 0);
+  input.tokens = tokens;
+  input.rule_names = rule_names;
+  input.scope_names = scope_names;
 
   FILE* hf = fopen(BUILD_DIR "/test_peg_empty.h", "w");
   FILE* irf = fopen(BUILD_DIR "/test_peg_empty.ll", "w");
@@ -66,20 +77,37 @@ TEST(test_empty_input) {
   free(ir_buf);
   _compile_test(BUILD_DIR "/test_peg_empty.h", BUILD_DIR "/test_peg_empty.ll");
   darray_del(input.rules);
+  symtab_free(&tokens);
+  symtab_free(&rule_names);
+  symtab_free(&scope_names);
 }
 
 TEST(test_simple_rule_naive) {
+  Symtab tokens = {0};
+  symtab_init(&tokens, 0);
+  Symtab rule_names = {0};
+  symtab_init(&rule_names, 0);
+  Symtab scope_names = {0};
+  symtab_init(&scope_names, 0);
+
+  int32_t tok_NUM = symtab_intern(&tokens, "NUM");
+  int32_t rule_expr = symtab_intern(&rule_names, "expr");
+
   PegGenInput input = {0};
   input.rules = darray_new(sizeof(PegRule), 0);
+  input.tokens = tokens;
+  input.rule_names = rule_names;
+  input.scope_names = scope_names;
 
   PegRule rule = {0};
-  rule.name = strdup("expr");
+  rule.global_id = rule_expr;
+  rule.scope_id = -1;
   rule.seq.kind = PEG_SEQ;
   rule.seq.children = darray_new(sizeof(PegUnit), 0);
 
   PegUnit tok = {0};
   tok.kind = PEG_TOK;
-  tok.name = strdup("NUM");
+  tok.id = tok_NUM;
   darray_push(rule.seq.children, tok);
 
   darray_push(input.rules, rule);
@@ -102,15 +130,12 @@ TEST(test_simple_rule_naive) {
   char buf[1024];
   int found_ref = 0, found_node = 0, found_col = 0;
   while (fgets(buf, sizeof(buf), check)) {
-    if (strstr(buf, "PegRef")) {
+    if (strstr(buf, "PegRef"))
       found_ref = 1;
-    }
-    if (strstr(buf, "ExprNode")) {
+    if (strstr(buf, "ExprNode"))
       found_node = 1;
-    }
-    if (strstr(buf, "Col_main")) {
+    if (strstr(buf, "Col_main"))
       found_col = 1;
-    }
   }
   fclose(check);
   assert(found_ref);
@@ -119,33 +144,47 @@ TEST(test_simple_rule_naive) {
 
   _compile_test(BUILD_DIR "/test_peg_naive.h", BUILD_DIR "/test_peg_naive.ll");
 
-  free(rule.seq.children[0].name);
   darray_del(rule.seq.children);
-  free(rule.name);
   darray_del(input.rules);
+  symtab_free(&tokens);
+  symtab_free(&rule_names);
+  symtab_free(&scope_names);
 }
 
 TEST(test_row_shared_mode) {
+  Symtab tokens = {0};
+  symtab_init(&tokens, 0);
+  Symtab rule_names = {0};
+  symtab_init(&rule_names, 0);
+  Symtab scope_names = {0};
+  symtab_init(&scope_names, 0);
+
+  int32_t tok_A = symtab_intern(&tokens, "A");
+  int32_t tok_B = symtab_intern(&tokens, "B");
+  int32_t rule_a = symtab_intern(&rule_names, "a");
+  int32_t rule_b = symtab_intern(&rule_names, "b");
+
   PegGenInput input = {0};
   input.rules = darray_new(sizeof(PegRule), 0);
+  input.tokens = tokens;
+  input.rule_names = rule_names;
+  input.scope_names = scope_names;
 
   PegRule r1 = {0};
-  r1.name = strdup("a");
+  r1.global_id = rule_a;
+  r1.scope_id = -1;
   r1.seq.kind = PEG_SEQ;
   r1.seq.children = darray_new(sizeof(PegUnit), 0);
-  PegUnit t1 = {0};
-  t1.kind = PEG_TOK;
-  t1.name = strdup("A");
+  PegUnit t1 = {.kind = PEG_TOK, .id = tok_A};
   darray_push(r1.seq.children, t1);
   darray_push(input.rules, r1);
 
   PegRule r2 = {0};
-  r2.name = strdup("b");
+  r2.global_id = rule_b;
+  r2.scope_id = -1;
   r2.seq.kind = PEG_SEQ;
   r2.seq.children = darray_new(sizeof(PegUnit), 0);
-  PegUnit t2 = {0};
-  t2.kind = PEG_TOK;
-  t2.name = strdup("B");
+  PegUnit t2 = {.kind = PEG_TOK, .id = tok_B};
   darray_push(r2.seq.children, t2);
   darray_push(input.rules, r2);
 
@@ -167,31 +206,44 @@ TEST(test_row_shared_mode) {
   char buf[1024];
   int found_bits = 0;
   while (fgets(buf, sizeof(buf), check)) {
-    if (strstr(buf, "bits[")) {
+    if (strstr(buf, "bits["))
       found_bits = 1;
-    }
   }
   fclose(check);
   assert(found_bits);
 
   _compile_test(BUILD_DIR "/test_peg_shared.h", BUILD_DIR "/test_peg_shared.ll");
 
-  free(r1.seq.children[0].name);
   darray_del(r1.seq.children);
-  free(r1.name);
-  free(r2.seq.children[0].name);
   darray_del(r2.seq.children);
-  free(r2.name);
   darray_del(input.rules);
+  symtab_free(&tokens);
+  symtab_free(&rule_names);
+  symtab_free(&scope_names);
 }
 
 TEST(test_branch_rule) {
   // Rule: foo = [ @A :tag1 | @B :tag2 ]
+  Symtab tokens = {0};
+  symtab_init(&tokens, 0);
+  Symtab rule_names = {0};
+  symtab_init(&rule_names, 0);
+  Symtab scope_names = {0};
+  symtab_init(&scope_names, 0);
+
+  int32_t tok_A = symtab_intern(&tokens, "A");
+  int32_t tok_B = symtab_intern(&tokens, "B");
+  int32_t rule_foo = symtab_intern(&rule_names, "foo");
+
   PegGenInput input = {0};
   input.rules = darray_new(sizeof(PegRule), 0);
+  input.tokens = tokens;
+  input.rule_names = rule_names;
+  input.scope_names = scope_names;
 
   PegRule rule = {0};
-  rule.name = strdup("foo");
+  rule.global_id = rule_foo;
+  rule.scope_id = -1;
   rule.seq.kind = PEG_SEQ;
   rule.seq.children = darray_new(sizeof(PegUnit), 0);
 
@@ -203,16 +255,16 @@ TEST(test_branch_rule) {
   b1.kind = PEG_SEQ;
   b1.tag = strdup("tag1");
   b1.children = darray_new(sizeof(PegUnit), 0);
-  PegUnit t1 = {.kind = PEG_TOK, .name = strdup("A")};
-  darray_push(b1.children, t1);
+  PegUnit bt1 = {.kind = PEG_TOK, .id = tok_A};
+  darray_push(b1.children, bt1);
   darray_push(branches.children, b1);
 
   PegUnit b2 = {0};
   b2.kind = PEG_SEQ;
   b2.tag = strdup("tag2");
   b2.children = darray_new(sizeof(PegUnit), 0);
-  PegUnit t2 = {.kind = PEG_TOK, .name = strdup("B")};
-  darray_push(b2.children, t2);
+  PegUnit bt2 = {.kind = PEG_TOK, .id = tok_B};
+  darray_push(b2.children, bt2);
   darray_push(branches.children, b2);
 
   darray_push(rule.seq.children, branches);
@@ -247,47 +299,66 @@ TEST(test_branch_rule) {
   free(hdr_buf);
 
   // Cleanup
-  free(input.rules[0].seq.children[0].children[0].children[0].name);
-  darray_del(input.rules[0].seq.children[0].children[0].children);
   free(input.rules[0].seq.children[0].children[0].tag);
-  free(input.rules[0].seq.children[0].children[1].children[0].name);
-  darray_del(input.rules[0].seq.children[0].children[1].children);
+  darray_del(input.rules[0].seq.children[0].children[0].children);
   free(input.rules[0].seq.children[0].children[1].tag);
+  darray_del(input.rules[0].seq.children[0].children[1].children);
   darray_del(input.rules[0].seq.children[0].children);
   darray_del(input.rules[0].seq.children);
-  free(input.rules[0].name);
   darray_del(input.rules);
+  symtab_free(&tokens);
+  symtab_free(&rule_names);
+  symtab_free(&scope_names);
 }
 
 TEST(test_per_scope_col) {
   // Two rules in different scopes should get different Col types
+  Symtab tokens = {0};
+  symtab_init(&tokens, 0);
+  Symtab rule_names = {0};
+  symtab_init(&rule_names, 0);
+  Symtab scope_names = {0};
+  symtab_init(&scope_names, 0);
+
+  int32_t tok_X = symtab_intern(&tokens, "X");
+  int32_t tok_Y = symtab_intern(&tokens, "Y");
+  int32_t tok_Z = symtab_intern(&tokens, "Z");
+  int32_t rule_a = symtab_intern(&rule_names, "a");
+  int32_t rule_b = symtab_intern(&rule_names, "b");
+  int32_t rule_c = symtab_intern(&rule_names, "c");
+  int32_t scope_s1 = symtab_intern(&scope_names, "s1");
+  int32_t scope_s2 = symtab_intern(&scope_names, "s2");
+
   PegGenInput input = {0};
   input.rules = darray_new(sizeof(PegRule), 0);
+  input.tokens = tokens;
+  input.rule_names = rule_names;
+  input.scope_names = scope_names;
 
   PegRule r1 = {0};
-  r1.name = strdup("a");
-  r1.scope = strdup("s1");
+  r1.global_id = rule_a;
+  r1.scope_id = scope_s1;
   r1.seq.kind = PEG_SEQ;
   r1.seq.children = darray_new(sizeof(PegUnit), 0);
-  PegUnit t1 = {.kind = PEG_TOK, .name = strdup("X")};
+  PegUnit t1 = {.kind = PEG_TOK, .id = tok_X};
   darray_push(r1.seq.children, t1);
   darray_push(input.rules, r1);
 
   PegRule r2 = {0};
-  r2.name = strdup("b");
-  r2.scope = strdup("s1");
+  r2.global_id = rule_b;
+  r2.scope_id = scope_s1;
   r2.seq.kind = PEG_SEQ;
   r2.seq.children = darray_new(sizeof(PegUnit), 0);
-  PegUnit t2 = {.kind = PEG_TOK, .name = strdup("Y")};
+  PegUnit t2 = {.kind = PEG_TOK, .id = tok_Y};
   darray_push(r2.seq.children, t2);
   darray_push(input.rules, r2);
 
   PegRule r3 = {0};
-  r3.name = strdup("c");
-  r3.scope = strdup("s2");
+  r3.global_id = rule_c;
+  r3.scope_id = scope_s2;
   r3.seq.kind = PEG_SEQ;
   r3.seq.children = darray_new(sizeof(PegUnit), 0);
-  PegUnit t3 = {.kind = PEG_TOK, .name = strdup("Z")};
+  PegUnit t3 = {.kind = PEG_TOK, .id = tok_Z};
   darray_push(r3.seq.children, t3);
   darray_push(input.rules, r3);
 
@@ -316,47 +387,59 @@ TEST(test_per_scope_col) {
 
   free(hdr_buf);
 
-  free(r1.seq.children[0].name);
   darray_del(r1.seq.children);
-  free(r1.name);
-  free(r1.scope);
-  free(r2.seq.children[0].name);
   darray_del(r2.seq.children);
-  free(r2.name);
-  free(r2.scope);
-  free(r3.seq.children[0].name);
   darray_del(r3.seq.children);
-  free(r3.name);
-  free(r3.scope);
   darray_del(input.rules);
+  symtab_free(&tokens);
+  symtab_free(&rule_names);
+  symtab_free(&scope_names);
 }
 
 TEST(test_row_shared_per_scope_compact) {
+  Symtab tokens = {0};
+  symtab_init(&tokens, 0);
+  Symtab rule_names = {0};
+  symtab_init(&rule_names, 0);
+  Symtab scope_names = {0};
+  symtab_init(&scope_names, 0);
+
+  int32_t tok_X = symtab_intern(&tokens, "X");
+  int32_t tok_Y = symtab_intern(&tokens, "Y");
+  int32_t rule_a = symtab_intern(&rule_names, "a");
+  int32_t rule_b = symtab_intern(&rule_names, "b");
+  int32_t rule_c = symtab_intern(&rule_names, "c");
+  int32_t scope_s1 = symtab_intern(&scope_names, "s1");
+  int32_t scope_s2 = symtab_intern(&scope_names, "s2");
+
   PegGenInput input = {0};
   input.rules = darray_new(sizeof(PegRule), 0);
+  input.tokens = tokens;
+  input.rule_names = rule_names;
+  input.scope_names = scope_names;
 
   PegRule r1 = {0};
-  r1.name = strdup("a");
-  r1.scope = strdup("s1");
+  r1.global_id = rule_a;
+  r1.scope_id = scope_s1;
   r1.seq.kind = PEG_SEQ;
   r1.seq.children = darray_new(sizeof(PegUnit), 0);
-  darray_push(r1.seq.children, ((PegUnit){.kind = PEG_TOK, .name = strdup("X")}));
+  darray_push(r1.seq.children, ((PegUnit){.kind = PEG_TOK, .id = tok_X}));
   darray_push(input.rules, r1);
 
   PegRule r2 = {0};
-  r2.name = strdup("b");
-  r2.scope = strdup("s1");
+  r2.global_id = rule_b;
+  r2.scope_id = scope_s1;
   r2.seq.kind = PEG_SEQ;
   r2.seq.children = darray_new(sizeof(PegUnit), 0);
-  darray_push(r2.seq.children, ((PegUnit){.kind = PEG_TOK, .name = strdup("X")}));
+  darray_push(r2.seq.children, ((PegUnit){.kind = PEG_TOK, .id = tok_X}));
   darray_push(input.rules, r2);
 
   PegRule r3 = {0};
-  r3.name = strdup("c");
-  r3.scope = strdup("s2");
+  r3.global_id = rule_c;
+  r3.scope_id = scope_s2;
   r3.seq.kind = PEG_SEQ;
   r3.seq.children = darray_new(sizeof(PegUnit), 0);
-  darray_push(r3.seq.children, ((PegUnit){.kind = PEG_TOK, .name = strdup("Y")}));
+  darray_push(r3.seq.children, ((PegUnit){.kind = PEG_TOK, .id = tok_Y}));
   darray_push(input.rules, r3);
 
   char* hdr_buf = NULL;
@@ -382,45 +465,57 @@ TEST(test_row_shared_per_scope_compact) {
 
   free(hdr_buf);
 
-  free(r1.seq.children[0].name);
   darray_del(r1.seq.children);
-  free(r1.name);
-  free(r1.scope);
-  free(r2.seq.children[0].name);
   darray_del(r2.seq.children);
-  free(r2.name);
-  free(r2.scope);
-  free(r3.seq.children[0].name);
   darray_del(r3.seq.children);
-  free(r3.name);
-  free(r3.scope);
   darray_del(input.rules);
+  symtab_free(&tokens);
+  symtab_free(&rule_names);
+  symtab_free(&scope_names);
 }
 
 TEST(test_scope_refs_not_expanded_in_sets) {
+  Symtab tokens = {0};
+  symtab_init(&tokens, 0);
+  Symtab rule_names = {0};
+  symtab_init(&rule_names, 0);
+  Symtab scope_names = {0};
+  symtab_init(&scope_names, 0);
+
+  int32_t tok_A = symtab_intern(&tokens, "A");
+  int32_t rule_start = symtab_intern(&rule_names, "start");
+  int32_t rule_tok_rule = symtab_intern(&rule_names, "tok_rule");
+  int32_t rule_inner = symtab_intern(&rule_names, "inner");
+  int32_t scope_inner = symtab_intern(&scope_names, "inner");
+
   PegGenInput input = {0};
   input.rules = darray_new(sizeof(PegRule), 0);
+  input.tokens = tokens;
+  input.rule_names = rule_names;
+  input.scope_names = scope_names;
 
   PegRule start = {0};
-  start.name = strdup("start");
+  start.global_id = rule_start;
+  start.scope_id = -1;
   start.seq.kind = PEG_SEQ;
   start.seq.children = darray_new(sizeof(PegUnit), 0);
-  darray_push(start.seq.children, ((PegUnit){.kind = PEG_ID, .name = strdup("inner")}));
+  darray_push(start.seq.children, ((PegUnit){.kind = PEG_CALL, .id = rule_inner}));
   darray_push(input.rules, start);
 
   PegRule tok = {0};
-  tok.name = strdup("tok_rule");
+  tok.global_id = rule_tok_rule;
+  tok.scope_id = -1;
   tok.seq.kind = PEG_SEQ;
   tok.seq.children = darray_new(sizeof(PegUnit), 0);
-  darray_push(tok.seq.children, ((PegUnit){.kind = PEG_TOK, .name = strdup("A")}));
+  darray_push(tok.seq.children, ((PegUnit){.kind = PEG_TOK, .id = tok_A}));
   darray_push(input.rules, tok);
 
   PegRule inner = {0};
-  inner.name = strdup("inner");
-  inner.scope = strdup("inner");
+  inner.global_id = rule_inner;
+  inner.scope_id = scope_inner;
   inner.seq.kind = PEG_SEQ;
   inner.seq.children = darray_new(sizeof(PegUnit), 0);
-  darray_push(inner.seq.children, ((PegUnit){.kind = PEG_TOK, .name = strdup("A")}));
+  darray_push(inner.seq.children, ((PegUnit){.kind = PEG_TOK, .id = tok_A}));
   darray_push(input.rules, inner);
 
   char* hdr_buf = NULL;
@@ -444,17 +539,13 @@ TEST(test_scope_refs_not_expanded_in_sets) {
 
   free(hdr_buf);
 
-  free(start.seq.children[0].name);
   darray_del(start.seq.children);
-  free(start.name);
-  free(tok.seq.children[0].name);
   darray_del(tok.seq.children);
-  free(tok.name);
-  free(inner.seq.children[0].name);
   darray_del(inner.seq.children);
-  free(inner.name);
-  free(inner.scope);
   darray_del(input.rules);
+  symtab_free(&tokens);
+  symtab_free(&rule_names);
+  symtab_free(&scope_names);
 }
 
 int main(void) {

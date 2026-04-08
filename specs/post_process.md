@@ -5,10 +5,8 @@ Create "src/post_process.c".
 ### vpa: inline macros
 
 `bool pp_inline_macros(ParseState* ps);`:
-- inline macro vpa rules
-- for `@{ ... }` rules, create literal symtab `ParseState.literals`, so later peg analysis can check if the literal is not defined.
-  - for example, `@{ "+" }` auto-creates token `@lit.+`
-- after this pass, there will be no longer "keyword entry" type in vpa rule definition
+1. inline macro vpa rules
+2. then build a new list of VPA scopes to replace the old one, including only the non-macro ones.
 
 ### peg: auto tag branches
 
@@ -45,13 +43,6 @@ foo = a [
 ]
 ```
 
-### peg: desugar literal tokens
-
-`bool pp_desugar_literal_tokens(ParseState* ps)`:
-- replace keyword literals (strings) in peg definition to token definition
-  - for example, `"+"` references token `@lit.+`
-- if token is not found in `ParseState.literals`, report error and return false
-
 ### peg: left recursion detect
 
 `bool pp_detect_left_recursions(ParseState* ps)`:
@@ -81,6 +72,7 @@ foo = a [
 - For `main` scope, validate `has_parser` must be true.
 - for every PEG scope, `used_set` must be the same as `emit_set` in the related VPA scope
   - emit_set including tokens and scopes, but if the scope doesn't have a mapping peg parser, expand it.
+    - exclude ignore tokens in emit_set
   - used_set including tokens and scopes, if a child-rule doesn't have a mapping vpa scope, expand it.
   - for example,
     1. with vpa rule `foo = /.../ { @a ... }`, `bar = /.../ { @b ... foo ... }`, then `bar`'s emit_set is `{@b, foo}`

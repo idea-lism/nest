@@ -11,33 +11,44 @@
 // --- Parser-produced PEG tree (input to peg_gen) ---
 
 typedef enum {
-  PEG_ID,
+  PEG_CALL = 1,
   PEG_TOK,
-  PEG_KEYWORD_TOK,
   PEG_BRANCHES,
   PEG_SEQ,
 } PegUnitKind;
 
 typedef struct PegUnit PegUnit;
 
+typedef PegUnit* PegUnits; // darray
+
 struct PegUnit {
   PegUnitKind kind;
-  char* name;         // (owned, may be NULL)
-  int32_t multiplier; // '?','+','*', or 0
-  PegUnit* interlace;
-  int32_t ninterlace;
-  char* tag;         // (owned, may be NULL)
-  PegUnit* children; // darray
+
+  // PEG_CALL: rule's global_id
+  // PEG_TOK: token id, keywords are converted to token_id during parse
+  int32_t id;
+
+  char multiplier; // '?','+','*', or 0
+  PegUnitKind interlace_rhs_kind; // 0 | PEG_CALL | PEG_TOK
+  int32_t interlace_rhs_id;       // rule's global_id | token id
+
+  char* tag;        // (owned, may be NULL)
+  PegUnits children;
 };
 
 typedef struct {
-  char* name; // (owned)
+  // name = symtab_get(rule_names, global_id)
+  int32_t global_id;
+  // scope_id = symtab_intern(scope_names, name)
+  int32_t scope_id; // -1 for non-scope
   PegUnit seq;
-  char* scope; // (owned, may be NULL) - if NULL, uses "main"
 } PegRule;
 
 typedef struct {
   PegRule* rules;
+  Symtab tokens;      // owned by ParseState
+  Symtab scope_names; // owned by ParseState
+  Symtab rule_names;  // owned by ParseState
 } PegGenInput;
 
 // --- Broken-down scoped rules (output of rule breakdown) ---

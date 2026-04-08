@@ -288,6 +288,12 @@ peg_unit = [
   branches
 ]
 
+peg_simple_unit = [
+  @peg_id multiplier?
+  @peg_tok_id multiplier?
+  peg_str multiplier?
+]
+
 peg_str = str_char*
 
 multiplier = [
@@ -296,13 +302,21 @@ multiplier = [
   "*" interlace?
 ]
 
-interlace = "<" seq ">"
+interlace_rhs = [
+  @peg_id
+  @peg_tok_id
+  peg_str
+]
+
+# multipliers can't nest
+interlace = "<" interlace_rhs ">"
 
 # lexer already trimmed surroundings
 # scope makes it easy parsable
 branches = @nl* branch_line+<@nl> @nl*
 
+# branch can't nest
 branch_line = [
-  seq @tag_id?
+  peg_simple_unit @tag_id?
   @tag_id
 ]

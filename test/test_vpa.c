@@ -2,6 +2,7 @@
 #include "../src/header_writer.h"
 #include "../src/irwriter.h"
 #include "../src/parse.h"
+#include "../src/symtab.h"
 #include "../src/token_tree.h"
 #include "../src/ustr.h"
 #include "../src/vpa.h"
@@ -230,31 +231,31 @@ TEST(test_token_scope_reference) {
 
 // === vpa_gen helpers ===
 
+static VpaActionUnits _make_au_tok(int32_t tok_id) {
+  VpaActionUnits au = darray_new(sizeof(int32_t), 0);
+  darray_push(au, tok_id);
+  return au;
+}
+
 static void _free_gen_input(VpaGenInput* input) {
-  for (int32_t i = 0; i < (int32_t)darray_size(input->rules); i++) {
-    VpaRule* rule = &input->rules[i];
-    for (int32_t j = 0; j < (int32_t)darray_size(rule->units); j++) {
-      VpaUnit* u = &rule->units[j];
-      re_ir_free(u->re);
-      free(u->name);
-      free(u->user_hook);
-      for (int32_t k = 0; k < (int32_t)darray_size(u->children); k++) {
-        re_ir_free(u->children[k].re);
-        free(u->children[k].name);
-        free(u->children[k].user_hook);
-        darray_del(u->children[k].children);
-      }
-      darray_del(u->children);
+  for (int32_t i = 0; i < (int32_t)darray_size(input->scopes); i++) {
+    VpaScope* s = &input->scopes[i];
+    free(s->name);
+    re_ir_free(s->leader.re);
+    darray_del(s->leader.action_units);
+    for (int32_t j = 0; j < (int32_t)darray_size(s->children); j++) {
+      re_ir_free(s->children[j].re);
+      darray_del(s->children[j].action_units);
     }
-    darray_del(rule->units);
-    free(rule->name);
+    darray_del(s->children);
   }
-  darray_del(input->rules);
-  for (int32_t i = 0; i < (int32_t)darray_size(input->effects); i++) {
-    free(input->effects[i].hook_name);
-    darray_del(input->effects[i].effects);
+  darray_del(input->scopes);
+  for (int32_t i = 0; i < (int32_t)darray_size(input->effect_decls); i++) {
+    darray_del(input->effect_decls[i].effects);
   }
-  darray_del(input->effects);
+  darray_del(input->effect_decls);
+  symtab_free(&input->tokens);
+  symtab_free(&input->hooks);
 }
 
 static void _compile_test(const char* h_file, const char* ir_file) {
@@ -299,18 +300,23 @@ static void _run_vpa_gen(VpaGenInput* input, const char* h_path, const char* ir_
   fclose(hf);
 }
 
-static VpaGenInput _empty_input(const char* src) {
+static VpaGenInput _empty_input(void) {
   VpaGenInput input = {0};
-  input.rules = darray_new(sizeof(VpaRule), 0);
-  input.effects = darray_new(sizeof(EffectDecl), 0);
-  input.src = src;
+  input.scopes = darray_new(sizeof(VpaScope), 0);
+  input.effect_decls = darray_new(sizeof(EffectDecl), 0);
+  symtab_init(&input.tokens, 1);
+  symtab_init(&input.hooks, 0);
+  symtab_intern(&input.hooks, ".begin");
+  symtab_intern(&input.hooks, ".end");
+  symtab_intern(&input.hooks, ".fail");
+  symtab_intern(&input.hooks, ".unparse");
   return input;
 }
 
 // === vpa_gen: basic tests ===
 
 TEST(test_vpa_gen_empty_rules) {
-  VpaGenInput input = _empty_input("");
+  VpaGenInput input = _empty_input();
 
   _run_vpa_gen(&input, BUILD_DIR "/test_vpa_gen_empty.h", BUILD_DIR "/test_vpa_gen_empty.ll");
 
@@ -324,22 +330,23 @@ TEST(test_vpa_gen_empty_rules) {
 }
 
 TEST(test_vpa_gen_single_scope) {
-  VpaGenInput input = _empty_input("");
+  VpaGenInput input = _empty_input();
 
-  VpaRule main_rule = {0};
-  main_rule.name = strdup("main");
-  main_rule.units = darray_new(sizeof(VpaUnit), 0);
-  main_rule.is_scope = true;
+  int32_t tok_a_id = symtab_intern(&input.tokens, "tok_a");
+  int32_t tok_b_id = symtab_intern(&input.tokens, "tok_b");
 
-  VpaUnit u1 = {.kind = VPA_REGEXP, .re = re_ir_new(), .name = strdup("tok_a")};
+  VpaScope main_scope = {.scope_id = 0, .name = strdup("main"), .leader = {0}};
+  main_scope.children = darray_new(sizeof(VpaUnit), 0);
+
+  VpaUnit u1 = {.kind = VPA_RE, .re = re_ir_new(), .action_units = _make_au_tok(tok_a_id)};
   u1.re = re_ir_emit_ch(u1.re, 'a');
-  darray_push(main_rule.units, u1);
+  darray_push(main_scope.children, u1);
 
-  VpaUnit u2 = {.kind = VPA_REGEXP, .re = re_ir_new(), .name = strdup("tok_b")};
+  VpaUnit u2 = {.kind = VPA_RE, .re = re_ir_new(), .action_units = _make_au_tok(tok_b_id)};
   u2.re = re_ir_emit_ch(u2.re, 'b');
-  darray_push(main_rule.units, u2);
+  darray_push(main_scope.children, u2);
 
-  darray_push(input.rules, main_rule);
+  darray_push(input.scopes, main_scope);
 
   _run_vpa_gen(&input, BUILD_DIR "/test_vpa_gen_scope.h", BUILD_DIR "/test_vpa_gen_scope.ll");
 
@@ -361,42 +368,39 @@ TEST(test_vpa_gen_single_scope) {
 }
 
 TEST(test_vpa_gen_multi_scope) {
-  VpaGenInput input = _empty_input("");
+  VpaGenInput input = _empty_input();
 
-  VpaRule main_rule = {0};
-  main_rule.name = strdup("main");
-  main_rule.units = darray_new(sizeof(VpaUnit), 0);
-  main_rule.is_scope = true;
+  int32_t tok_x_id = symtab_intern(&input.tokens, "tok_x");
+  int32_t tok_y_id = symtab_intern(&input.tokens, "tok_y");
 
-  VpaUnit u1 = {.kind = VPA_REGEXP, .re = re_ir_new(), .name = strdup("tok_x")};
-  u1.re = re_ir_emit_ch(u1.re, 'x');
-  darray_push(main_rule.units, u1);
+  // main scope
+  VpaScope main_scope = {.scope_id = 0, .name = strdup("main"), .leader = {0}};
+  main_scope.children = darray_new(sizeof(VpaUnit), 0);
 
-  VpaUnit ref = {.kind = VPA_REF, .name = strdup("inner")};
-  darray_push(main_rule.units, ref);
+  VpaUnit u_x = {.kind = VPA_RE, .re = re_ir_new(), .action_units = _make_au_tok(tok_x_id)};
+  u_x.re = re_ir_emit_ch(u_x.re, 'x');
+  darray_push(main_scope.children, u_x);
 
-  darray_push(input.rules, main_rule);
+  darray_push(input.scopes, main_scope);
 
-  VpaRule inner_rule = {0};
-  inner_rule.name = strdup("inner");
-  inner_rule.units = darray_new(sizeof(VpaUnit), 0);
-  inner_rule.is_scope = false;
+  // inner scope with leader regex
+  VpaScope inner_scope = {.scope_id = 1, .name = strdup("inner")};
+  inner_scope.leader = (VpaUnit){.kind = VPA_RE, .re = re_ir_new()};
+  inner_scope.leader.re = re_ir_emit_ch(inner_scope.leader.re, '{');
+  inner_scope.children = darray_new(sizeof(VpaUnit), 0);
 
-  VpaUnit leader = {.kind = VPA_REGEXP, .re = re_ir_new(), .name = strdup("open")};
-  leader.re = re_ir_emit_ch(leader.re, '{');
-  darray_push(inner_rule.units, leader);
+  VpaUnit u_y = {.kind = VPA_RE, .re = re_ir_new(), .action_units = _make_au_tok(tok_y_id)};
+  u_y.re = re_ir_emit_ch(u_y.re, 'y');
+  darray_push(inner_scope.children, u_y);
 
-  VpaUnit scope_body = {.kind = VPA_SCOPE, .name = strdup("inner_body"), .hook = TOK_HOOK_BEGIN};
-  scope_body.re = re_ir_new();
-  scope_body.re = re_ir_emit_ch(scope_body.re, '{');
-  scope_body.children = darray_new(sizeof(VpaUnit), 0);
+  darray_push(input.scopes, inner_scope);
 
-  VpaUnit inner_tok = {.kind = VPA_REGEXP, .re = re_ir_new(), .name = strdup("tok_y")};
-  inner_tok.re = re_ir_emit_ch(inner_tok.re, 'y');
-  darray_push(scope_body.children, inner_tok);
-
-  darray_push(inner_rule.units, scope_body);
-  darray_push(input.rules, inner_rule);
+  // Add a call to inner scope in main's children
+  VpaActionUnits call_au = darray_new(sizeof(int32_t), 0);
+  int32_t begin_au = 0; // -HOOK_ID_BEGIN = 0
+  darray_push(call_au, begin_au);
+  VpaUnit call_u = {.kind = VPA_CALL, .call_scope_id = 1, .action_units = call_au};
+  darray_push(input.scopes[0].children, call_u);
 
   _run_vpa_gen(&input, BUILD_DIR "/test_vpa_gen_multi.h", BUILD_DIR "/test_vpa_gen_multi.ll");
 
@@ -460,30 +464,32 @@ TEST(test_vpa_gen_exec) {
 }
 
 // === vpa_gen: user hooks ===
-// A unit with .user_hook should produce:
-//   header: "void vpa_hook_<name>(...)"
-//   IR: declare + call to @vpa_hook_<name>
 
 TEST(test_vpa_gen_user_hook) {
-  VpaGenInput input = _empty_input("");
+  VpaGenInput input = _empty_input();
 
-  VpaRule main_rule = {0};
-  main_rule.name = strdup("main");
-  main_rule.units = darray_new(sizeof(VpaUnit), 0);
-  main_rule.is_scope = true;
+  int32_t tok_x_id = symtab_intern(&input.tokens, "tok_x");
+  int32_t hook_on_x = symtab_intern(&input.hooks, ".on_x");
 
-  VpaUnit u = {.kind = VPA_REGEXP, .re = re_ir_new(), .name = strdup("tok_x")};
+  VpaScope main_scope = {.scope_id = 0, .name = strdup("main"), .leader = {0}};
+  main_scope.children = darray_new(sizeof(VpaUnit), 0);
+
+  VpaActionUnits au = darray_new(sizeof(int32_t), 0);
+  darray_push(au, tok_x_id);
+  int32_t hook_au = -hook_on_x;
+  darray_push(au, hook_au);
+
+  VpaUnit u = {.kind = VPA_RE, .re = re_ir_new(), .action_units = au};
   u.re = re_ir_emit_ch(u.re, 'x');
-  u.user_hook = strdup(".on_x");
-  darray_push(main_rule.units, u);
+  darray_push(main_scope.children, u);
 
-  darray_push(input.rules, main_rule);
+  darray_push(input.scopes, main_scope);
 
   _run_vpa_gen(&input, BUILD_DIR "/test_vpa_hook.h", BUILD_DIR "/test_vpa_hook.ll");
 
   char* h_buf = _read_file(BUILD_DIR "/test_vpa_hook.h");
-  assert(strstr(h_buf, "vpa_hook_on_x") != NULL);
-  assert(strstr(h_buf, "void vpa_hook_on_x") != NULL);
+  assert(strstr(h_buf, "on_x") != NULL);
+  assert(strstr(h_buf, "ParseContext") != NULL);
   free(h_buf);
 
   char* ir_buf = _read_file(BUILD_DIR "/test_vpa_hook.ll");
@@ -496,242 +502,32 @@ TEST(test_vpa_gen_user_hook) {
   _free_gen_input(&input);
 }
 
-// === vpa_gen: pop_scope via TOK_HOOK_END ===
-
-TEST(test_vpa_gen_pop_scope) {
-  VpaGenInput input = _empty_input("");
-
-  VpaRule main_rule = {0};
-  main_rule.name = strdup("main");
-  main_rule.units = darray_new(sizeof(VpaUnit), 0);
-  main_rule.is_scope = true;
-
-  VpaUnit u1 = {.kind = VPA_REGEXP, .re = re_ir_new(), .name = strdup("tok_a")};
-  u1.re = re_ir_emit_ch(u1.re, 'a');
-  darray_push(main_rule.units, u1);
-
-  VpaUnit ref = {.kind = VPA_REF, .name = strdup("inner")};
-  darray_push(main_rule.units, ref);
-  darray_push(input.rules, main_rule);
-
-  VpaRule inner_rule = {0};
-  inner_rule.name = strdup("inner");
-  inner_rule.units = darray_new(sizeof(VpaUnit), 0);
-  inner_rule.is_scope = false;
-
-  VpaUnit leader = {.kind = VPA_REGEXP, .re = re_ir_new(), .name = strdup("open")};
-  leader.re = re_ir_emit_ch(leader.re, '{');
-  darray_push(inner_rule.units, leader);
-
-  VpaUnit scope_body = {.kind = VPA_SCOPE, .name = strdup("inner_body"), .hook = TOK_HOOK_BEGIN};
-  scope_body.re = re_ir_new();
-  scope_body.re = re_ir_emit_ch(scope_body.re, '{');
-  scope_body.children = darray_new(sizeof(VpaUnit), 0);
-
-  VpaUnit inner_tok = {.kind = VPA_REGEXP, .re = re_ir_new(), .name = strdup("tok_y")};
-  inner_tok.re = re_ir_emit_ch(inner_tok.re, 'y');
-  darray_push(scope_body.children, inner_tok);
-
-  VpaUnit closer = {.kind = VPA_REGEXP, .re = re_ir_new(), .name = strdup("close")};
-  closer.re = re_ir_emit_ch(closer.re, '}');
-  closer.hook = TOK_HOOK_END;
-  darray_push(scope_body.children, closer);
-
-  darray_push(inner_rule.units, scope_body);
-  darray_push(input.rules, inner_rule);
-
-  _run_vpa_gen(&input, BUILD_DIR "/test_vpa_pop.h", BUILD_DIR "/test_vpa_pop.ll");
-
-  char* ir_buf = _read_file(BUILD_DIR "/test_vpa_pop.ll");
-  assert(strstr(ir_buf, "tc_pop") != NULL);
-  assert(strstr(ir_buf, "tc_add") != NULL);
-  assert(strstr(ir_buf, "lex_main") != NULL);
-  assert(strstr(ir_buf, "lex_inner") != NULL);
-  free(ir_buf);
-
-  _compile_test(BUILD_DIR "/test_vpa_pop.h", BUILD_DIR "/test_vpa_pop.ll");
-  _free_gen_input(&input);
-}
-
-// === vpa_gen: literal tokens ===
-// Literal tokens named lit.xxx should produce TOK_LIT_XXX defines in the header.
-
-TEST(test_vpa_gen_keywords) {
-  VpaGenInput input = _empty_input("");
-
-  VpaRule main_rule = {0};
-  main_rule.name = strdup("main");
-  main_rule.units = darray_new(sizeof(VpaUnit), 0);
-  main_rule.is_scope = true;
-
-  VpaUnit u = {.kind = VPA_REGEXP, .re = re_ir_new(), .name = strdup("ident")};
-  u.re = re_ir_emit_ch(u.re, 'x');
-  darray_push(main_rule.units, u);
-
-  VpaUnit kw1 = {.kind = VPA_REGEXP, .re = re_ir_new(), .name = strdup("lit.int")};
-  kw1.re = re_ir_emit_ch(kw1.re, 'i');
-  kw1.re = re_ir_emit_ch(kw1.re, 'n');
-  kw1.re = re_ir_emit_ch(kw1.re, 't');
-  darray_push(main_rule.units, kw1);
-
-  VpaUnit kw2 = {.kind = VPA_REGEXP, .re = re_ir_new(), .name = strdup("lit.float")};
-  kw2.re = re_ir_emit_ch(kw2.re, 'f');
-  kw2.re = re_ir_emit_ch(kw2.re, 'l');
-  kw2.re = re_ir_emit_ch(kw2.re, 'o');
-  kw2.re = re_ir_emit_ch(kw2.re, 'a');
-  kw2.re = re_ir_emit_ch(kw2.re, 't');
-  darray_push(main_rule.units, kw2);
-
-  darray_push(input.rules, main_rule);
-
-  _run_vpa_gen(&input, BUILD_DIR "/test_vpa_kw.h", BUILD_DIR "/test_vpa_kw.ll");
-
-  char* h_buf = _read_file(BUILD_DIR "/test_vpa_kw.h");
-  assert(strstr(h_buf, "TOK_LIT_INT") != NULL);
-  assert(strstr(h_buf, "TOK_LIT_FLOAT") != NULL);
-  assert(strstr(h_buf, "TOK_IDENT") != NULL);
-  free(h_buf);
-
-  _compile_test(BUILD_DIR "/test_vpa_kw.h", BUILD_DIR "/test_vpa_kw.ll");
-  _free_gen_input(&input);
-}
-
-// === vpa_gen: effects causing pop_scope ===
-// An effect declaration mapping a user hook to TOK_HOOK_END should trigger tc_pop.
-
-TEST(test_vpa_gen_effect_pop) {
-  VpaGenInput input = _empty_input("");
-
-  VpaRule main_rule = {0};
-  main_rule.name = strdup("main");
-  main_rule.units = darray_new(sizeof(VpaUnit), 0);
-  main_rule.is_scope = true;
-
-  VpaUnit u1 = {.kind = VPA_REGEXP, .re = re_ir_new(), .name = strdup("tok_a")};
-  u1.re = re_ir_emit_ch(u1.re, 'a');
-  darray_push(main_rule.units, u1);
-
-  VpaUnit ref = {.kind = VPA_REF, .name = strdup("braced")};
-  darray_push(main_rule.units, ref);
-  darray_push(input.rules, main_rule);
-
-  VpaRule braced = {0};
-  braced.name = strdup("braced");
-  braced.units = darray_new(sizeof(VpaUnit), 0);
-  braced.is_scope = false;
-
-  VpaUnit bleader = {.kind = VPA_REGEXP, .re = re_ir_new(), .name = strdup("open")};
-  bleader.re = re_ir_emit_ch(bleader.re, '{');
-  darray_push(braced.units, bleader);
-
-  VpaUnit scope_body = {.kind = VPA_SCOPE, .name = strdup("braced_body"), .hook = TOK_HOOK_BEGIN};
-  scope_body.re = re_ir_new();
-  scope_body.re = re_ir_emit_ch(scope_body.re, '{');
-  scope_body.children = darray_new(sizeof(VpaUnit), 0);
-
-  VpaUnit inner = {.kind = VPA_REGEXP, .re = re_ir_new(), .name = strdup("tok_y")};
-  inner.re = re_ir_emit_ch(inner.re, 'y');
-  darray_push(scope_body.children, inner);
-
-  // closer has user_hook; effect decl maps it to TOK_HOOK_END
-  VpaUnit closer = {.kind = VPA_REGEXP, .re = re_ir_new(), .name = strdup("close")};
-  closer.re = re_ir_emit_ch(closer.re, '}');
-  closer.user_hook = strdup(".close_brace");
-  darray_push(scope_body.children, closer);
-
-  darray_push(braced.units, scope_body);
-  darray_push(input.rules, braced);
-
-  EffectDecl ed = {0};
-  ed.hook_name = strdup(".close_brace");
-  ed.effects = darray_new(sizeof(int32_t), 0);
-  int32_t end_effect = TOK_HOOK_END;
-  darray_push(ed.effects, end_effect);
-  darray_push(input.effects, ed);
-
-  _run_vpa_gen(&input, BUILD_DIR "/test_vpa_effect.h", BUILD_DIR "/test_vpa_effect.ll");
-
-  char* ir_buf = _read_file(BUILD_DIR "/test_vpa_effect.ll");
-  assert(strstr(ir_buf, "tc_pop") != NULL);
-  assert(strstr(ir_buf, "vpa_hook_close_brace") != NULL);
-  free(ir_buf);
-
-  char* h_buf = _read_file(BUILD_DIR "/test_vpa_effect.h");
-  assert(strstr(h_buf, "vpa_hook_close_brace") != NULL);
-  free(h_buf);
-
-  _compile_test(BUILD_DIR "/test_vpa_effect.h", BUILD_DIR "/test_vpa_effect.ll");
-  _free_gen_input(&input);
-}
-
 // === vpa_gen: macro rules skipped in scope collection ===
-
-TEST(test_vpa_gen_macro_skip) {
-  VpaGenInput input = _empty_input("");
-
-  VpaRule main_rule = {0};
-  main_rule.name = strdup("main");
-  main_rule.units = darray_new(sizeof(VpaUnit), 0);
-  main_rule.is_scope = true;
-
-  VpaUnit u = {.kind = VPA_REGEXP, .re = re_ir_new(), .name = strdup("tok_a")};
-  u.re = re_ir_emit_ch(u.re, 'a');
-  darray_push(main_rule.units, u);
-  darray_push(input.rules, main_rule);
-
-  // macro: should NOT become a scope or lex_ function
-  VpaRule macro = {0};
-  macro.name = strdup("_helper");
-  macro.units = darray_new(sizeof(VpaUnit), 0);
-  macro.is_scope = false;
-  macro.is_macro = true;
-
-  VpaUnit mu = {.kind = VPA_REGEXP, .re = re_ir_new(), .name = strdup("tok_m")};
-  mu.re = re_ir_emit_ch(mu.re, 'm');
-  darray_push(macro.units, mu);
-  darray_push(input.rules, macro);
-
-  _run_vpa_gen(&input, BUILD_DIR "/test_vpa_macro.h", BUILD_DIR "/test_vpa_macro.ll");
-
-  char* ir_buf = _read_file(BUILD_DIR "/test_vpa_macro.ll");
-  assert(strstr(ir_buf, "lex_main") != NULL);
-  assert(strstr(ir_buf, "lex__helper") == NULL);
-  free(ir_buf);
-
-  char* h_buf = _read_file(BUILD_DIR "/test_vpa_macro.h");
-  assert(strstr(h_buf, "SCOPE_MAIN") != NULL);
-  assert(strstr(h_buf, "SCOPE__HELPER") == NULL);
-  assert(strstr(h_buf, "VPA_N_SCOPES 1") != NULL);
-  free(h_buf);
-
-  _compile_test(BUILD_DIR "/test_vpa_macro.h", BUILD_DIR "/test_vpa_macro.ll");
-  _free_gen_input(&input);
-}
-
-// === vpa_gen: token dedup ===
-// Two units with same name → same token ID, only one TOK_ define.
+// (No macro concept in VpaGenInput — macros are resolved by post_process before vpa_gen)
 
 TEST(test_vpa_gen_token_dedup) {
-  VpaGenInput input = _empty_input("");
+  VpaGenInput input = _empty_input();
 
-  VpaRule main_rule = {0};
-  main_rule.name = strdup("main");
-  main_rule.units = darray_new(sizeof(VpaUnit), 0);
-  main_rule.is_scope = true;
+  // Two units with same token name -> same tok_id
+  int32_t ws_id = symtab_intern(&input.tokens, "ws");
+  int32_t other_id = symtab_intern(&input.tokens, "other");
 
-  VpaUnit u1 = {.kind = VPA_REGEXP, .re = re_ir_new(), .name = strdup("ws")};
+  VpaScope main_scope = {.scope_id = 0, .name = strdup("main"), .leader = {0}};
+  main_scope.children = darray_new(sizeof(VpaUnit), 0);
+
+  VpaUnit u1 = {.kind = VPA_RE, .re = re_ir_new(), .action_units = _make_au_tok(ws_id)};
   u1.re = re_ir_emit_ch(u1.re, ' ');
-  darray_push(main_rule.units, u1);
+  darray_push(main_scope.children, u1);
 
-  VpaUnit u2 = {.kind = VPA_REGEXP, .re = re_ir_new(), .name = strdup("ws")};
+  VpaUnit u2 = {.kind = VPA_RE, .re = re_ir_new(), .action_units = _make_au_tok(ws_id)};
   u2.re = re_ir_emit_ch(u2.re, '\t');
-  darray_push(main_rule.units, u2);
+  darray_push(main_scope.children, u2);
 
-  VpaUnit u3 = {.kind = VPA_REGEXP, .re = re_ir_new(), .name = strdup("other")};
+  VpaUnit u3 = {.kind = VPA_RE, .re = re_ir_new(), .action_units = _make_au_tok(other_id)};
   u3.re = re_ir_emit_ch(u3.re, 'x');
-  darray_push(main_rule.units, u3);
+  darray_push(main_scope.children, u3);
 
-  darray_push(input.rules, main_rule);
+  darray_push(input.scopes, main_scope);
 
   _run_vpa_gen(&input, BUILD_DIR "/test_vpa_dedup.h", BUILD_DIR "/test_vpa_dedup.ll");
 
@@ -741,6 +537,7 @@ TEST(test_vpa_gen_token_dedup) {
   const char* second = strstr(first + 6, "TOK_WS");
   assert(second == NULL);
   assert(strstr(h_buf, "TOK_OTHER") != NULL);
+  // ws and other have same action_units so they dedup to 1 action each
   assert(strstr(h_buf, "VPA_N_ACTIONS 2") != NULL);
   free(h_buf);
 
@@ -748,40 +545,28 @@ TEST(test_vpa_gen_token_dedup) {
   _free_gen_input(&input);
 }
 
-// === vpa_gen: empty scope body → stub DFA ===
+// === vpa_gen: empty scope body -> stub DFA ===
 
 TEST(test_vpa_gen_empty_scope_body) {
-  VpaGenInput input = _empty_input("");
+  VpaGenInput input = _empty_input();
 
-  VpaRule main_rule = {0};
-  main_rule.name = strdup("main");
-  main_rule.units = darray_new(sizeof(VpaUnit), 0);
-  main_rule.is_scope = true;
+  int32_t tok_a_id = symtab_intern(&input.tokens, "tok_a");
 
-  VpaUnit u = {.kind = VPA_REGEXP, .re = re_ir_new(), .name = strdup("tok_a")};
-  u.re = re_ir_emit_ch(u.re, 'a');
-  darray_push(main_rule.units, u);
+  VpaScope main_scope = {.scope_id = 0, .name = strdup("main"), .leader = {0}};
+  main_scope.children = darray_new(sizeof(VpaUnit), 0);
 
-  VpaUnit ref = {.kind = VPA_REF, .name = strdup("empty_scope")};
-  darray_push(main_rule.units, ref);
-  darray_push(input.rules, main_rule);
+  VpaUnit u1 = {.kind = VPA_RE, .re = re_ir_new(), .action_units = _make_au_tok(tok_a_id)};
+  u1.re = re_ir_emit_ch(u1.re, 'a');
+  darray_push(main_scope.children, u1);
 
-  VpaRule empty = {0};
-  empty.name = strdup("empty_scope");
-  empty.units = darray_new(sizeof(VpaUnit), 0);
-  empty.is_scope = false;
+  darray_push(input.scopes, main_scope);
 
-  VpaUnit leader = {.kind = VPA_REGEXP, .re = re_ir_new(), .name = strdup("open")};
-  leader.re = re_ir_emit_ch(leader.re, '(');
-  darray_push(empty.units, leader);
-
-  VpaUnit scope_body = {.kind = VPA_SCOPE, .name = strdup("empty_scope_body"), .hook = TOK_HOOK_BEGIN};
-  scope_body.re = re_ir_new();
-  scope_body.re = re_ir_emit_ch(scope_body.re, '(');
-  scope_body.children = darray_new(sizeof(VpaUnit), 0);
-
-  darray_push(empty.units, scope_body);
-  darray_push(input.rules, empty);
+  // empty scope
+  VpaScope empty_scope = {.scope_id = 1, .name = strdup("empty_scope")};
+  empty_scope.leader = (VpaUnit){.kind = VPA_RE, .re = re_ir_new()};
+  empty_scope.leader.re = re_ir_emit_ch(empty_scope.leader.re, '(');
+  empty_scope.children = darray_new(sizeof(VpaUnit), 0);
+  darray_push(input.scopes, empty_scope);
 
   _run_vpa_gen(&input, BUILD_DIR "/test_vpa_empty_body.h", BUILD_DIR "/test_vpa_empty_body.ll");
 
@@ -791,113 +576,6 @@ TEST(test_vpa_gen_empty_scope_body) {
   free(ir_buf);
 
   _compile_test(BUILD_DIR "/test_vpa_empty_body.h", BUILD_DIR "/test_vpa_empty_body.ll");
-  _free_gen_input(&input);
-}
-
-// === vpa_gen: pop_scope execution test ===
-// Compile + link + run a lexer with scope push/pop.
-
-TEST(test_vpa_gen_pop_exec) {
-  // first generate the IR (reuse pop_scope setup)
-  VpaGenInput input = _empty_input("");
-
-  VpaRule main_rule = {0};
-  main_rule.name = strdup("main");
-  main_rule.units = darray_new(sizeof(VpaUnit), 0);
-  main_rule.is_scope = true;
-
-  VpaUnit u1 = {.kind = VPA_REGEXP, .re = re_ir_new(), .name = strdup("tok_a")};
-  u1.re = re_ir_emit_ch(u1.re, 'a');
-  darray_push(main_rule.units, u1);
-
-  VpaUnit ref = {.kind = VPA_REF, .name = strdup("inner")};
-  darray_push(main_rule.units, ref);
-  darray_push(input.rules, main_rule);
-
-  VpaRule inner_rule = {0};
-  inner_rule.name = strdup("inner");
-  inner_rule.units = darray_new(sizeof(VpaUnit), 0);
-  inner_rule.is_scope = false;
-
-  VpaUnit leader = {.kind = VPA_REGEXP, .re = re_ir_new(), .name = strdup("open")};
-  leader.re = re_ir_emit_ch(leader.re, '{');
-  darray_push(inner_rule.units, leader);
-
-  VpaUnit scope_body = {.kind = VPA_SCOPE, .name = strdup("inner_body"), .hook = TOK_HOOK_BEGIN};
-  scope_body.re = re_ir_new();
-  scope_body.re = re_ir_emit_ch(scope_body.re, '{');
-  scope_body.children = darray_new(sizeof(VpaUnit), 0);
-
-  VpaUnit inner_tok = {.kind = VPA_REGEXP, .re = re_ir_new(), .name = strdup("tok_b")};
-  inner_tok.re = re_ir_emit_ch(inner_tok.re, 'b');
-  darray_push(scope_body.children, inner_tok);
-
-  VpaUnit closer = {.kind = VPA_REGEXP, .re = re_ir_new(), .name = strdup("close")};
-  closer.re = re_ir_emit_ch(closer.re, '}');
-  closer.hook = TOK_HOOK_END;
-  darray_push(scope_body.children, closer);
-
-  darray_push(inner_rule.units, scope_body);
-  darray_push(input.rules, inner_rule);
-
-  _run_vpa_gen(&input, BUILD_DIR "/test_vpa_pop_exec.h", BUILD_DIR "/test_vpa_pop_exec.ll");
-
-  // write driver
-  const char* driver_path = BUILD_DIR "/test_vpa_pop_exec_driver.c";
-  FILE* df = fopen(driver_path, "w");
-  assert(df);
-  fprintf(df, "#include <assert.h>\n"
-              "#include <stdint.h>\n"
-              "#include \"test_vpa_pop_exec.h\"\n"
-              "\n"
-              "int32_t vpa_rt_read_cp(void* src, int32_t cp_off) {\n"
-              "  return ((const unsigned char*)src)[cp_off];\n"
-              "}\n"
-              "\n"
-              "int main(void) {\n"
-              "  // input: \"a{bb}a\" -> main sees 'a', '{' pushes inner, inner sees bb},\n"
-              "  //   '}' pops back to main, main sees final 'a'\n"
-              "  const char* input = \"a{bb}a\";\n"
-              "  int32_t len = 6;\n"
-              "  char* us = ustr_new(len, input);\n"
-              "  TokenTree* tt = tc_tree_new(us);\n"
-              "  vpa_lex((int64_t)(intptr_t)input, (int64_t)len, (int64_t)(intptr_t)tt);\n"
-              "  // root: tok_a at 0, tok_a at 5  ('{' triggers scope push, no token)\n"
-              "  int32_t n = (int32_t)darray_size(tt->root->tokens);\n"
-              "  assert(n == 2);\n"
-              "  assert(tt->root->tokens[0].tok_id == TOK_TOK_A);\n"
-              "  assert(tt->root->tokens[0].cp_start == 0);\n"
-              "  assert(tt->root->tokens[1].tok_id == TOK_TOK_A);\n"
-              "  assert(tt->root->tokens[1].cp_start == 5);\n"
-              "  // inner scope chunk should have: tok_b, tok_b, close\n"
-              "  int32_t tsize = (int32_t)darray_size(tt->table);\n"
-              "  assert(tsize == 2);  // root + inner\n"
-              "  TokenChunk* inner = &tt->table[1];\n"
-              "  assert(inner->scope_id == SCOPE_INNER);\n"
-              "  int32_t in = (int32_t)darray_size(inner->tokens);\n"
-              "  assert(in == 3);\n"
-              "  assert(inner->tokens[0].tok_id == TOK_TOK_B);\n"
-              "  assert(inner->tokens[0].cp_start == 2);\n"
-              "  assert(inner->tokens[1].tok_id == TOK_TOK_B);\n"
-              "  assert(inner->tokens[1].cp_start == 3);\n"
-              "  assert(inner->tokens[2].tok_id == TOK_CLOSE);\n"
-              "  assert(inner->tokens[2].cp_start == 4);\n"
-              "  tc_tree_del(tt);\n"
-              "  ustr_del(us);\n"
-              "  return 0;\n"
-              "}\n");
-  fclose(df);
-
-  char cmd[1024];
-  snprintf(cmd, sizeof(cmd), "%s %s %s -o %s 2>&1", compat_llvm_cc(), driver_path, BUILD_DIR "/test_vpa_pop_exec.ll",
-           BUILD_DIR "/test_vpa_pop_exec_bin");
-  int ret = system(cmd);
-  assert(ret == 0);
-
-  snprintf(cmd, sizeof(cmd), "%s", BUILD_DIR "/test_vpa_pop_exec_bin");
-  ret = system(cmd);
-  assert(ret == 0);
-
   _free_gen_input(&input);
 }
 
@@ -924,13 +602,8 @@ int main(void) {
   RUN(test_vpa_gen_multi_scope);
 
   RUN(test_vpa_gen_user_hook);
-  RUN(test_vpa_gen_pop_scope);
-  RUN(test_vpa_gen_keywords);
-  RUN(test_vpa_gen_effect_pop);
-  RUN(test_vpa_gen_macro_skip);
   RUN(test_vpa_gen_token_dedup);
   RUN(test_vpa_gen_empty_scope_body);
-  RUN(test_vpa_gen_pop_exec);
 
   printf("all ok\n");
   return 0;

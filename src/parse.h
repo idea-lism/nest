@@ -108,6 +108,11 @@ typedef struct {
   ReIr re;
 } ReFragment;
 
+// Ignore entry (parse-internal, used by post_process for validation)
+typedef struct {
+  Symtab names;
+} IgnoreSet;
+
 struct SharedState;
 typedef struct SharedState SharedState;
 
@@ -119,10 +124,14 @@ typedef struct {
 
   ReFragment* re_frags;
 
-  VpaRule* vpa_rules;
-  Symtab literals;
+  VpaScope* vpa_scopes;
+  EffectDecls effect_decls;
+  Symtab tokens;      // unified token numbering, start from 1
+  Symtab hooks;       // hook numbering, start from 0 (.begin=0, .end=1, .fail=2, .unparse=3)
+  Symtab scope_names; // scope numbering, start from 0
+  Symtab rule_names;  // peg rule numbering, start from 0
+
   IgnoreSet ignores;
-  EffectDecl* effects;
   PegRule* peg_rules;
 
   SharedState* shared;

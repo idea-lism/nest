@@ -45,3 +45,33 @@ Prefer justapositioning over snprintf:
 ```c
 const char* s = "foo" SOME_STRING_MACRO;
 ```
+
+### Idiomatic C: format strings smartly
+
+Bad code:
+```c
+char* tok_name = parse_sfmt("lit.%s", lit);
+int32_t tok_id = symtab_intern(&ps->tokens, tok_name);
+free(tok_name);
+```
+
+Good code:
+```c
+int32_t tok_id = symtab_intern_f(&ps->tokens, "lit.%.*s", byte_size, lit);
+```
+
+### Idiomatic C: avoid tri-stars
+
+Tri-stars is a bad smell of complex code
+
+Bad code:
+```c
+char** arr = darray_new(sizeof(char*), 0);
+char*** array_of_strings = &arr;
+...
+```
+
+Good code:
+```c
+Symtab strings = ...
+```

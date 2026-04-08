@@ -38,3 +38,9 @@ typedef struct {
 UstrCpBuf ustr_slice_cp(const char* s, int32_t cp_offset);
 int32_t ustr_cp_at(const char* s, int32_t cp_offset);
 int32_t ustr_encode_utf8(char* out, int32_t cp);
+
+typedef struct {
+  const char* s;
+  int32_t size;
+} UstrByteSlice;
+UstrByteSlice ustr_slice_bytes(const char* s, int32_t cp_start, int32_t cp_end);

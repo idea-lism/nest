@@ -17,6 +17,53 @@ It assigns rule ids for each scope.
 
 It provides 2 generating options: naive & row_shared (--compress-memoize option in nest), so we can benchmark.
 
+### Input format
+
+```c
+typedef enum {
+  PEG_CALL = 1,
+  PEG_TOK,
+  PEG_BRANCHES,
+  PEG_SEQ,
+} PegUnitKind;
+
+typedef struct PegUnit PegUnit;
+
+typedef PegUnit* PegUnits; // darray
+
+struct PegUnit {
+  PegUnitKind kind;
+
+  // PEG_CALL: rule's global_id
+  // PEG_TOK: token id, keywords are converted to token_id during parse
+  int32_t id;
+
+  char multiplier; // '?','+','*', or 0
+  PegUnitKind interlace_rhs_kind; // 0 | PEG_CALL | PEG_TOK
+  int32_t interlace_rhs_id; // rule's global_id | token id
+
+  char* tag;         // (owned, may be NULL)
+  PegUnits children;
+};
+
+typedef struct {
+  // name = symtab_find(rule_names, global_id)
+  int32_t global_id;
+  // scope_id = symtab_intern(scope_names, name)
+  int32_t scope_id; // -1 for non-scope
+  PegUnit seq;
+} PegRule;
+
+typedef PegRule* PegRules; // darray
+
+typedef struct {
+  PegRules rules;
+  Symtab tokens;      // owned by ParseState
+  Symtab scope_names; // owned by ParseState
+  Symtab rule_names;  // owned by ParseState
+} PegGenInput;
+```
+
 ### Scope closures
 
 `_gather_scope_closures()` will gather rules for each scope:

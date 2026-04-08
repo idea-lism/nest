@@ -3,6 +3,8 @@
 #include "darray.h"
 
 #include <assert.h>
+#include <stdarg.h>
+#include <stdio.h>
 #include <string.h>
 
 void symtab_init(Symtab* st, int32_t start_num) {
@@ -39,6 +41,28 @@ int32_t symtab_intern(Symtab* st, const char* name) {
   size_t len = strlen(name);
   st->buf = darray_grow(st->buf, darray_size(st->buf) + len + 1);
   memcpy(st->buf + off, name, len + 1);
+  return (int32_t)darray_size(st->offsets) - 1 + st->start_num;
+}
+
+int32_t symtab_intern_f(Symtab* st, const char* fmt_str, ...) {
+  va_list ap;
+  va_start(ap, fmt_str);
+  int len = vsnprintf(NULL, 0, fmt_str, ap);
+  va_end(ap);
+
+  int32_t off = (int32_t)darray_size(st->buf);
+  st->buf = darray_grow(st->buf, darray_size(st->buf) + len + 1);
+
+  va_start(ap, fmt_str);
+  vsnprintf(st->buf + off, len + 1, fmt_str, ap);
+  va_end(ap);
+
+  int32_t id = symtab_find(st, st->buf + off);
+  if (id != -1) {
+    st->buf = darray_grow(st->buf, (size_t)off);
+    return id;
+  }
+  darray_push(st->offsets, off);
   return (int32_t)darray_size(st->offsets) - 1 + st->start_num;
 }
 
