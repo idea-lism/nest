@@ -547,8 +547,6 @@ TEST(test_vpa_gen_token_dedup) {
   _free_gen_input(&input);
 }
 
-// === vpa_gen: empty scope body -> stub DFA ===
-
 TEST(test_vpa_gen_empty_scope_body) {
   VpaGenInput input = _empty_input();
 
@@ -581,6 +579,257 @@ TEST(test_vpa_gen_empty_scope_body) {
   _free_gen_input(&input);
 }
 
+TEST(test_vpa_gen_long_names) {
+  VpaGenInput input = _empty_input();
+
+  // 200-char token name — exceeds the old 128-char buffer
+  char long_name[201];
+  memset(long_name, 'a', 200);
+  long_name[200] = '\0';
+  long_name[0] = 't';
+
+  int32_t tok_id = symtab_intern(&input.tokens, long_name);
+
+  VpaScope main_scope = {.scope_id = 0, .name = strdup("main"), .leader = {0}};
+  main_scope.children = darray_new(sizeof(VpaUnit), 0);
+
+  VpaUnit u = {.kind = VPA_RE, .re = re_ir_new(), .action_units = _make_au_tok(tok_id)};
+  u.re = re_ir_emit_ch(u.re, 'z');
+  darray_push(main_scope.children, u);
+
+  darray_push(input.scopes, main_scope);
+
+  _run_vpa_gen(&input, BUILD_DIR "/test_vpa_long.h", BUILD_DIR "/test_vpa_long.ll");
+
+  // build expected uppercased define: "TOK_T" + 199 'A's
+  char expected[210];
+  memcpy(expected, "TOK_T", 5);
+  memset(expected + 5, 'A', 199);
+  expected[204] = '\0';
+
+  char* h_buf = _read_file(BUILD_DIR "/test_vpa_long.h");
+  assert(strstr(h_buf, expected) != NULL);
+  free(h_buf);
+
+  _compile_test(BUILD_DIR "/test_vpa_long.h", BUILD_DIR "/test_vpa_long.ll");
+  _free_gen_input(&input);
+}
+
+static void _run_vpa_gen_prefixed(VpaGenInput* input, const char* h_path, const char* ir_path, const char* prefix) {
+  FILE* hf = fopen(h_path, "w");
+  FILE* irf = fopen(ir_path, "w");
+  assert(hf && irf);
+  HeaderWriter* hw = hw_new(hf);
+  IrWriter* w = irwriter_new(irf, NULL);
+
+  irwriter_start(w, "test_vpa.c", ".");
+  vpa_gen(input, hw, w, prefix);
+  irwriter_end(w);
+
+  hw_del(hw);
+  irwriter_del(w);
+  fclose(irf);
+  fclose(hf);
+}
+
+// === Review finding 1: {prefix}_parse / {prefix}_cleanup must be defined in IR ===
+
+TEST(test_vpa_gen_prefix_parse_defined_in_ir) {
+  VpaGenInput input = _empty_input();
+
+  int32_t tok_a_id = symtab_intern(&input.tokens, "tok_a");
+  VpaScope main_scope = {.scope_id = 0, .name = strdup("main"), .leader = {0}};
+  main_scope.children = darray_new(sizeof(VpaUnit), 0);
+  VpaUnit u = {.kind = VPA_RE, .re = re_ir_new(), .action_units = _make_au_tok(tok_a_id)};
+  u.re = re_ir_emit_ch(u.re, 'a');
+  darray_push(main_scope.children, u);
+  darray_push(input.scopes, main_scope);
+
+  _run_vpa_gen_prefixed(&input, BUILD_DIR "/test_vpa_prefix.h", BUILD_DIR "/test_vpa_prefix.ll", "mymod");
+
+  char* ir_buf = _read_file(BUILD_DIR "/test_vpa_prefix.ll");
+  // The spec requires {prefix}_parse and {prefix}_cleanup to be defined (not just declared) in IR
+  assert(strstr(ir_buf, "define") != NULL);
+  assert(strstr(ir_buf, "@mymod_parse") != NULL);
+  assert(strstr(ir_buf, "@mymod_cleanup") != NULL);
+  free(ir_buf);
+
+  _free_gen_input(&input);
+}
+
+// === Review finding 2: .begin/.end must push/pop scope in dispatch ===
+
+TEST(test_vpa_gen_begin_end_push_pop) {
+  VpaGenInput input = _empty_input();
+
+  int32_t tok_x_id = symtab_intern(&input.tokens, "tok_x");
+
+  VpaScope main_scope = {.scope_id = 0, .name = strdup("main"), .leader = {0}};
+  main_scope.children = darray_new(sizeof(VpaUnit), 0);
+
+  VpaUnit u_x = {.kind = VPA_RE, .re = re_ir_new(), .action_units = _make_au_tok(tok_x_id)};
+  u_x.re = re_ir_emit_ch(u_x.re, 'x');
+  darray_push(main_scope.children, u_x);
+  darray_push(input.scopes, main_scope);
+
+  // child scope with leader '{'
+  VpaScope child = {.scope_id = 1, .name = strdup("block")};
+  child.leader = (VpaUnit){.kind = VPA_RE, .re = re_ir_new()};
+  child.leader.re = re_ir_emit_ch(child.leader.re, '{');
+  child.children = darray_new(sizeof(VpaUnit), 0);
+
+  // child scope has an .end action on '}'
+  VpaActionUnits end_au = darray_new(sizeof(int32_t), 0);
+  int32_t end_hook = -HOOK_ID_END;
+  darray_push(end_au, end_hook);
+  VpaUnit u_close = {.kind = VPA_RE, .re = re_ir_new(), .action_units = end_au};
+  u_close.re = re_ir_emit_ch(u_close.re, '}');
+  darray_push(child.children, u_close);
+
+  darray_push(input.scopes, child);
+
+  // main calls child scope; action includes .begin
+  VpaActionUnits call_au = darray_new(sizeof(int32_t), 0);
+  int32_t begin_hook = -HOOK_ID_BEGIN;
+  darray_push(call_au, begin_hook);
+  VpaUnit call_u = {.kind = VPA_CALL, .call_scope_id = 1, .action_units = call_au};
+  darray_push(input.scopes[0].children, call_u);
+
+  _run_vpa_gen(&input, BUILD_DIR "/test_vpa_beginend.h", BUILD_DIR "/test_vpa_beginend.ll");
+
+  char* ir_buf = _read_file(BUILD_DIR "/test_vpa_beginend.ll");
+  // .begin action must actually call tc_push (not just declare it)
+  assert(strstr(ir_buf, "call") != NULL);
+  assert(strstr(ir_buf, "call i8* @tc_push") != NULL);
+  // .end action must actually call tc_pop (not just declare it)
+  assert(strstr(ir_buf, "call i8* @tc_pop") != NULL);
+  free(ir_buf);
+
+  _free_gen_input(&input);
+}
+
+// === Review finding 3: %effect must dispatch on user hook return value ===
+
+TEST(test_vpa_gen_effect_dispatch) {
+  VpaGenInput input = _empty_input();
+
+  int32_t tok_a_id = symtab_intern(&input.tokens, "tok_a");
+  int32_t hook_check = symtab_intern(&input.hooks, ".check");
+
+  // add effect declaration: .check can return tok_a or .fail
+  EffectDecl ed;
+  ed.hook_id = hook_check;
+  ed.effects = darray_new(sizeof(int32_t), 0);
+  darray_push(ed.effects, tok_a_id); // positive = token
+  int32_t fail_au = -HOOK_ID_FAIL;
+  darray_push(ed.effects, fail_au); // negative = hook
+  darray_push(input.effect_decls, ed);
+
+  VpaScope main_scope = {.scope_id = 0, .name = strdup("main"), .leader = {0}};
+  main_scope.children = darray_new(sizeof(VpaUnit), 0);
+
+  VpaActionUnits au = darray_new(sizeof(int32_t), 0);
+  int32_t hook_au = -hook_check;
+  darray_push(au, hook_au);
+  VpaUnit u = {.kind = VPA_RE, .re = re_ir_new(), .action_units = au};
+  u.re = re_ir_emit_ch(u.re, 'c');
+  darray_push(main_scope.children, u);
+  darray_push(input.scopes, main_scope);
+
+  _run_vpa_gen(&input, BUILD_DIR "/test_vpa_effect.h", BUILD_DIR "/test_vpa_effect.ll");
+
+  char* ir_buf = _read_file(BUILD_DIR "/test_vpa_effect.ll");
+  // The hook call must happen
+  assert(strstr(ir_buf, "call i32 @vpa_hook_check") != NULL);
+  // The return value must be validated against effect_decls and invalid returns must call vpa_error_add
+  assert(strstr(ir_buf, "call void @vpa_error_add") != NULL);
+  free(ir_buf);
+
+  _free_gen_input(&input);
+}
+
+// === Review finding 4: ParseErrorType / ParseError / ParseResult must be in header ===
+
+TEST(test_vpa_gen_header_types) {
+  VpaGenInput input = _empty_input();
+
+  int32_t tok_a_id = symtab_intern(&input.tokens, "tok_a");
+  VpaScope main_scope = {.scope_id = 0, .name = strdup("main"), .leader = {0}};
+  main_scope.children = darray_new(sizeof(VpaUnit), 0);
+  VpaUnit u = {.kind = VPA_RE, .re = re_ir_new(), .action_units = _make_au_tok(tok_a_id)};
+  u.re = re_ir_emit_ch(u.re, 'a');
+  darray_push(main_scope.children, u);
+  darray_push(input.scopes, main_scope);
+
+  _run_vpa_gen_prefixed(&input, BUILD_DIR "/test_vpa_types.h", BUILD_DIR "/test_vpa_types.ll", "mymod");
+
+  char* h_buf = _read_file(BUILD_DIR "/test_vpa_types.h");
+  assert(strstr(h_buf, "ParseErrorType") != NULL);
+  assert(strstr(h_buf, "PARSE_ERROR_INVALID_HOOK") != NULL);
+  assert(strstr(h_buf, "PARSE_ERROR_TOKEN_ERR") != NULL);
+  assert(strstr(h_buf, "ParseError") != NULL);
+  assert(strstr(h_buf, "ParseResult") != NULL);
+  free(h_buf);
+
+  _free_gen_input(&input);
+}
+
+// === Review finding 5: keyword literal tokens must be excluded from TOK_ defines ===
+
+TEST(test_vpa_gen_literal_tokens_excluded) {
+  VpaGenInput input = _empty_input();
+
+  // normal token
+  int32_t tok_id_id = symtab_intern(&input.tokens, "ident");
+  // keyword literal token — the parser interns these as "lit.xxx"
+  symtab_intern(&input.tokens, "lit.if");
+  symtab_intern(&input.tokens, "lit.else");
+
+  VpaScope main_scope = {.scope_id = 0, .name = strdup("main"), .leader = {0}};
+  main_scope.children = darray_new(sizeof(VpaUnit), 0);
+  VpaUnit u = {.kind = VPA_RE, .re = re_ir_new(), .action_units = _make_au_tok(tok_id_id)};
+  u.re = re_ir_emit_ch(u.re, 'i');
+  darray_push(main_scope.children, u);
+  darray_push(input.scopes, main_scope);
+
+  _run_vpa_gen(&input, BUILD_DIR "/test_vpa_litexcl.h", BUILD_DIR "/test_vpa_litexcl.ll");
+
+  char* h_buf = _read_file(BUILD_DIR "/test_vpa_litexcl.h");
+  // normal token should appear
+  assert(strstr(h_buf, "TOK_IDENT") != NULL);
+  // literal tokens must NOT produce TOK_ defines (they contain '.' which is invalid in macros)
+  assert(strstr(h_buf, "TOK_LIT") == NULL);
+  free(h_buf);
+
+  _free_gen_input(&input);
+}
+
+// === Review finding 6: builtin hook IDs must be in header ===
+
+TEST(test_vpa_gen_builtin_hook_defines) {
+  VpaGenInput input = _empty_input();
+
+  int32_t tok_a_id = symtab_intern(&input.tokens, "tok_a");
+  VpaScope main_scope = {.scope_id = 0, .name = strdup("main"), .leader = {0}};
+  main_scope.children = darray_new(sizeof(VpaUnit), 0);
+  VpaUnit u = {.kind = VPA_RE, .re = re_ir_new(), .action_units = _make_au_tok(tok_a_id)};
+  u.re = re_ir_emit_ch(u.re, 'a');
+  darray_push(main_scope.children, u);
+  darray_push(input.scopes, main_scope);
+
+  _run_vpa_gen(&input, BUILD_DIR "/test_vpa_builtins.h", BUILD_DIR "/test_vpa_builtins.ll");
+
+  char* h_buf = _read_file(BUILD_DIR "/test_vpa_builtins.h");
+  // Builtin hook IDs must be emitted in the action_unit_id numbering system
+  assert(strstr(h_buf, "HOOK_BEGIN") != NULL);
+  assert(strstr(h_buf, "HOOK_END") != NULL);
+  assert(strstr(h_buf, "HOOK_FAIL") != NULL);
+  assert(strstr(h_buf, "HOOK_UNPARSE") != NULL);
+  free(h_buf);
+
+  _free_gen_input(&input);
+}
+
 int main(void) {
   printf("test_vpa:\n");
 
@@ -606,6 +855,15 @@ int main(void) {
   RUN(test_vpa_gen_user_hook);
   RUN(test_vpa_gen_token_dedup);
   RUN(test_vpa_gen_empty_scope_body);
+  RUN(test_vpa_gen_long_names);
+
+  // review finding tests (expected to fail until implementation catches up to spec)
+  RUN(test_vpa_gen_prefix_parse_defined_in_ir);
+  RUN(test_vpa_gen_begin_end_push_pop);
+  RUN(test_vpa_gen_effect_dispatch);
+  RUN(test_vpa_gen_header_types);
+  RUN(test_vpa_gen_literal_tokens_excluded);
+  RUN(test_vpa_gen_builtin_hook_defines);
 
   printf("all ok\n");
   return 0;

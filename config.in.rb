@@ -58,7 +58,8 @@ exe "test_peg",
 exe "test_vpa",
   srcs: base_lean + %w[test/test_vpa.c test/compat.c],
   deps: %w[ustr],
-  ext_libs: kissat
+  ext_libs: kissat,
+  order_deps: %w[build/nest_rt.inc]
 
 exe "test_parse",
   srcs: base + %w[test/test_parse.c test/compat.c],

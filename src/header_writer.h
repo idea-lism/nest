@@ -16,6 +16,7 @@ void hw_comment(HeaderWriter* hw, const char* text);
 void hw_define(HeaderWriter* hw, const char* name, int32_t value);
 void hw_define_str(HeaderWriter* hw, const char* name, const char* value);
 void hw_raw(HeaderWriter* hw, const char* text);
+void hw_rawc(HeaderWriter* hw, char c);
 void hw_fmt(HeaderWriter* hw, const char* fmt, ...) __attribute__((format(printf, 2, 3)));
 
 void hw_struct_begin(HeaderWriter* hw, const char* name);

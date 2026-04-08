@@ -48,6 +48,8 @@ void hw_define_str(HeaderWriter* hw, const char* name, const char* value) {
 
 void hw_raw(HeaderWriter* hw, const char* text) { fputs(text, hw->out); }
 
+void hw_rawc(HeaderWriter* hw, char c) { fputc(c, hw->out); }
+
 void hw_fmt(HeaderWriter* hw, const char* fmt, ...) {
   _indent(hw);
   va_list ap;

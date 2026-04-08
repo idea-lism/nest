@@ -419,9 +419,7 @@ static void _analyze_rule(ScopeClosure* cl, int32_t rule_id, Bitset* visiting, S
     break;
 
   case SCOPED_RULE_KIND_EXTERNAL_SCOPE: {
-    char key[256];
-    snprintf(key, sizeof(key), "scope:%s", sr->name);
-    uint32_t sym = (uint32_t)symtab_intern(symbols, key);
+    uint32_t sym = (uint32_t)symtab_intern_f(symbols, "scope:%s", sr->name);
     bitset_add_bit(sr->first_set, sym);
     bitset_add_bit(sr->last_set, sym);
     sr->nullable = false;

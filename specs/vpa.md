@@ -4,12 +4,12 @@ Create `src/vpa.c` (`void vpa_gen(VpaGenInput* input, HeaderWriter* hw, IrWriter
 - `prefix` comes from `nest` command arg `-p`.
 - define functions to generates visibly pushdown automata in LLVM IR, using Parser's processed-data
 - generate helpers for result C header
-  1. token id definitions
-  2. util functions that the final LLVM IR may need
 
 It iterates the parsed & desugared AST, utilize src/re.h to generate DFA, utilize src/irwriter.h to generate the upper level visibly pushdown machine.
 
 ### Input & input processing
+
+Action means: a list of action_unit, each action_unit can be emit a token, do special control for hooks, or call user-defined hook, and interpret the result.
 
 ```c
 typedef enum {
@@ -190,6 +190,11 @@ Since the VPA and the PEG share a same LLVM-IR writer, in PEG the parsing functi
 ### The `{prefix}_parse` loop
 
 Similar to the `_lex_scope` in the [parse spec][parse.md].
+- In LLVM IR
+- Union of regexps with multiple actions
+  - Inlines child scope's leader regexp
+- Greedy match, and trigger `last_action_id` on no match / eof
+- Manages scoping stack / token_tree / parser invocation
 
 ### Header generating
 
@@ -200,7 +205,20 @@ Resulting parser needs:
     - includes: input stream handling: use `ustr`
     - includes: token tree representation: use `token_tree`
 - token ids: `TOK_XXX` numbered in the system of action_unit_id.
+  - but don't include the token ids for keyword literals (the ids in the form of `@lit.xxx`) because we have no way to upcase them.
 - primitive hook ids: `HOOK_XXX` numbered in the system of action_unit_id.
 - declare entrance and cleanup functions (impl in LLVM-IR)
   - `ParseResult {prefix}_parse(ParseContext lc, UStr src)`
   - `void {prefix}_cleanup(ParseResult r)`
+
+### Misc
+
+When need to print upper cased string, don't create string buf, use this helper instead:
+
+```c
+void _print_upper(HeaderWriter hw, const char* s) {
+  for (; *s; s++) {
+    hw_rawc(hw, toupper(*s));
+  }
+}
+```
