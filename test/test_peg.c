@@ -130,12 +130,15 @@ TEST(test_simple_rule_naive) {
   char buf[1024];
   int found_ref = 0, found_node = 0, found_col = 0;
   while (fgets(buf, sizeof(buf), check)) {
-    if (strstr(buf, "PegRef"))
+    if (strstr(buf, "PegRef")) {
       found_ref = 1;
-    if (strstr(buf, "ExprNode"))
+    }
+    if (strstr(buf, "ExprNode")) {
       found_node = 1;
-    if (strstr(buf, "Col_main"))
+    }
+    if (strstr(buf, "Col_main")) {
       found_col = 1;
+    }
   }
   fclose(check);
   assert(found_ref);
@@ -206,8 +209,9 @@ TEST(test_row_shared_mode) {
   char buf[1024];
   int found_bits = 0;
   while (fgets(buf, sizeof(buf), check)) {
-    if (strstr(buf, "bits["))
+    if (strstr(buf, "bits[")) {
       found_bits = 1;
+    }
   }
   fclose(check);
   assert(found_bits);

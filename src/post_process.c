@@ -73,10 +73,7 @@ static VpaScope* _find_scope(ParseState* ps, const char* name) {
   return NULL;
 }
 
-
-static const char* _rule_name(ParseState* ps, int32_t global_id) {
-  return symtab_get(&ps->rule_names, global_id);
-}
+static const char* _rule_name(ParseState* ps, int32_t global_id) { return symtab_get(&ps->rule_names, global_id); }
 
 static PegRule* _find_peg_rule(ParseState* ps, const char* name) {
   for (int32_t i = 0; i < (int32_t)darray_size(ps->peg_rules); i++) {

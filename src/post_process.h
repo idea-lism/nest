@@ -13,5 +13,5 @@ bool pp_validate_peg_rules(ParseState* ps);     // in peg
 bool pp_match_scopes(ParseState* ps);           // in vpa & peg
 
 #define pp_all_passes(ps)                                                                                              \
-  (pp_inline_macros(ps) && pp_auto_tag_branches(ps) && pp_check_duplicate_tags(ps) &&                                  \
-   pp_detect_left_recursions(ps) && pp_validate_vpa_scopes(ps) && pp_validate_peg_rules(ps) && pp_match_scopes(ps))
+  (pp_inline_macros(ps) && pp_auto_tag_branches(ps) && pp_check_duplicate_tags(ps) && pp_detect_left_recursions(ps) && \
+   pp_validate_vpa_scopes(ps) && pp_validate_peg_rules(ps) && pp_match_scopes(ps))

@@ -28,11 +28,11 @@ struct PegUnit {
   // PEG_TOK: token id, keywords are converted to token_id during parse
   int32_t id;
 
-  char multiplier; // '?','+','*', or 0
+  char multiplier;                // '?','+','*', or 0
   PegUnitKind interlace_rhs_kind; // 0 | PEG_CALL | PEG_TOK
   int32_t interlace_rhs_id;       // rule's global_id | token id
 
-  char* tag;        // (owned, may be NULL)
+  char* tag; // (owned, may be NULL)
   PegUnits children;
 };
 

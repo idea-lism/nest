@@ -430,13 +430,15 @@ TEST(test_vpa_gen_exec) {
               "int32_t vpa_rt_read_cp(void* src, int32_t cp_off) {\n"
               "  return ((const unsigned char*)src)[cp_off];\n"
               "}\n"
+              "void vpa_error_add(void* errors, int32_t type, int32_t off, int32_t sz) {}\n"
+              "int32_t tc_depth(void* tt) { return 1; }\n"
               "\n"
               "int main(void) {\n"
               "  const char* input = \"aabb\";\n"
               "  int32_t len = 4;\n"
               "  char* us = ustr_new(len, input);\n"
               "  TokenTree* tt = tc_tree_new(us);\n"
-              "  vpa_lex((int64_t)(intptr_t)input, (int64_t)len, (int64_t)(intptr_t)tt);\n"
+              "  vpa_lex((void*)input, len, (void*)tt, (void*)0, (void*)0);\n"
               "  int32_t n = (int32_t)darray_size(tt->root->tokens);\n"
               "  assert(n == 4);\n"
               "  assert(tt->root->tokens[0].tok_id == TOK_TOK_A);\n"
@@ -494,7 +496,7 @@ TEST(test_vpa_gen_user_hook) {
 
   char* ir_buf = _read_file(BUILD_DIR "/test_vpa_hook.ll");
   assert(strstr(ir_buf, "@vpa_hook_on_x") != NULL);
-  assert(strstr(ir_buf, "call void @vpa_hook_on_x") != NULL);
+  assert(strstr(ir_buf, "call i32 @vpa_hook_on_x") != NULL);
   assert(strstr(ir_buf, "tc_add") != NULL);
   free(ir_buf);
 

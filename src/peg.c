@@ -228,8 +228,8 @@ static void _resolve_and_wrap(ScopeClosure* cl) {
 
 // --- Scope closure gathering + breakdown ---
 
-static void _walk_closure_units(PegUnit* unit, PegRule* rules, int32_t n_rules, Bitset* visited,
-                                int32_t** out_indices, PegGenInput* input) {
+static void _walk_closure_units(PegUnit* unit, PegRule* rules, int32_t n_rules, Bitset* visited, int32_t** out_indices,
+                                PegGenInput* input) {
   if (unit->kind == PEG_CALL) {
     const char* call_name = symtab_get(&input->rule_names, unit->id);
     int32_t ri = _global_rule_index(input, rules, n_rules, call_name);

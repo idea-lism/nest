@@ -1201,7 +1201,7 @@ static void _free_state(ParseState* ps) {
   symtab_free(&ps->rule_names);
 }
 
-ParseState* parse_state_new(void) { 
+ParseState* parse_state_new(void) {
   ParseState* s = calloc(1, sizeof(ParseState));
   return s;
 }
