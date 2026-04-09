@@ -40,7 +40,7 @@ struct PegUnit {
 typedef struct {
   int32_t global_id;
   int32_t scope_id; // -1 for non-scope
-  PegUnit seq;
+  PegUnit body;
 } PegRule;
 
 typedef PegRule* PegRules; // darray
@@ -50,6 +50,7 @@ typedef struct {
   Symtab tokens;      // owned by ParseState
   Symtab scope_names; // owned by ParseState
   Symtab rule_names;  // owned by ParseState
+  bool verbose;
 } PegGenInput;
 
 // --- Internal types for code generation ---
@@ -80,6 +81,8 @@ typedef struct {
   bool nullable;
   Bitset* first_set;
   Bitset* last_set;
+
+  bool needs_memo; // non-term rules
 
   uint32_t scoped_rule_id;
   uint32_t segment_index;

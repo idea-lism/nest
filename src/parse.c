@@ -87,6 +87,16 @@ static char* _cp_strdup(const char* src, int32_t cp_start, int32_t cp_size) {
 
 static char* _tok_str(ParseState* ps, Token* t) { return _cp_strdup(ps->src, t->cp_start, t->cp_size); }
 
+static int32_t _intern_tok(Symtab* st, const char* src, Token* t) {
+  UstrIter it = {0};
+  ustr_iter_init(&it, src, t->cp_start);
+  int32_t start_byte = it.byte_off;
+  for (int32_t i = 0; i < t->cp_size; i++) {
+    ustr_iter_next(&it);
+  }
+  return symtab_intern_f(st, "%.*s", it.byte_off - start_byte, src + start_byte);
+}
+
 __attribute__((format(printf, 1, 2))) char* parse_sfmt(const char* fmt, ...) {
   va_list ap;
   va_start(ap, fmt);
@@ -595,17 +605,13 @@ static void _parse_actions(ParseState* ps, TokenChunk* chunk, int32_t* tpos, Vpa
   while (!_at_end(chunk, *tpos) && _is_action(_peek(chunk, *tpos)->term_id)) {
     Token* t = _next(chunk, tpos);
     if (t->term_id == TOK_TOK_ID) {
-      char* tok_name = _tok_str(ps, t);
-      int32_t tok_id = symtab_intern(&ps->tokens, tok_name);
-      free(tok_name);
+      int32_t tok_id = _intern_tok(&ps->tokens, ps->src, t);
       if (!u->action_units) {
         u->action_units = darray_new(sizeof(int32_t), 0);
       }
       darray_push(u->action_units, tok_id);
     } else if (t->term_id == TOK_USER_HOOK_ID) {
-      char* hook_name = _tok_str(ps, t);
-      int32_t hook_id = symtab_intern(&ps->hooks, hook_name);
-      free(hook_name);
+      int32_t hook_id = _intern_tok(&ps->hooks, ps->src, t);
       if (!u->action_units) {
         u->action_units = darray_new(sizeof(int32_t), 0);
       }
@@ -671,10 +677,8 @@ static bool _parse_scope_line(ParseState* ps, TokenChunk* chunk, int32_t* tpos, 
     _parse_actions(ps, chunk, tpos, &u);
   } else if (t->term_id == TOK_VPA_ID) {
     _next(chunk, tpos);
-    char* ref_name = _tok_str(ps, t);
     u.kind = VPA_CALL;
-    u.call_scope_id = symtab_intern(&ps->scope_names, ref_name);
-    free(ref_name);
+    u.call_scope_id = _intern_tok(&ps->scope_names, ps->src, t);
     _parse_actions(ps, chunk, tpos, &u);
   } else if (t->term_id == TOK_MODULE_ID) {
     _next(chunk, tpos);
@@ -747,9 +751,7 @@ static bool _parse_ignore_toks(ParseState* ps, TokenChunk* chunk, int32_t* tpos)
     if (!ps->ignores.names.offsets) {
       symtab_init(&ps->ignores.names, 0);
     }
-    char* n = _tok_str(ps, t);
-    symtab_intern(&ps->ignores.names, n);
-    free(n);
+    _intern_tok(&ps->ignores.names, ps->src, t);
   }
   return true;
 }
@@ -769,9 +771,7 @@ static bool _parse_effect_spec(ParseState* ps, TokenChunk* chunk, int32_t* tpos)
   if (!ps->effect_decls) {
     ps->effect_decls = darray_new(sizeof(EffectDecl), 0);
   }
-  char* hook_name = _tok_str(ps, hook);
-  int32_t hook_id = symtab_intern(&ps->hooks, hook_name);
-  free(hook_name);
+  int32_t hook_id = _intern_tok(&ps->hooks, ps->src, hook);
   EffectDecl ed = {.hook_id = hook_id, .effects = darray_new(sizeof(int32_t), 0)};
 
   for (;;) {
@@ -785,9 +785,7 @@ static bool _parse_effect_spec(ParseState* ps, TokenChunk* chunk, int32_t* tpos)
     _next(chunk, tpos);
     int32_t au;
     if (t->term_id == TOK_TOK_ID) {
-      char* tok_name = _tok_str(ps, t);
-      au = symtab_intern(&ps->tokens, tok_name);
-      free(tok_name);
+      au = _intern_tok(&ps->tokens, ps->src, t);
     } else {
       au = -_intern_hook(t->term_id);
     }
@@ -993,10 +991,8 @@ static bool _parse_interlace(ParseState* ps, TokenChunk* chunk, int32_t* tpos, P
     free(name);
   } else if (t->term_id == TOK_PEG_TOK_ID) {
     _next(chunk, tpos);
-    char* name = _tok_str(ps, t);
     u->interlace_rhs_kind = PEG_TERM;
-    u->interlace_rhs_id = symtab_intern(&ps->tokens, name);
-    free(name);
+    u->interlace_rhs_id = _intern_tok(&ps->tokens, ps->src, t);
   } else if (t->term_id == SCOPE_PEG_STR) {
     _next(chunk, tpos);
     TokenChunk* sc = _scope_chunk(ps, t);
@@ -1046,6 +1042,11 @@ static bool _parse_branches(ParseState* ps, TokenChunk* chunk, PegUnit* u) {
     }
     _skip_nl(chunk, &tpos);
   }
+  if (u->children && darray_size(u->children) == 1) {
+    PegUnit child = u->children[0];
+    darray_del(u->children);
+    *u = child;
+  }
   return true;
 }
 
@@ -1071,10 +1072,8 @@ static bool _parse_peg_unit(ParseState* ps, TokenChunk* chunk, int32_t* tpos, Pe
   }
   if (t->term_id == TOK_PEG_TOK_ID) {
     _next(chunk, tpos);
-    char* name = _tok_str(ps, t);
     u->kind = PEG_TERM;
-    u->id = symtab_intern(&ps->tokens, name);
-    free(name);
+    u->id = _intern_tok(&ps->tokens, ps->src, t);
     return _parse_multiplier(ps, chunk, tpos, u);
   }
   if (t->term_id == SCOPE_PEG_STR) {
@@ -1103,6 +1102,11 @@ static bool _parse_seq(ParseState* ps, TokenChunk* chunk, int32_t* tpos, PegUnit
     if (!_parse_peg_unit(ps, chunk, tpos, &seq->children[darray_size(seq->children) - 1])) {
       return false;
     }
+  }
+  if (seq->children && darray_size(seq->children) == 1) {
+    PegUnit child = seq->children[0];
+    darray_del(seq->children);
+    *seq = child;
   }
   return true;
 }
@@ -1146,11 +1150,9 @@ static bool _parse_peg_rule(ParseState* ps, TokenChunk* chunk, int32_t* tpos) {
   if (!ps->peg_rules) {
     ps->peg_rules = darray_new(sizeof(PegRule), 0);
   }
-  char* name = _tok_str(ps, name_tok);
-  int32_t gid = symtab_intern(&ps->rule_names, name);
-  free(name);
-  darray_push(ps->peg_rules, ((PegRule){.global_id = gid, .scope_id = -1, .seq = {.kind = PEG_SEQ}}));
-  return _parse_seq(ps, chunk, tpos, &ps->peg_rules[darray_size(ps->peg_rules) - 1].seq);
+  int32_t gid = _intern_tok(&ps->rule_names, ps->src, name_tok);
+  darray_push(ps->peg_rules, ((PegRule){.global_id = gid, .scope_id = -1, .body = {.kind = PEG_SEQ}}));
+  return _parse_seq(ps, chunk, tpos, &ps->peg_rules[darray_size(ps->peg_rules) - 1].body);
 }
 
 // peg = @nl* peg_rule+<@nl> @nl*
@@ -1197,7 +1199,7 @@ static void _free_state(ParseState* ps) {
   }
   darray_del(ps->vpa_scopes);
   for (int32_t i = 0; i < (int32_t)darray_size(ps->peg_rules); i++) {
-    _free_peg_unit(&ps->peg_rules[i].seq);
+    _free_peg_unit(&ps->peg_rules[i].body);
   }
   darray_del(ps->peg_rules);
   for (int32_t i = 0; i < (int32_t)darray_size(ps->re_frags); i++) {

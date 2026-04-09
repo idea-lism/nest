@@ -64,8 +64,9 @@ static EffectDecl* _find_effect(VpaGenInput* input, int32_t hook_id) {
 // --- DFA generation per scope ---
 
 static void _gen_scope_dfa(VpaGenInput* input, IrWriter* w, VpaScope* scope, Actions* actions) {
-  char func_name[128];
-  snprintf(func_name, sizeof(func_name), "_dfa_%s", scope->name);
+  int func_name_len = snprintf(NULL, 0, "_dfa_%s", scope->name);
+  char* func_name = malloc((size_t)func_name_len + 1);
+  snprintf(func_name, (size_t)func_name_len + 1, "_dfa_%s", scope->name);
 
   Aut* aut = aut_new(func_name, "vpa");
   Re* re = re_new(aut);
@@ -110,8 +111,9 @@ static void _gen_scope_dfa(VpaGenInput* input, IrWriter* w, VpaScope* scope, Act
   aut_gen_dfa(aut, w, false);
 
   // widened wrapper: lex_{name}(i32, i32) -> {i64, i64}
-  char wrapper_name[128];
-  snprintf(wrapper_name, sizeof(wrapper_name), "lex_%s", scope->name);
+  int wrapper_name_len = snprintf(NULL, 0, "lex_%s", scope->name);
+  char* wrapper_name = malloc((size_t)wrapper_name_len + 1);
+  snprintf(wrapper_name, (size_t)wrapper_name_len + 1, "lex_%s", scope->name);
 
   const char* arg_types[] = {"i32", "i32"};
   const char* arg_names[] = {"state", "cp"};
@@ -130,6 +132,8 @@ static void _gen_scope_dfa(VpaGenInput* input, IrWriter* w, VpaScope* scope, Act
 
   re_del(re);
   aut_del(aut);
+  free(func_name);
+  free(wrapper_name);
 }
 
 // --- Dispatch function ---
@@ -152,9 +156,11 @@ static void _gen_dispatch(VpaGenInput* input, IrWriter* w, Actions actions) {
         int32_t hook_id = -auid;
         if (hook_id >= HOOK_ID_BUILTIN_COUNT) {
           const char* hook_name = symtab_get(&input->hooks, hook_id);
-          char fn_name[128];
-          snprintf(fn_name, sizeof(fn_name), "vpa_hook_%s", hook_name + 1);
+          int fn_name_len = snprintf(NULL, 0, "vpa_hook_%s", hook_name + 1);
+          char* fn_name = malloc((size_t)fn_name_len + 1);
+          snprintf(fn_name, (size_t)fn_name_len + 1, "vpa_hook_%s", hook_name + 1);
           irwriter_declare(w, "i32", fn_name, "i8*, i8*, i8*");
+          free(fn_name);
         }
       }
     }
@@ -204,9 +210,11 @@ static void _gen_dispatch(VpaGenInput* input, IrWriter* w, Actions actions) {
         } else if (hook_id >= HOOK_ID_BUILTIN_COUNT) {
           // user hook
           const char* hook_name = symtab_get(&input->hooks, hook_id);
-          char fn_name[128];
-          snprintf(fn_name, sizeof(fn_name), "vpa_hook_%s", hook_name + 1);
+          int fn_name_len = snprintf(NULL, 0, "vpa_hook_%s", hook_name + 1);
+          char* fn_name = malloc((size_t)fn_name_len + 1);
+          snprintf(fn_name, (size_t)fn_name_len + 1, "vpa_hook_%s", hook_name + 1);
           IrVal ret_val = irwriter_call_retf(w, "i32", fn_name, "i8* %%ctx, i8* null, i8* null");
+          free(fn_name);
 
           // if this hook has %effect, validate the return value
           EffectDecl* ed = _find_effect(input, hook_id);
@@ -311,9 +319,11 @@ static void _gen_vpa_lex(VpaGenInput* input, IrWriter* w) {
   IrVal dfa_state = irwriter_load(w, "i32", dfa_state_ptr);
 
   if (n_scopes > 0) {
-    char dfa_fn[128];
-    snprintf(dfa_fn, sizeof(dfa_fn), "_dfa_%s", input->scopes[0].name);
+    int dfa_fn_len = snprintf(NULL, 0, "_dfa_%s", input->scopes[0].name);
+    char* dfa_fn = malloc((size_t)dfa_fn_len + 1);
+    snprintf(dfa_fn, (size_t)dfa_fn_len + 1, "_dfa_%s", input->scopes[0].name);
     IrVal result = irwriter_call_retf(w, "{i32, i32}", dfa_fn, "i32 %%r%d, i32 %%r%d", (int)dfa_state, (int)cp);
+    free(dfa_fn);
     IrVal new_state = irwriter_extractvalue(w, "{i32, i32}", result, 0);
     IrVal action = irwriter_extractvalue(w, "{i32, i32}", result, 1);
 
@@ -391,11 +401,13 @@ static void _gen_parse_entry(IrWriter* w, const char* prefix) {
   irwriter_declare(w, "i32", "ustr_size", "i8*");
 
   // {prefix}_parse(ctx_ptr, src) -> ParseResult
-  char parse_name[128];
-  snprintf(parse_name, sizeof(parse_name), "%s_parse", prefix);
+  int parse_name_len = snprintf(NULL, 0, "%s_parse", prefix);
+  char* parse_name = malloc((size_t)parse_name_len + 1);
+  snprintf(parse_name, (size_t)parse_name_len + 1, "%s_parse", prefix);
   const char* parse_arg_types[] = {"i8*", "i8*"};
   const char* parse_arg_names[] = {"ctx", "src"};
   irwriter_define_start(w, parse_name, PARSE_RESULT_TY, 2, parse_arg_types, parse_arg_names);
+  free(parse_name);
   irwriter_bb(w);
   IrVal len = irwriter_call_retf(w, "i32", "ustr_size", "i8* %%src");
   IrVal tt = irwriter_call_retf(w, "i8*", "tt_tree_new", "i8* %%src");
@@ -410,11 +422,13 @@ static void _gen_parse_entry(IrWriter* w, const char* prefix) {
   irwriter_define_end(w);
 
   // {prefix}_cleanup(result) -> void
-  char cleanup_name[128];
-  snprintf(cleanup_name, sizeof(cleanup_name), "%s_cleanup", prefix);
+  int cleanup_name_len = snprintf(NULL, 0, "%s_cleanup", prefix);
+  char* cleanup_name = malloc((size_t)cleanup_name_len + 1);
+  snprintf(cleanup_name, (size_t)cleanup_name_len + 1, "%s_cleanup", prefix);
   const char* cleanup_arg_types[] = {PARSE_RESULT_TY};
   const char* cleanup_arg_names[] = {"res"};
   irwriter_define_start(w, cleanup_name, "void", 1, cleanup_arg_types, cleanup_arg_names);
+  free(cleanup_name);
   irwriter_bb(w);
   irwriter_ret_void(w);
   irwriter_define_end(w);

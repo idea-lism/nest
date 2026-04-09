@@ -69,3 +69,6 @@ void peg_ir_bit_deny(PegIrCtx* ctx, IrVal col, uint32_t seg_idx, uint32_t rule_b
 
 // row_shared: exclude other bits in segment (cache exclusive match)
 void peg_ir_bit_exclude(PegIrCtx* ctx, IrVal col, uint32_t seg_idx, uint32_t rule_bit);
+
+// emit shared internal LLVM helper function definitions (call once per module)
+void peg_ir_emit_helpers(IrWriter* w);

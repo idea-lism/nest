@@ -25,6 +25,7 @@ typedef struct {
 - `peg_ir_maybe(ctx, kind, int32_t id)`
 - `peg_ir_star(ctx, kind, int32_t id, rhs_kind, int32_t rhs_id)`
 - `peg_ir_plus(ctx, kind, int32_t id, rhs_kind, int32_t rhs_id)`
+- `peg_ir_emit_helpers(irwriter)`: define internal functions `@table_gep` (to access memoize table's slot), `@save`, `@restore`, and `@bit_test`, `@bit_deny`, `@bit_exclude` as defined in [PEG](peg.md)
 
 # Stack data layout and pseudo sub-rule calling
 
@@ -42,11 +43,11 @@ StackSlot* stack;
 Operations
 
 ```c
-// save
+// @save
   stack++;
   stack->col = col;
 
-// restore
+// @restore
   col = stack->col;
   stack--;
 

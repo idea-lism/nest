@@ -178,16 +178,22 @@ void irwriter_define_start(IrWriter* w, const char* name, const char* ret_type, 
   }
   fprintf(w->out, ") !dbg !%d {\n", w->dbg_sub_id);
 
-  char buf[1024] = {0};
-  int pos = 0;
+  int total_len = 0;
   for (int i = 0; i < argc; i++) {
     if (strcmp(arg_types[i], "i32") == 0) {
-      pos += snprintf(buf + pos, sizeof(buf) - (size_t)pos, "  %%%s = trunc i64 %%%s_i64 to i32\n", arg_names[i],
-                      arg_names[i]);
+      total_len += snprintf(NULL, 0, "  %%%s = trunc i64 %%%s_i64 to i32\n", arg_names[i], arg_names[i]);
     }
   }
-  if (pos > 0) {
-    w->entry_prologue = strdup(buf);
+  if (total_len > 0) {
+    char* buf = malloc((size_t)total_len + 1);
+    int pos = 0;
+    for (int i = 0; i < argc; i++) {
+      if (strcmp(arg_types[i], "i32") == 0) {
+        pos += snprintf(buf + pos, (size_t)total_len + 1 - (size_t)pos, "  %%%s = trunc i64 %%%s_i64 to i32\n",
+                        arg_names[i], arg_names[i]);
+      }
+    }
+    w->entry_prologue = buf;
   }
 }
 

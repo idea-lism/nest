@@ -69,7 +69,7 @@ static void _build_json_input(PegGenInput* input) {
   value_seq.children = darray_new(sizeof(PegUnit), 0);
   darray_push(value_seq.children, value_branches);
 
-  PegRule value_rule = {.global_id = 1, .scope_id = -1, .seq = value_seq};
+  PegRule value_rule = {.global_id = 1, .scope_id = -1, .body = value_seq};
   darray_push(input->rules, value_rule);
 
   // array = @lbracket value_list @rbracket
@@ -82,7 +82,7 @@ static void _build_json_input(PegGenInput* input) {
   darray_push(arr_seq.children, vl);
   darray_push(arr_seq.children, rb);
 
-  PegRule arr_rule = {.global_id = 2, .scope_id = -1, .seq = arr_seq};
+  PegRule arr_rule = {.global_id = 2, .scope_id = -1, .body = arr_seq};
   darray_push(input->rules, arr_rule);
 
   // value_list = value*<@comma>
@@ -92,7 +92,7 @@ static void _build_json_input(PegGenInput* input) {
   vl_seq.children = darray_new(sizeof(PegUnit), 0);
   darray_push(vl_seq.children, vl_elem);
 
-  PegRule vl_rule = {.global_id = 3, .scope_id = -1, .seq = vl_seq};
+  PegRule vl_rule = {.global_id = 3, .scope_id = -1, .body = vl_seq};
   darray_push(input->rules, vl_rule);
 
   // main = value (scope rule)
@@ -101,7 +101,7 @@ static void _build_json_input(PegGenInput* input) {
   main_seq.children = darray_new(sizeof(PegUnit), 0);
   darray_push(main_seq.children, main_call);
 
-  PegRule main_rule = {.global_id = 0, .scope_id = 0, .seq = main_seq};
+  PegRule main_rule = {.global_id = 0, .scope_id = 0, .body = main_seq};
   darray_push(input->rules, main_rule);
 }
 
@@ -117,7 +117,7 @@ static void _free_unit(PegUnit* u) {
 
 static void _free_input(PegGenInput* input) {
   for (int32_t i = 0; i < (int32_t)darray_size(input->rules); i++) {
-    _free_unit(&input->rules[i].seq);
+    _free_unit(&input->rules[i].body);
   }
   darray_del(input->rules);
   symtab_free(&input->tokens);
@@ -654,8 +654,9 @@ TEST(test_row_shared_emits_bit_ops) {
   const char* fn = strstr(g.ir_buf, "parse_main");
   assert(fn != NULL);
 
-  // Look for "and i32" in the function body (bit test/deny/exclude all use it)
-  bool has_bit_op = (strstr(fn, "and i32") != NULL);
+  // Look for calls to bit helper functions
+  bool has_bit_op =
+      (strstr(fn, "@bit_test") != NULL || strstr(fn, "@bit_deny") != NULL || strstr(fn, "@bit_exclude") != NULL);
   assert(has_bit_op && "row_shared mode must emit bit test/deny/exclude operations");
 
   _free_gen(&g);
@@ -714,7 +715,7 @@ TEST(test_branch_wrap_by_lowered_kind) {
   PegUnit foo_seq = {.kind = PEG_SEQ};
   foo_seq.children = darray_new(sizeof(PegUnit), 0);
   darray_push(foo_seq.children, outer_br);
-  PegRule foo_rule = {.global_id = 1, .scope_id = -1, .seq = foo_seq};
+  PegRule foo_rule = {.global_id = 1, .scope_id = -1, .body = foo_seq};
   darray_push(input.rules, foo_rule);
 
   // main = foo (scope)
@@ -722,7 +723,7 @@ TEST(test_branch_wrap_by_lowered_kind) {
   ms.children = darray_new(sizeof(PegUnit), 0);
   PegUnit mc = {.kind = PEG_CALL, .id = 1};
   darray_push(ms.children, mc);
-  PegRule main_rule = {.global_id = 0, .scope_id = 0, .seq = ms};
+  PegRule main_rule = {.global_id = 0, .scope_id = 0, .body = ms};
   darray_push(input.rules, main_rule);
 
   char* ir_buf = NULL;
@@ -752,7 +753,7 @@ TEST(test_branch_wrap_by_lowered_kind) {
   free(hdr_buf);
 
   for (int32_t i = 0; i < (int32_t)darray_size(input.rules); i++) {
-    _free_unit(&input.rules[i].seq);
+    _free_unit(&input.rules[i].body);
   }
   darray_del(input.rules);
   symtab_free(&input.tokens);

@@ -14,22 +14,82 @@
 #include <string.h>
 
 // ============================================================
+// Shared LLVM helper definitions (emitted once per module)
+// ============================================================
+
+void peg_ir_emit_helpers(IrWriter* w) {
+  irwriter_rawf(w, "\ndefine internal ptr @table_gep(ptr %%table, i32 %%col, i32 %%col_sizeof, i32 %%off) {\n");
+  irwriter_rawf(w, "entry:\n");
+  irwriter_rawf(w, "  %%a = sext i32 %%col to i64\n");
+  irwriter_rawf(w, "  %%b = sext i32 %%col_sizeof to i64\n");
+  irwriter_rawf(w, "  %%c = mul i64 %%a, %%b\n");
+  irwriter_rawf(w, "  %%d = sext i32 %%off to i64\n");
+  irwriter_rawf(w, "  %%e = add i64 %%c, %%d\n");
+  irwriter_rawf(w, "  %%p = getelementptr i8, ptr %%table, i64 %%e\n");
+  irwriter_rawf(w, "  ret ptr %%p\n");
+  irwriter_rawf(w, "}\n");
+
+  irwriter_rawf(w, "\ndefine internal void @save(ptr %%sp_a, ptr %%col_a) {\n");
+  irwriter_rawf(w, "entry:\n");
+  irwriter_rawf(w, "  %%sp = load ptr, ptr %%sp_a\n");
+  irwriter_rawf(w, "  %%nsp = getelementptr i64, ptr %%sp, i64 1\n");
+  irwriter_rawf(w, "  store ptr %%nsp, ptr %%sp_a\n");
+  irwriter_rawf(w, "  %%col = load i32, ptr %%col_a\n");
+  irwriter_rawf(w, "  %%c64 = sext i32 %%col to i64\n");
+  irwriter_rawf(w, "  store i64 %%c64, ptr %%nsp\n");
+  irwriter_rawf(w, "  ret void\n");
+  irwriter_rawf(w, "}\n");
+
+  irwriter_rawf(w, "\ndefine internal void @restore(ptr %%sp_a, ptr %%col_a) {\n");
+  irwriter_rawf(w, "entry:\n");
+  irwriter_rawf(w, "  %%sp = load ptr, ptr %%sp_a\n");
+  irwriter_rawf(w, "  %%v = load i64, ptr %%sp\n");
+  irwriter_rawf(w, "  %%col = trunc i64 %%v to i32\n");
+  irwriter_rawf(w, "  store i32 %%col, ptr %%col_a\n");
+  irwriter_rawf(w, "  ret void\n");
+  irwriter_rawf(w, "}\n");
+
+  irwriter_rawf(w, "\ndefine internal i1 @bit_test(ptr %%tbl, i32 %%col, i32 %%csz, i32 %%off, i32 %%bit) {\n");
+  irwriter_rawf(w, "entry:\n");
+  irwriter_rawf(w, "  %%p = call ptr @table_gep(ptr %%tbl, i32 %%col, i32 %%csz, i32 %%off)\n");
+  irwriter_rawf(w, "  %%v = load i32, ptr %%p\n");
+  irwriter_rawf(w, "  %%a = and i32 %%v, %%bit\n");
+  irwriter_rawf(w, "  %%r = icmp ne i32 %%a, 0\n");
+  irwriter_rawf(w, "  ret i1 %%r\n");
+  irwriter_rawf(w, "}\n");
+
+  irwriter_rawf(w, "\ndefine internal void @bit_deny(ptr %%tbl, i32 %%col, i32 %%csz, i32 %%off, i32 %%bit) {\n");
+  irwriter_rawf(w, "entry:\n");
+  irwriter_rawf(w, "  %%p = call ptr @table_gep(ptr %%tbl, i32 %%col, i32 %%csz, i32 %%off)\n");
+  irwriter_rawf(w, "  %%v = load i32, ptr %%p\n");
+  irwriter_rawf(w, "  %%m = xor i32 %%bit, -1\n");
+  irwriter_rawf(w, "  %%c = and i32 %%v, %%m\n");
+  irwriter_rawf(w, "  store i32 %%c, ptr %%p\n");
+  irwriter_rawf(w, "  ret void\n");
+  irwriter_rawf(w, "}\n");
+
+  irwriter_rawf(w, "\ndefine internal void @bit_exclude(ptr %%tbl, i32 %%col, i32 %%csz, i32 %%off, i32 %%bit) {\n");
+  irwriter_rawf(w, "entry:\n");
+  irwriter_rawf(w, "  %%p = call ptr @table_gep(ptr %%tbl, i32 %%col, i32 %%csz, i32 %%off)\n");
+  irwriter_rawf(w, "  %%v = load i32, ptr %%p\n");
+  irwriter_rawf(w, "  %%k = and i32 %%v, %%bit\n");
+  irwriter_rawf(w, "  store i32 %%k, ptr %%p\n");
+  irwriter_rawf(w, "  ret void\n");
+  irwriter_rawf(w, "}\n");
+}
+
+// ============================================================
 // Table GEP: table_base + col * col_sizeof + byte_offset
 // ============================================================
 
 static IrVal _table_gep(PegIrCtx* ctx, IrVal col, int32_t byte_offset) {
   IrWriter* w = ctx->w;
-  IrVal col_ext = irwriter_sext(w, "i32", col, "i64");
-  IrVal stride = irwriter_sext(w, "i32", irwriter_imm_int(w, ctx->col_sizeof), "i64");
-  IrVal row_off = irwriter_binop(w, "mul", "i64", col_ext, stride);
-  IrVal fld_off = irwriter_sext(w, "i32", irwriter_imm_int(w, byte_offset), "i64");
-  IrVal tot_off = irwriter_binop(w, "add", "i64", row_off, fld_off);
   IrVal r = irwriter_next_reg(w);
-  irwriter_rawf(w, "  %%r%d = getelementptr i8, ptr ", (int)r);
+  irwriter_rawf(w, "  %%r%d = call ptr @table_gep(ptr ", (int)r);
   irwriter_emit_val(w, ctx->table);
-  irwriter_rawf(w, ", i64 ");
-  irwriter_emit_val(w, tot_off);
-  irwriter_rawf(w, "\n");
+  irwriter_rawf(w, ", i32 ");
+  irwriter_emit_val(w, col);
+  irwriter_rawf(w, ", i32 %d, i32 %d)\n", ctx->col_sizeof, byte_offset);
   return r;
 }
 
@@ -48,38 +108,39 @@ void peg_ir_write_slot(PegIrCtx* ctx, IrVal col, uint32_t slot_index, IrVal val)
 }
 
 // ============================================================
-// Bit operations (row_shared)
+// Bit operations (row_shared) — emit calls to @bit_test/deny/exclude
 // ============================================================
-
-static IrVal _read_bits(PegIrCtx* ctx, IrVal col, uint32_t seg_idx) {
-  IrVal ptr = _table_gep(ctx, col, ctx->bits_offset + (int32_t)seg_idx * 4);
-  return irwriter_load(ctx->w, "i32", ptr);
-}
-
-static void _write_bits(PegIrCtx* ctx, IrVal col, uint32_t seg_idx, IrVal val) {
-  IrVal ptr = _table_gep(ctx, col, ctx->bits_offset + (int32_t)seg_idx * 4);
-  irwriter_store(ctx->w, "i32", val, ptr);
-}
 
 IrVal peg_ir_bit_test(PegIrCtx* ctx, IrVal col, uint32_t seg_idx, uint32_t rule_bit) {
   IrWriter* w = ctx->w;
-  IrVal bits = _read_bits(ctx, col, seg_idx);
-  IrVal anded = irwriter_binop(w, "and", "i32", bits, irwriter_imm_int(w, (int)rule_bit));
-  return irwriter_icmp(w, "ne", "i32", anded, irwriter_imm_int(w, 0));
+  int32_t byte_off = ctx->bits_offset + (int32_t)seg_idx * 4;
+  IrVal r = irwriter_next_reg(w);
+  irwriter_rawf(w, "  %%r%d = call i1 @bit_test(ptr ", (int)r);
+  irwriter_emit_val(w, ctx->table);
+  irwriter_rawf(w, ", i32 ");
+  irwriter_emit_val(w, col);
+  irwriter_rawf(w, ", i32 %d, i32 %d, i32 %u)\n", ctx->col_sizeof, byte_off, rule_bit);
+  return r;
 }
 
 void peg_ir_bit_deny(PegIrCtx* ctx, IrVal col, uint32_t seg_idx, uint32_t rule_bit) {
   IrWriter* w = ctx->w;
-  IrVal bits = _read_bits(ctx, col, seg_idx);
-  IrVal cleared = irwriter_binop(w, "and", "i32", bits, irwriter_imm_int(w, (int)(~rule_bit)));
-  _write_bits(ctx, col, seg_idx, cleared);
+  int32_t byte_off = ctx->bits_offset + (int32_t)seg_idx * 4;
+  irwriter_rawf(w, "  call void @bit_deny(ptr ");
+  irwriter_emit_val(w, ctx->table);
+  irwriter_rawf(w, ", i32 ");
+  irwriter_emit_val(w, col);
+  irwriter_rawf(w, ", i32 %d, i32 %d, i32 %u)\n", ctx->col_sizeof, byte_off, rule_bit);
 }
 
 void peg_ir_bit_exclude(PegIrCtx* ctx, IrVal col, uint32_t seg_idx, uint32_t rule_bit) {
   IrWriter* w = ctx->w;
-  IrVal bits = _read_bits(ctx, col, seg_idx);
-  IrVal kept = irwriter_binop(w, "and", "i32", bits, irwriter_imm_int(w, (int)rule_bit));
-  _write_bits(ctx, col, seg_idx, kept);
+  int32_t byte_off = ctx->bits_offset + (int32_t)seg_idx * 4;
+  irwriter_rawf(w, "  call void @bit_exclude(ptr ");
+  irwriter_emit_val(w, ctx->table);
+  irwriter_rawf(w, ", i32 ");
+  irwriter_emit_val(w, col);
+  irwriter_rawf(w, ", i32 %d, i32 %d, i32 %u)\n", ctx->col_sizeof, byte_off, rule_bit);
 }
 
 // ============================================================
@@ -113,21 +174,20 @@ static void _sp_dec(PegIrCtx* ctx) {
 
 static void _stack_save(PegIrCtx* ctx) {
   IrWriter* w = ctx->w;
-  IrVal new_sp = _sp_inc(ctx);
-  IrVal col = irwriter_load(w, "i32", ctx->col_index);
-  IrVal col64 = irwriter_sext(w, "i32", col, "i64");
-  irwriter_store(w, "i64", col64, new_sp);
+  irwriter_rawf(w, "  call void @save(ptr ");
+  irwriter_emit_val(w, ctx->stack);
+  irwriter_rawf(w, ", ptr ");
+  irwriter_emit_val(w, ctx->col_index);
+  irwriter_rawf(w, ")\n");
 }
 
 static void _stack_restore(PegIrCtx* ctx) {
   IrWriter* w = ctx->w;
-  IrVal sp = _load_sp(ctx);
-  IrVal v64 = irwriter_load(w, "i64", sp);
-  IrVal col = irwriter_next_reg(w);
-  irwriter_rawf(w, "  %%r%d = trunc i64 ", (int)col);
-  irwriter_emit_val(w, v64);
-  irwriter_rawf(w, " to i32\n");
-  irwriter_store(w, "i32", col, ctx->col_index);
+  irwriter_rawf(w, "  call void @restore(ptr ");
+  irwriter_emit_val(w, ctx->stack);
+  irwriter_rawf(w, ", ptr ");
+  irwriter_emit_val(w, ctx->col_index);
+  irwriter_rawf(w, ")\n");
 }
 
 static void _stack_discard(PegIrCtx* ctx) { _sp_dec(ctx); }
@@ -210,7 +270,12 @@ IrVal peg_ir_call(PegIrCtx* ctx, int32_t scoped_rule_id) {
   irwriter_rawf(w, "  br label %%%s\n", rule->name);
 
   irwriter_bb_at(w, ret_lbl);
-  return irwriter_load(w, "i32", ctx->ret_val);
+  IrVal ret = irwriter_load(w, "i32", ctx->ret_val);
+  IrVal ok = irwriter_icmp(w, "sge", "i32", ret, irwriter_imm_int(w, 0));
+  int32_t cont_bb = irwriter_label(w);
+  irwriter_br_cond(w, ok, cont_bb, ctx->fail_label);
+  irwriter_bb_at(w, cont_bb);
+  return ret;
 }
 
 // ============================================================
@@ -474,14 +539,11 @@ static IrVal _gen_bare(PegIrCtx* ctx, int32_t scoped_rule_id) {
     return peg_ir_term(ctx, r->as.term);
   case SCOPED_RULE_KIND_CALL:
     return peg_ir_call(ctx, r->as.call);
-  case SCOPED_RULE_KIND_SEQ:
-    return peg_ir_seq(ctx, r->as.seq);
-  case SCOPED_RULE_KIND_BRANCHES:
-    return peg_ir_choice(ctx, r->as.branches);
   case SCOPED_RULE_KIND_JOIN:
     return irwriter_imm_int(ctx->w, 0);
+  default:
+    return peg_ir_call(ctx, scoped_rule_id);
   }
-  return irwriter_imm_int(ctx->w, 0);
 }
 
 // ============================================================
@@ -521,14 +583,11 @@ static IrVal _gen_scoped(PegIrCtx* ctx, int32_t scoped_rule_id) {
   switch (r->kind) {
   case SCOPED_RULE_KIND_TERM:
     return peg_ir_term(ctx, r->as.term);
-  case SCOPED_RULE_KIND_CALL:
-    return peg_ir_call(ctx, r->as.call);
-  case SCOPED_RULE_KIND_SEQ:
-    return peg_ir_seq(ctx, r->as.seq);
-  case SCOPED_RULE_KIND_BRANCHES:
-    return peg_ir_choice(ctx, r->as.branches);
   case SCOPED_RULE_KIND_JOIN:
     return irwriter_imm_int(ctx->w, 0);
+  case SCOPED_RULE_KIND_CALL:
+    return peg_ir_call(ctx, r->as.call);
+  default:
+    return peg_ir_call(ctx, scoped_rule_id);
   }
-  return irwriter_imm_int(ctx->w, 0);
 }

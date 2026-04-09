@@ -256,7 +256,7 @@ static void _collect_peg_used_set(PegUnit* unit, int32_t** set, ParseState* ps, 
       } else {
         PegRule* ref = rn ? _find_peg_rule(ps, rn) : NULL;
         if (ref) {
-          _collect_peg_used_set(&ref->seq, set, ps, visited_rules);
+          _collect_peg_used_set(&ref->body, set, ps, visited_rules);
         }
       }
     }
@@ -273,7 +273,7 @@ static void _collect_peg_used_set(PegUnit* unit, int32_t** set, ParseState* ps, 
       } else {
         PegRule* ref = rn ? _find_peg_rule(ps, rn) : NULL;
         if (ref) {
-          _collect_peg_used_set(&ref->seq, set, ps, visited_rules);
+          _collect_peg_used_set(&ref->body, set, ps, visited_rules);
         }
       }
     }
@@ -326,7 +326,7 @@ static bool _validate_token_sets(ParseState* ps) {
 
     int32_t* used_set = darray_new(sizeof(int32_t), 0);
     int32_t* visited_rules = darray_new(sizeof(int32_t), 0);
-    _collect_peg_used_set(&entry->seq, &used_set, ps, &visited_rules);
+    _collect_peg_used_set(&entry->body, &used_set, ps, &visited_rules);
     darray_del(visited_rules);
 
     for (int32_t i = 0; i < (int32_t)darray_size(used_set); i++) {
@@ -364,7 +364,7 @@ static bool _can_be_empty(PegUnit* unit) {
   }
   if (unit->kind == PEG_BRANCHES) {
     for (int32_t i = 0; i < (int32_t)darray_size(unit->children); i++) {
-      if ((int32_t)darray_size(unit->children[i].children) == 0) {
+      if (_can_be_empty(&unit->children[i])) {
         return true;
       }
     }
@@ -394,7 +394,7 @@ static bool _is_nullable(ParseState* ps, PegUnit* unit, int32_t** visited) {
     _id_set_add(visited, unit->id);
     const char* rn = _rule_name(ps, unit->id);
     PegRule* ref = rn ? _find_peg_rule(ps, rn) : NULL;
-    return ref && _is_nullable(ps, &ref->seq, visited);
+    return ref && _is_nullable(ps, &ref->body, visited);
   }
   case PEG_BRANCHES:
     for (int32_t i = 0; i < (int32_t)darray_size(unit->children); i++) {
@@ -450,7 +450,7 @@ static bool _check_left_rec(ParseState* ps, PegUnit* unit, int32_t target_id, in
     PegRule* ref = rn ? _find_peg_rule(ps, rn) : NULL;
     if (ref) {
       _id_set_add(visiting, unit->id);
-      if (_check_left_rec(ps, &ref->seq, target_id, visiting)) {
+      if (_check_left_rec(ps, &ref->body, target_id, visiting)) {
         return true;
       }
     }
@@ -488,7 +488,7 @@ bool pp_detect_left_recursions(ParseState* ps) {
     }
     int32_t* visiting = darray_new(sizeof(int32_t), 0);
     _id_set_add(&visiting, rule->global_id);
-    bool found = _check_left_rec(ps, &rule->seq, rule->global_id, &visiting);
+    bool found = _check_left_rec(ps, &rule->body, rule->global_id, &visiting);
     darray_del(visiting);
     if (found) {
       parse_error(ps, "left recursion detected in rule '%s'", rn);
@@ -502,7 +502,7 @@ bool pp_detect_left_recursions(ParseState* ps) {
     if (!rn) {
       continue;
     }
-    if (!_check_interlace_loops(ps, &rule->seq, rn)) {
+    if (!_check_interlace_loops(ps, &rule->body, rn)) {
       return false;
     }
   }
@@ -531,13 +531,15 @@ static bool _auto_tag_unit(ParseState* ps, PegRule* rule, PegUnit* unit) {
     for (int32_t i = 0; i < (int32_t)darray_size(unit->children); i++) {
       PegUnit* branch = &unit->children[i];
       if (!branch->tag || branch->tag[0] == '\0') {
-        if ((int32_t)darray_size(branch->children) > 0) {
-          PegUnit* first = &branch->children[0];
-          const char* dn = _unit_display_name(ps, first);
-          if (dn && dn[0]) {
-            free(branch->tag);
-            branch->tag = strdup(dn);
-          }
+        const char* dn = NULL;
+        if (branch->kind == PEG_SEQ && (int32_t)darray_size(branch->children) > 0) {
+          dn = _unit_display_name(ps, &branch->children[0]);
+        } else {
+          dn = _unit_display_name(ps, branch);
+        }
+        if (dn && dn[0]) {
+          free(branch->tag);
+          branch->tag = strdup(dn);
         }
         if (!branch->tag || branch->tag[0] == '\0') {
           parse_error(ps, "branch in rule '%s' must have an explicit tag", _rule_name(ps, rule->global_id));
@@ -557,9 +559,26 @@ static bool _auto_tag_unit(ParseState* ps, PegRule* rule, PegUnit* unit) {
 
 bool pp_auto_tag_branches(ParseState* ps) {
   for (int32_t r = 0; r < (int32_t)darray_size(ps->peg_rules); r++) {
-    if (!_auto_tag_unit(ps, &ps->peg_rules[r], &ps->peg_rules[r].seq)) {
+    if (!_auto_tag_unit(ps, &ps->peg_rules[r], &ps->peg_rules[r].body)) {
       return false;
     }
+  }
+  return true;
+}
+
+static bool _check_dup_tags_in_branches(ParseState* ps, PegUnit* br, char*** tags, const char* rn) {
+  for (int32_t j = 0; j < (int32_t)darray_size(br->children); j++) {
+    char* tag = br->children[j].tag;
+    if (!tag || !tag[0]) {
+      continue;
+    }
+    for (int32_t k = 0; k < (int32_t)darray_size(*tags); k++) {
+      if (strcmp((*tags)[k], tag) == 0) {
+        parse_error(ps, "duplicate tag '%s' across bracket groups in rule '%s'", tag, rn);
+        return false;
+      }
+    }
+    darray_push(*tags, tag);
   }
   return true;
 }
@@ -567,30 +586,28 @@ bool pp_auto_tag_branches(ParseState* ps) {
 bool pp_check_duplicate_tags(ParseState* ps) {
   for (int32_t r = 0; r < (int32_t)darray_size(ps->peg_rules); r++) {
     PegRule* rule = &ps->peg_rules[r];
+    const char* rn = _rule_name(ps, rule->global_id);
     char** tags = darray_new(sizeof(char*), 0);
+    bool ok = true;
 
-    for (int32_t i = 0; i < (int32_t)darray_size(rule->seq.children); i++) {
-      PegUnit* child = &rule->seq.children[i];
-      if (child->kind != PEG_BRANCHES) {
-        continue;
-      }
-      for (int32_t j = 0; j < (int32_t)darray_size(child->children); j++) {
-        char* tag = child->children[j].tag;
-        if (!tag || !tag[0]) {
+    if (rule->body.kind == PEG_BRANCHES) {
+      ok = _check_dup_tags_in_branches(ps, &rule->body, &tags, rn);
+    } else {
+      for (int32_t i = 0; i < (int32_t)darray_size(rule->body.children); i++) {
+        PegUnit* child = &rule->body.children[i];
+        if (child->kind != PEG_BRANCHES) {
           continue;
         }
-        for (int32_t k = 0; k < (int32_t)darray_size(tags); k++) {
-          if (strcmp(tags[k], tag) == 0) {
-            parse_error(ps, "duplicate tag '%s' across bracket groups in rule '%s'", tag,
-                        _rule_name(ps, rule->global_id));
-            darray_del(tags);
-            return false;
-          }
+        if (!_check_dup_tags_in_branches(ps, child, &tags, rn)) {
+          ok = false;
+          break;
         }
-        darray_push(tags, tag);
       }
     }
     darray_del(tags);
+    if (!ok) {
+      return false;
+    }
   }
   return true;
 }

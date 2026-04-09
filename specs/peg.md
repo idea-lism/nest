@@ -51,7 +51,7 @@ typedef struct {
   int32_t global_id;
   // scope_id = symtab_intern(scope_names, name)
   int32_t scope_id; // -1 for non-scope
-  PegUnit seq;
+  PegUnit body;
 } PegRule;
 
 typedef PegRule* PegRules; // darray
@@ -137,6 +137,7 @@ struct ScopedRule {
   } as;
   char multiplier; // ?, *, +
   DebugInfo di; // maps to source code
+  bool needs_memo; // non-term rules
 
   // ... analysis|codegen props, see below
 };
@@ -274,6 +275,7 @@ To access memoize table:
   - `table->col[%col].slots[%slot_index]`
 - Write memoize table slot
   - `table->col[%col].slots[%slot_index] = val`
+- In LLVM IR, we have `define internal @table_gep` to help this op.
 
 In `row_shared` mode, we also have:
 

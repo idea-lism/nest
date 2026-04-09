@@ -76,7 +76,7 @@ TEST(test_slot_access) {
   fclose(f);
 
   assert(buf != NULL);
-  assert(strstr(buf, "getelementptr") != NULL);
+  assert(strstr(buf, "@table_gep") != NULL);
   assert(strstr(buf, "load") != NULL);
   assert(strstr(buf, "store") != NULL);
 
@@ -124,9 +124,10 @@ TEST(test_bit_ops) {
   irwriter_del(w);
   fclose(f);
 
-  // verify IR contains and/icmp patterns
-  assert(strstr(buf, "and i32") != NULL);
-  assert(strstr(buf, "icmp ne") != NULL);
+  // verify IR contains calls to bit helpers
+  assert(strstr(buf, "@bit_test") != NULL);
+  assert(strstr(buf, "@bit_deny") != NULL);
+  assert(strstr(buf, "@bit_exclude") != NULL);
 
   free(buf);
 }
@@ -298,8 +299,8 @@ TEST(test_choice) {
   irwriter_del(w);
   fclose(f);
 
-  // choice should have store/load pattern for stack save/restore
-  assert(strstr(buf, "getelementptr i64") != NULL); // stack manipulation
+  // choice should have stack save/restore calls
+  assert(strstr(buf, "@save") != NULL);
   // should have two terminal checks
   int count = 0;
   const char* p = buf;

@@ -8,6 +8,7 @@ Command line tool that generates
   - `nest r` show reference `specs/bootstrap.nest`
 - common options
   - `-t <target_triple>` specify target triple, if none given, probe clang's default triple
+  - `-v 1`, or `--verbose=1`. verbose output (prints each step)
 - parser generator options
   - `-k false`, or `--compress-memoize=false`. default true, set false to disable compress memoize table (row_shared mode in PEG)
   - `-p <prefix>`, or `--prefix=<prefix>`. generated functions should have `<prefix>_`
