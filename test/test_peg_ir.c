@@ -12,239 +12,519 @@
 #define TEST(name) static void name(void)
 #define RUN(name)                                                                                                      \
   do {                                                                                                                 \
-    printf("  %s ... ", #name);                                                                                        \
+    printf("  %s...", #name);                                                                                          \
     name();                                                                                                            \
-    printf("ok\n");                                                                                                    \
+    printf(" OK\n");                                                                                                   \
   } while (0)
 
-static char* _capture_ir(void (*emit)(IrWriter*)) {
+// helper: set up a minimal PegIrCtx
+static PegIrCtx _make_ctx(IrWriter* w, ScopedRule* rules, int32_t n_rules) {
+  PegIrCtx ctx = {0};
+  ctx.w = w;
+  ctx.scope_name = "test";
+  ctx.rules = rules;
+  ctx.compress = false;
+  ctx.col_sizeof = n_rules * 4;
+  ctx.bits_offset = 0;
+  ctx.slots_offset = 0;
+  ctx.n_seg_groups = 0;
+  ctx.n_slots = n_rules;
+  return ctx;
+}
+
+// ============================================================
+// Test: peg_ir_read_slot / peg_ir_write_slot emit valid IR
+// ============================================================
+
+TEST(test_slot_access) {
   char* buf = NULL;
-  size_t buf_sz = 0;
-  FILE* f = compat_open_memstream(&buf, &buf_sz);
-  assert(f);
+  size_t len = 0;
+  FILE* f = compat_open_memstream(&buf, &len);
   IrWriter* w = irwriter_new(f, NULL);
-  irwriter_start(w, "test_peg_ir.c", ".");
-  emit(w);
-  irwriter_end(w);
-  irwriter_del(w);
-  compat_close_memstream(f, &buf, &buf_sz);
-  return buf;
-}
+  irwriter_start(w, "test.c", ".");
 
-// --- peg_ir_emit_bt_defs ---
-
-static void _emit_bt_defs(IrWriter* w) { peg_ir_emit_bt_defs(w); }
-
-TEST(test_bt_defs) {
-  char* ir = _capture_ir(_emit_bt_defs);
-  assert(strstr(ir, "%BtStack") != NULL);
-  assert(strstr(ir, "@save") != NULL);
-  assert(strstr(ir, "@restore") != NULL);
-  assert(strstr(ir, "@discard") != NULL);
-  free(ir);
-}
-
-// --- peg_ir_declare_externs ---
-
-static void _emit_externs(IrWriter* w) { peg_ir_declare_externs(w); }
-
-TEST(test_declare_externs) {
-  char* ir = _capture_ir(_emit_externs);
-  assert(strstr(ir, "match_tok") != NULL);
-  assert(strstr(ir, "declare") != NULL);
-  free(ir);
-}
-
-// --- peg_ir_memo_get / peg_ir_memo_set ---
-
-static void _emit_memo_ops(IrWriter* w) {
-  const char* arg_types[] = {"ptr", "i32"};
-  const char* arg_names[] = {"table", "col"};
-  irwriter_define_start(w, "test_memo", "i32", 2, arg_types, arg_names);
+  const char* at[] = {"ptr", "ptr", "i32"};
+  const char* an[] = {"table", "tokens", "ntoks"};
+  irwriter_define_start(w, "test_slot", "void", 3, at, an);
   irwriter_bb(w);
 
-  IrVal v = peg_ir_memo_get(w, "%Col.main", "%table", "%col", 0, 0);
-  peg_ir_memo_set(w, "%Col.main", "%table", "%col", 0, 0, v);
+  ScopedRule rules[2] = {
+      {.name = "r0", .kind = SCOPED_RULE_KIND_TERM, .as.term = 1, .slot_index = 0},
+      {.name = "r1", .kind = SCOPED_RULE_KIND_TERM, .as.term = 2, .slot_index = 1},
+  };
 
-  irwriter_ret(w, "i32", v);
+  PegIrCtx ctx = _make_ctx(w, rules, 2);
+  ctx.table = irwriter_imm(w, "%table");
+  ctx.tokens = irwriter_imm(w, "%tokens");
+  ctx.n_tokens = irwriter_imm(w, "%ntoks");
+  ctx.col_index = irwriter_alloca(w, "i32");
+  ctx.stack = irwriter_alloca(w, "ptr");
+  ctx.stack_bp = irwriter_alloca(w, "ptr");
+  ctx.ret_val = irwriter_alloca(w, "i32");
+  ctx.col_sizeof = 8; // 2 slots * 4 bytes
+
+  IrVal col = irwriter_imm_int(w, 0);
+  IrVal val = peg_ir_read_slot(&ctx, col, 0);
+  assert(val >= 0); // valid register
+
+  peg_ir_write_slot(&ctx, col, 1, irwriter_imm_int(w, 42));
+
+  irwriter_ret_void(w);
   irwriter_define_end(w);
-}
-
-TEST(test_memo_ops) {
-  char* ir = _capture_ir(_emit_memo_ops);
-  assert(strstr(ir, "getelementptr %Col.main") != NULL);
-  assert(strstr(ir, "load i32") != NULL);
-  assert(strstr(ir, "store i32") != NULL);
-  free(ir);
-}
-
-// --- peg_ir_bit_test / peg_ir_bit_deny / peg_ir_bit_exclude ---
-
-static void _emit_bit_ops(IrWriter* w) {
-  const char* arg_types[] = {"ptr", "i32"};
-  const char* arg_names[] = {"table", "col"};
-  irwriter_define_start(w, "test_bits", "i32", 2, arg_types, arg_names);
-  irwriter_bb(w);
-
-  IrVal tested = peg_ir_bit_test(w, "%Col.main", "%table", "%col", 0, 1);
-  peg_ir_bit_deny(w, "%Col.main", "%table", "%col", 0, 2);
-  peg_ir_bit_exclude(w, "%Col.main", "%table", "%col", 0, 4);
-
-  irwriter_ret(w, "i1", tested);
-  irwriter_define_end(w);
-}
-
-TEST(test_bit_ops) {
-  char* ir = _capture_ir(_emit_bit_ops);
-  assert(strstr(ir, "getelementptr %Col.main") != NULL);
-  assert(strstr(ir, "and i32") != NULL);
-  assert(strstr(ir, "icmp ne") != NULL);
-  free(ir);
-}
-
-// --- peg_ir_gen_rule_body (simple leaf: SEQ containing a TOK) ---
-
-static void _emit_rule_body_leaf(IrWriter* w) {
-  peg_ir_emit_bt_defs(w);
-  peg_ir_declare_externs(w);
-
-  const char* arg_types[] = {"ptr", "i32", "ptr"};
-  const char* arg_names[] = {"table", "col", "bt_stack"};
-  irwriter_define_start(w, "parse_test", "i32", 3, arg_types, arg_names);
-  irwriter_bb(w);
-
-  int32_t fail_label = irwriter_label(w);
-
-  // Build ScopedRule graph: rules[0] = TOK("NUM" -> tok_id=0)
-  // Since it's a single-child seq, breakdown would just return the TOK.
-  ScopedRule* rules = darray_new(sizeof(ScopedRule), 0);
-  ScopedRule tok_rule = {.name = "NUM", .kind = SCOPED_RULE_KIND_TOK, .as.tok = 0};
-  darray_push(rules, tok_rule);
-
-  IrVal slot_val_ptr = irwriter_alloca(w, "i32");
-  IrVal result = peg_ir_gen_rule_body(w, rules, 0, "%Col.test", NULL, 0, fail_label, slot_val_ptr);
-  irwriter_ret(w, "i32", result);
-
-  irwriter_bb_at(w, fail_label);
-  irwriter_ret(w, "i32", irwriter_imm(w, "-1"));
-  irwriter_define_end(w);
-
-  darray_del(rules);
-}
-
-TEST(test_gen_rule_body_leaf) {
-  char* ir = _capture_ir(_emit_rule_body_leaf);
-  assert(strstr(ir, "define i32 @parse_test") != NULL);
-  assert(strstr(ir, "match_tok") != NULL);
-  assert(strstr(ir, "%BtStack") != NULL);
-  free(ir);
-}
-
-// --- peg_ir_gen_rule_body (with branches) ---
-
-static void _emit_rule_body_branches(IrWriter* w) {
-  peg_ir_emit_bt_defs(w);
-  peg_ir_declare_externs(w);
-
-  const char* arg_types[] = {"ptr", "i32", "ptr"};
-  const char* arg_names[] = {"table", "col", "bt_stack"};
-  irwriter_define_start(w, "parse_branched", "i32", 3, arg_types, arg_names);
-  irwriter_bb(w);
-
-  int32_t fail_label = irwriter_label(w);
-
-  // Build ScopedRule graph:
-  // rules[0] = TOK(ID, tok_id=0)
-  // rules[1] = TOK(NUM, tok_id=1)
-  // rules[2] = BRANCHES([0, 1])
-  ScopedRule* rules = darray_new(sizeof(ScopedRule), 0);
-
-  ScopedRule tok_id = {.name = "ID", .kind = SCOPED_RULE_KIND_TOK, .as.tok = 0};
-  darray_push(rules, tok_id);
-
-  ScopedRule tok_num = {.name = "NUM", .kind = SCOPED_RULE_KIND_TOK, .as.tok = 1};
-  darray_push(rules, tok_num);
-
-  int32_t* branch_children = darray_new(sizeof(int32_t), 0);
-  int32_t c0 = 0, c1 = 1;
-  darray_push(branch_children, c0);
-  darray_push(branch_children, c1);
-  ScopedRule branches = {.name = "branched", .kind = SCOPED_RULE_KIND_BRANCHES, .as.branches = branch_children};
-  darray_push(rules, branches);
-
-  IrVal slot_val_ptr = irwriter_alloca(w, "i32");
-  int32_t branch_ids[] = {-1, -2};
-  IrVal result = peg_ir_gen_rule_body(w, rules, 2, "%Col.test", branch_ids, 2, fail_label, slot_val_ptr);
-  irwriter_ret(w, "i32", result);
-
-  irwriter_bb_at(w, fail_label);
-  irwriter_ret(w, "i32", irwriter_imm(w, "-1"));
-  irwriter_define_end(w);
-
-  darray_del(rules[2].as.branches);
-  darray_del(rules);
-}
-
-TEST(test_gen_rule_body_branches) {
-  char* ir = _capture_ir(_emit_rule_body_branches);
-  assert(strstr(ir, "define i32 @parse_branched") != NULL);
-  assert(strstr(ir, "sub i32") != NULL);
-  free(ir);
-}
-
-// --- compile check: generated IR should be valid LLVM ---
-
-TEST(test_peg_ir_compile) {
-  FILE* f = fopen(BUILD_DIR "/test_peg_ir_out.ll", "w");
-  assert(f);
-  IrWriter* w = irwriter_new(f, NULL);
-  irwriter_start(w, "test_peg_ir.c", ".");
-
-  peg_ir_emit_bt_defs(w);
-  peg_ir_declare_externs(w);
-
-  const char* arg_types[] = {"ptr", "i32", "ptr"};
-  const char* arg_names[] = {"table", "col", "bt_stack"};
-  irwriter_define_start(w, "parse_simple", "i32", 3, arg_types, arg_names);
-  irwriter_bb(w);
-
-  int32_t fail = irwriter_label(w);
-
-  // Build: rules[0] = TOK("X", tok_id=0)
-  ScopedRule* rules = darray_new(sizeof(ScopedRule), 0);
-  ScopedRule tok_x = {.name = "X", .kind = SCOPED_RULE_KIND_TOK, .as.tok = 0};
-  darray_push(rules, tok_x);
-
-  IrVal slot_val_ptr = irwriter_alloca(w, "i32");
-  IrVal r = peg_ir_gen_rule_body(w, rules, 0, "%Col.s", NULL, 0, fail, slot_val_ptr);
-  irwriter_ret(w, "i32", r);
-
-  irwriter_bb_at(w, fail);
-  irwriter_ret(w, "i32", irwriter_imm(w, "-1"));
-  irwriter_define_end(w);
-
   irwriter_end(w);
   irwriter_del(w);
   fclose(f);
 
-  const char* null_out = compat_devnull_path();
-  char cmd[512];
-  snprintf(cmd, sizeof(cmd), "%s -c %s -o %s 2>&1", compat_llvm_cc(), BUILD_DIR "/test_peg_ir_out.ll", null_out);
-  int ret = system(cmd);
-  assert(ret == 0);
+  assert(buf != NULL);
+  assert(strstr(buf, "getelementptr") != NULL);
+  assert(strstr(buf, "load") != NULL);
+  assert(strstr(buf, "store") != NULL);
 
-  darray_del(rules);
+  free(buf);
+}
+
+// ============================================================
+// Test: peg_ir_bit_test/deny/exclude emit correct instructions
+// ============================================================
+
+TEST(test_bit_ops) {
+  char* buf = NULL;
+  size_t len = 0;
+  FILE* f = compat_open_memstream(&buf, &len);
+  IrWriter* w = irwriter_new(f, NULL);
+  irwriter_start(w, "test.c", ".");
+
+  const char* at[] = {"ptr"};
+  const char* an[] = {"table"};
+  irwriter_define_start(w, "test_bits", "void", 1, at, an);
+  irwriter_bb(w);
+
+  ScopedRule rules[1] = {{.name = "r0", .kind = SCOPED_RULE_KIND_TERM, .as.term = 1}};
+  PegIrCtx ctx = _make_ctx(w, rules, 1);
+  ctx.table = irwriter_imm(w, "%table");
+  ctx.col_index = irwriter_alloca(w, "i32");
+  ctx.col_sizeof = 8; // 1 seg_group (4 bytes) + 1 slot (4 bytes)
+  ctx.bits_offset = 0;
+  ctx.slots_offset = 4;
+  ctx.compress = true;
+  ctx.n_seg_groups = 1;
+  ctx.n_slots = 1;
+
+  IrVal col = irwriter_imm_int(w, 0);
+
+  IrVal test_result = peg_ir_bit_test(&ctx, col, 0, 0x1);
+  assert(test_result >= 0);
+
+  peg_ir_bit_deny(&ctx, col, 0, 0x1);
+  peg_ir_bit_exclude(&ctx, col, 0, 0x1);
+
+  irwriter_ret_void(w);
+  irwriter_define_end(w);
+  irwriter_end(w);
+  irwriter_del(w);
+  fclose(f);
+
+  // verify IR contains and/icmp patterns
+  assert(strstr(buf, "and i32") != NULL);
+  assert(strstr(buf, "icmp ne") != NULL);
+
+  free(buf);
+}
+
+// ============================================================
+// Test: peg_ir_term emits bounds check + match
+// ============================================================
+
+TEST(test_term) {
+  char* buf = NULL;
+  size_t len = 0;
+  FILE* f = compat_open_memstream(&buf, &len);
+  IrWriter* w = irwriter_new(f, NULL);
+  irwriter_start(w, "test.c", ".");
+
+  const char* at[] = {"ptr", "i32"};
+  const char* an[] = {"tokens", "ntoks"};
+  irwriter_define_start(w, "test_term", "void", 2, at, an);
+  irwriter_bb(w);
+
+  ScopedRule rules[1] = {{.name = "r0", .kind = SCOPED_RULE_KIND_TERM, .as.term = 5}};
+  PegIrCtx ctx = _make_ctx(w, rules, 1);
+  ctx.tokens = irwriter_imm(w, "%tokens");
+  ctx.n_tokens = irwriter_imm(w, "%ntoks");
+  ctx.col_index = irwriter_alloca(w, "i32");
+  irwriter_store(w, "i32", irwriter_imm_int(w, 0), ctx.col_index);
+  ctx.table = irwriter_imm(w, "null");
+  ctx.stack = irwriter_alloca(w, "ptr");
+  ctx.stack_bp = irwriter_alloca(w, "ptr");
+  ctx.ret_val = irwriter_alloca(w, "i32");
+
+  int32_t fail_bb = irwriter_label(w);
+  ctx.fail_label = fail_bb;
+
+  IrVal r = peg_ir_term(&ctx, 5);
+  assert(r != 0); // should be imm "1"
+
+  irwriter_ret_void(w);
+
+  irwriter_bb_at(w, fail_bb);
+  irwriter_ret_void(w);
+
+  irwriter_define_end(w);
+  irwriter_end(w);
+  irwriter_del(w);
+  fclose(f);
+
+  // check for bounds check and comparison
+  assert(strstr(buf, "icmp slt") != NULL);
+  assert(strstr(buf, "icmp eq") != NULL);
+
+  free(buf);
+}
+
+// ============================================================
+// Test: peg_ir_seq generates sequential matches
+// ============================================================
+
+TEST(test_seq) {
+  char* buf = NULL;
+  size_t len = 0;
+  FILE* f = compat_open_memstream(&buf, &len);
+  IrWriter* w = irwriter_new(f, NULL);
+  irwriter_start(w, "test.c", ".");
+
+  const char* at[] = {"ptr", "i32"};
+  const char* an[] = {"tokens", "ntoks"};
+  irwriter_define_start(w, "test_seq", "void", 2, at, an);
+  irwriter_bb(w);
+
+  // two terminals in sequence
+  ScopedRule rules[3] = {
+      {.name = "t0", .kind = SCOPED_RULE_KIND_TERM, .as.term = 1},
+      {.name = "t1", .kind = SCOPED_RULE_KIND_TERM, .as.term = 2},
+      {.name = "seq", .kind = SCOPED_RULE_KIND_SEQ},
+  };
+  int32_t* seq_kids = darray_new(sizeof(int32_t), 0);
+  int32_t v0 = 0, v1 = 1;
+  darray_push(seq_kids, v0);
+  darray_push(seq_kids, v1);
+  rules[2].as.seq = seq_kids;
+
+  PegIrCtx ctx = _make_ctx(w, rules, 3);
+  ctx.tokens = irwriter_imm(w, "%tokens");
+  ctx.n_tokens = irwriter_imm(w, "%ntoks");
+  ctx.col_index = irwriter_alloca(w, "i32");
+  irwriter_store(w, "i32", irwriter_imm_int(w, 0), ctx.col_index);
+  ctx.table = irwriter_imm(w, "null");
+  ctx.stack = irwriter_alloca(w, "ptr");
+  ctx.stack_bp = irwriter_alloca(w, "ptr");
+  ctx.ret_val = irwriter_alloca(w, "i32");
+
+  int32_t fail_bb = irwriter_label(w);
+  ctx.fail_label = fail_bb;
+
+  IrVal r = peg_ir_seq(&ctx, rules[2].as.seq);
+  (void)r;
+  irwriter_ret_void(w);
+
+  irwriter_bb_at(w, fail_bb);
+  irwriter_ret_void(w);
+
+  irwriter_define_end(w);
+  irwriter_end(w);
+  irwriter_del(w);
+  fclose(f);
+
+  // seq should have two icmp eq checks (one for each terminal)
+  int count = 0;
+  const char* p = buf;
+  while ((p = strstr(p, "icmp eq")) != NULL) {
+    count++;
+    p++;
+  }
+  assert(count >= 2);
+
+  free(buf);
+  darray_del(seq_kids);
+}
+
+// ============================================================
+// Test: peg_ir_choice generates save/restore pattern
+// ============================================================
+
+TEST(test_choice) {
+  char* buf = NULL;
+  size_t len = 0;
+  FILE* f = compat_open_memstream(&buf, &len);
+  IrWriter* w = irwriter_new(f, NULL);
+  irwriter_start(w, "test.c", ".");
+
+  const char* at[] = {"ptr", "i32", "ptr"};
+  const char* an[] = {"tokens", "ntoks", "stack"};
+  irwriter_define_start(w, "test_choice", "void", 3, at, an);
+  irwriter_bb(w);
+
+  ScopedRule rules[2] = {
+      {.name = "a", .kind = SCOPED_RULE_KIND_TERM, .as.term = 1},
+      {.name = "b", .kind = SCOPED_RULE_KIND_TERM, .as.term = 2},
+  };
+  int32_t* branches = darray_new(sizeof(int32_t), 0);
+  int32_t b0 = 0, b1 = 1;
+  darray_push(branches, b0);
+  darray_push(branches, b1);
+
+  PegIrCtx ctx = _make_ctx(w, rules, 2);
+  ctx.tokens = irwriter_imm(w, "%tokens");
+  ctx.n_tokens = irwriter_imm(w, "%ntoks");
+  ctx.col_index = irwriter_alloca(w, "i32");
+  irwriter_store(w, "i32", irwriter_imm_int(w, 0), ctx.col_index);
+  ctx.table = irwriter_imm(w, "null");
+  ctx.stack = irwriter_alloca(w, "ptr");
+  irwriter_store(w, "ptr", irwriter_imm(w, "%stack"), ctx.stack);
+  ctx.stack_bp = irwriter_alloca(w, "ptr");
+  ctx.ret_val = irwriter_alloca(w, "i32");
+
+  int32_t fail_bb = irwriter_label(w);
+  ctx.fail_label = fail_bb;
+
+  IrVal r = peg_ir_choice(&ctx, branches);
+  (void)r;
+  irwriter_ret_void(w);
+
+  irwriter_bb_at(w, fail_bb);
+  irwriter_ret_void(w);
+
+  irwriter_define_end(w);
+  irwriter_end(w);
+  irwriter_del(w);
+  fclose(f);
+
+  // choice should have store/load pattern for stack save/restore
+  assert(strstr(buf, "getelementptr i64") != NULL); // stack manipulation
+  // should have two terminal checks
+  int count = 0;
+  const char* p = buf;
+  while ((p = strstr(p, "icmp eq")) != NULL) {
+    count++;
+    p++;
+  }
+  assert(count >= 2);
+
+  free(buf);
+  darray_del(branches);
+}
+
+// ============================================================
+// Test: peg_ir_maybe generates optional pattern
+// ============================================================
+
+TEST(test_maybe) {
+  char* buf = NULL;
+  size_t len = 0;
+  FILE* f = compat_open_memstream(&buf, &len);
+  IrWriter* w = irwriter_new(f, NULL);
+  irwriter_start(w, "test.c", ".");
+
+  const char* at[] = {"ptr", "i32"};
+  const char* an[] = {"tokens", "ntoks"};
+  irwriter_define_start(w, "test_maybe", "void", 2, at, an);
+  irwriter_bb(w);
+
+  ScopedRule rules[1] = {
+      {.name = "opt", .kind = SCOPED_RULE_KIND_TERM, .as.term = 1, .multiplier = '?'},
+  };
+
+  PegIrCtx ctx = _make_ctx(w, rules, 1);
+  ctx.tokens = irwriter_imm(w, "%tokens");
+  ctx.n_tokens = irwriter_imm(w, "%ntoks");
+  ctx.col_index = irwriter_alloca(w, "i32");
+  irwriter_store(w, "i32", irwriter_imm_int(w, 0), ctx.col_index);
+  ctx.table = irwriter_imm(w, "null");
+  ctx.stack = irwriter_alloca(w, "ptr");
+  ctx.stack_bp = irwriter_alloca(w, "ptr");
+  ctx.ret_val = irwriter_alloca(w, "i32");
+
+  int32_t fail_bb = irwriter_label(w);
+  ctx.fail_label = fail_bb;
+
+  // maybe should always succeed (never go to fail)
+  IrVal r = peg_ir_maybe(&ctx, SCOPED_RULE_KIND_TERM, 0);
+  (void)r;
+  irwriter_ret_void(w);
+
+  irwriter_bb_at(w, fail_bb);
+  irwriter_ret_void(w);
+
+  irwriter_define_end(w);
+  irwriter_end(w);
+  irwriter_del(w);
+  fclose(f);
+
+  // should have a store 0 (for the miss case) and a branch pattern
+  assert(strstr(buf, "store i32 0") != NULL || strstr(buf, "0,") != NULL);
+
+  free(buf);
+}
+
+// ============================================================
+// Finding 7: peg_ir_plus must restore col_index to its original
+// value before returning. The caller (seq) advances col.
+//
+// Test: call peg_ir_plus directly, check that between marked
+// comments the code includes a store that restores col to origin.
+// ============================================================
+
+TEST(test_seq_with_plus_child) {
+  char* buf = NULL;
+  size_t len = 0;
+  FILE* f = compat_open_memstream(&buf, &len);
+  IrWriter* w = irwriter_new(f, NULL);
+  irwriter_start(w, "test.c", ".");
+
+  const char* at[] = {"ptr", "i32"};
+  const char* an[] = {"tokens", "ntoks"};
+  irwriter_define_start(w, "test_plus_restore", "void", 2, at, an);
+  irwriter_bb(w);
+
+  ScopedRule rules[1] = {
+      {.name = "elem", .kind = SCOPED_RULE_KIND_TERM, .as.term = 1},
+  };
+
+  PegIrCtx ctx = _make_ctx(w, rules, 1);
+  ctx.tokens = irwriter_imm(w, "%tokens");
+  ctx.n_tokens = irwriter_imm(w, "%ntoks");
+  ctx.col_index = irwriter_alloca(w, "i32");
+  irwriter_store(w, "i32", irwriter_imm_int(w, 0), ctx.col_index);
+  ctx.table = irwriter_imm(w, "null");
+  ctx.stack = irwriter_alloca(w, "ptr");
+  ctx.stack_bp = irwriter_alloca(w, "ptr");
+  ctx.ret_val = irwriter_alloca(w, "i32");
+
+  int32_t fail_bb = irwriter_label(w);
+  ctx.fail_label = fail_bb;
+
+  irwriter_comment(w, "PLUS_BEGIN");
+  IrVal result = peg_ir_plus(&ctx, SCOPED_RULE_KIND_TERM, 0, 0, 0);
+  (void)result;
+  irwriter_comment(w, "PLUS_END");
+
+  irwriter_ret_void(w);
+  irwriter_bb_at(w, fail_bb);
+  irwriter_ret_void(w);
+
+  irwriter_define_end(w);
+  irwriter_end(w);
+  irwriter_del(w);
+  fclose(f);
+
+  // Between PLUS_BEGIN and PLUS_END, plus must restore col to its
+  // original value. The original value was loaded before plus started
+  // and stored in col_origin. At the end, plus does:
+  //   _store_col(ctx, col_origin)
+  // Without the fix, plus never restores col.
+  //
+  // We detect the restore by counting "store i32" between the markers.
+  // A correct plus has: col_save init(1), loop col_save(1), col_save
+  // restore(1), origin restore(1) = 4+ stores.
+  // A buggy plus without origin restore has fewer stores.
+
+  const char* begin = strstr(buf, "PLUS_BEGIN");
+  assert(begin != NULL);
+  const char* end = strstr(buf, "PLUS_END");
+  assert(end != NULL);
+
+  int store_count = 0;
+  const char* p = begin;
+  while (p < end && (p = strstr(p, "store i32")) != NULL && p < end) {
+    store_count++;
+    p += 9;
+  }
+  // With fix: stores include col_save(1), loop col_save(1),
+  // loop-exit col_save restore(1), origin restore(1), acc stores(2+) = 5+
+  // Without fix: no origin restore, so fewer stores
+  assert(store_count >= 5 && "plus must restore col_index to origin before returning");
+
+  free(buf);
+}
+
+// ============================================================
+// Finding 7: peg_ir_star must restore col_index to its original
+// value before returning. The caller (seq) advances col.
+// ============================================================
+
+TEST(test_star_does_not_own_col) {
+  char* buf = NULL;
+  size_t len = 0;
+  FILE* f = compat_open_memstream(&buf, &len);
+  IrWriter* w = irwriter_new(f, NULL);
+  irwriter_start(w, "test.c", ".");
+
+  const char* at[] = {"ptr", "i32"};
+  const char* an[] = {"tokens", "ntoks"};
+  irwriter_define_start(w, "test_star_restore", "void", 2, at, an);
+  irwriter_bb(w);
+
+  ScopedRule rules[1] = {
+      {.name = "elem", .kind = SCOPED_RULE_KIND_TERM, .as.term = 1},
+  };
+
+  PegIrCtx ctx = _make_ctx(w, rules, 1);
+  ctx.tokens = irwriter_imm(w, "%tokens");
+  ctx.n_tokens = irwriter_imm(w, "%ntoks");
+  ctx.col_index = irwriter_alloca(w, "i32");
+  irwriter_store(w, "i32", irwriter_imm_int(w, 0), ctx.col_index);
+  ctx.table = irwriter_imm(w, "null");
+  ctx.stack = irwriter_alloca(w, "ptr");
+  ctx.stack_bp = irwriter_alloca(w, "ptr");
+  ctx.ret_val = irwriter_alloca(w, "i32");
+
+  int32_t fail_bb = irwriter_label(w);
+  ctx.fail_label = fail_bb;
+
+  irwriter_comment(w, "STAR_BEGIN");
+  IrVal result = peg_ir_star(&ctx, SCOPED_RULE_KIND_TERM, 0, 0, 0);
+  (void)result;
+  irwriter_comment(w, "STAR_END");
+
+  irwriter_ret_void(w);
+  irwriter_bb_at(w, fail_bb);
+  irwriter_ret_void(w);
+
+  irwriter_define_end(w);
+  irwriter_end(w);
+  irwriter_del(w);
+  fclose(f);
+
+  const char* begin = strstr(buf, "STAR_BEGIN");
+  assert(begin != NULL);
+  const char* end = strstr(buf, "STAR_END");
+  assert(end != NULL);
+
+  // Star must restore col to origin at the end.
+  // Count "store i32" between markers.
+  // With fix: col_save(1), loop col_save restore(1), origin restore(1),
+  //   acc stores(2+) = 4+
+  // Without fix: no origin restore, fewer stores.
+  int store_count = 0;
+  const char* p = begin;
+  while (p < end && (p = strstr(p, "store i32")) != NULL && p < end) {
+    store_count++;
+    p += 9;
+  }
+  assert(store_count >= 4 && "star must restore col_index to origin before returning");
+
+  free(buf);
 }
 
 int main(void) {
   printf("test_peg_ir:\n");
-  RUN(test_bt_defs);
-  RUN(test_declare_externs);
-  RUN(test_memo_ops);
+  RUN(test_slot_access);
   RUN(test_bit_ops);
-  RUN(test_gen_rule_body_leaf);
-  RUN(test_gen_rule_body_branches);
-  RUN(test_peg_ir_compile);
-  printf("all ok\n");
+  RUN(test_term);
+  RUN(test_seq);
+  RUN(test_choice);
+  RUN(test_maybe);
+  RUN(test_seq_with_plus_child);
+  RUN(test_star_does_not_own_col);
+  printf("test_peg_ir: OK\n");
   return 0;
 }

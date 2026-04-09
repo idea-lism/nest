@@ -42,7 +42,7 @@ TEST(test_tree_add_token) {
   tt_add(tree, TOK_CHAR, 1, 1, -1);
 
   assert(darray_size(tree->current->tokens) == 2);
-  assert(tree->current->tokens[0].tok_id == TOK_CHAR);
+  assert(tree->current->tokens[0].term_id == TOK_CHAR);
   assert(tree->current->tokens[0].cp_start == 0);
   assert(tree->current->tokens[1].cp_start == 1);
 
@@ -219,8 +219,8 @@ TEST(test_token_scope_reference) {
 
   assert(darray_size(tree->root->tokens) == 1);
   Token stored = tree->root->tokens[0];
-  assert(stored.tok_id == SCOPE_VPA);
-  assert(stored.tok_id < SCOPE_COUNT);
+  assert(stored.term_id == SCOPE_VPA);
+  assert(stored.term_id < SCOPE_COUNT);
   assert(stored.chunk_id == child_chunk_id);
 
   assert(tree->table[stored.chunk_id].scope_id == SCOPE_VPA);
@@ -441,10 +441,10 @@ TEST(test_vpa_gen_exec) {
               "  vpa_lex((void*)input, len, (void*)tt, (void*)0, (void*)0);\n"
               "  int32_t n = (int32_t)darray_size(tt->root->tokens);\n"
               "  assert(n == 4);\n"
-              "  assert(tt->root->tokens[0].tok_id == TOK_TOK_A);\n"
-              "  assert(tt->root->tokens[1].tok_id == TOK_TOK_A);\n"
-              "  assert(tt->root->tokens[2].tok_id == TOK_TOK_B);\n"
-              "  assert(tt->root->tokens[3].tok_id == TOK_TOK_B);\n"
+              "  assert(tt->root->tokens[0].term_id == TOK_TOK_A);\n"
+              "  assert(tt->root->tokens[1].term_id == TOK_TOK_A);\n"
+              "  assert(tt->root->tokens[2].term_id == TOK_TOK_B);\n"
+              "  assert(tt->root->tokens[3].term_id == TOK_TOK_B);\n"
               "  assert(tt->root->tokens[0].cp_start == 0);\n"
               "  assert(tt->root->tokens[0].cp_size == 1);\n"
               "  assert(tt->root->tokens[3].cp_start == 3);\n"
@@ -769,6 +769,37 @@ TEST(test_vpa_gen_header_types) {
   assert(strstr(h_buf, "PARSE_ERROR_TOKEN_ERR") != NULL);
   assert(strstr(h_buf, "ParseError") != NULL);
   assert(strstr(h_buf, "ParseResult") != NULL);
+
+  // Spec: ParseResult must contain PegRef main field
+  assert(strstr(h_buf, "PegRef") != NULL);
+  assert(strstr(h_buf, "PegRef main") != NULL);
+
+  free(h_buf);
+
+  _free_gen_input(&input);
+}
+
+// === Spec check: {prefix}_parse must return ParseResult, not void ===
+
+TEST(test_vpa_gen_parse_returns_parse_result) {
+  VpaGenInput input = _empty_input();
+
+  int32_t tok_a_id = symtab_intern(&input.tokens, "tok_a");
+  VpaScope main_scope = {.scope_id = 0, .name = strdup("main"), .leader = {0}};
+  main_scope.children = darray_new(sizeof(VpaUnit), 0);
+  VpaUnit u = {.kind = VPA_RE, .re = re_ir_new(), .action_units = _make_au_tok(tok_a_id)};
+  u.re = re_ir_emit_ch(u.re, 'a');
+  darray_push(main_scope.children, u);
+  darray_push(input.scopes, main_scope);
+
+  _run_vpa_gen_prefixed(&input, BUILD_DIR "/test_vpa_rettype.h", BUILD_DIR "/test_vpa_rettype.ll", "mymod");
+
+  char* h_buf = _read_file(BUILD_DIR "/test_vpa_rettype.h");
+  // Spec says: extern ParseResult {prefix}_parse(ParseContext lc, UStr src)
+  // Must NOT be "void mymod_parse"
+  assert(strstr(h_buf, "void mymod_parse") == NULL);
+  // Must declare returning ParseResult
+  assert(strstr(h_buf, "ParseResult mymod_parse") != NULL);
   free(h_buf);
 
   _free_gen_input(&input);
@@ -857,13 +888,16 @@ int main(void) {
   RUN(test_vpa_gen_empty_scope_body);
   RUN(test_vpa_gen_long_names);
 
-  // review finding tests (expected to fail until implementation catches up to spec)
+  // review finding tests
   RUN(test_vpa_gen_prefix_parse_defined_in_ir);
   RUN(test_vpa_gen_begin_end_push_pop);
   RUN(test_vpa_gen_effect_dispatch);
   RUN(test_vpa_gen_header_types);
   RUN(test_vpa_gen_literal_tokens_excluded);
   RUN(test_vpa_gen_builtin_hook_defines);
+
+  // spec conformance tests
+  RUN(test_vpa_gen_parse_returns_parse_result);
 
   printf("all ok\n");
   return 0;

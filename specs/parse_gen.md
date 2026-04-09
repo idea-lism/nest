@@ -106,7 +106,7 @@ typedef enum {
 } LitId;
 
 typedef enum {
-  TOK_START = LIT_COUNT, // first token ID (after scopes)
+  TOK_START = (1 << 16), // large enough first token ID so it won't conflict with scope_id
 
   // shared tokens
   TOK_NL,

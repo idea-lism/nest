@@ -17,7 +17,7 @@ So the data structures are:
 ```c
 // 16 bytes a token
 typedef struct {
-  int32_t tok_id; // or scope_id (is scope id when < SCOPE_COUNT), parse analysis should give a universal numbering to all of them
+  int32_t term_id; // token_id or scope_id (in the same numbering system), parse analysis should give a universal numbering to all of them
   // with cp_start (absolute offset relative to input string):
   // - we can locate the line & column with newline_map
   // - we can locate the byte offset by ustr
@@ -33,6 +33,7 @@ typedef struct { // matches a scope
   int32_t scope_id;
   int32_t parent_id; // parent chunk_id, -1 for root chunk
   void* value;       // parser associate a value to it after parse, `struct ScopeXxx`
+  void* aux_value;   // parser associate another value to it
   Tokens tokens;
 } TokenChunk;
 

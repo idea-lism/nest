@@ -37,7 +37,7 @@ TEST(test_add_single) {
   TokenTree* tree = tt_tree_new(s);
   tt_add(tree, 1, 0, 3, -1);
   assert(darray_size(tree->root->tokens) == 1);
-  assert(tree->root->tokens[0].tok_id == 1);
+  assert(tree->root->tokens[0].term_id == 1);
   assert(tree->root->tokens[0].cp_start == 0);
   assert(tree->root->tokens[0].cp_size == 3);
   assert(tree->root->tokens[0].chunk_id == -1);
@@ -53,7 +53,7 @@ TEST(test_add_multiple) {
   }
   assert(darray_size(tree->root->tokens) == 5);
   for (int i = 0; i < 5; i++) {
-    assert(tree->root->tokens[i].tok_id == i);
+    assert(tree->root->tokens[i].term_id == i);
     assert(tree->root->tokens[i].cp_start == i);
   }
   tt_tree_del(tree);
@@ -105,16 +105,7 @@ TEST(test_pop) {
   ustr_del(s);
 }
 
-TEST(test_pop_at_root) {
-  char* s = ustr_new(3, "abc");
-  TokenTree* tree = tt_tree_new(s);
-  TokenChunk* before = tree->current;
-  TokenChunk* after = tt_pop(tree);
-  assert(after == before);
-  assert(tree->current->parent_id == -1);
-  tt_tree_del(tree);
-  ustr_del(s);
-}
+// tt_pop at root now aborts — no test needed for the disallowed path
 
 TEST(test_push_pop_sequence) {
   char* s = ustr_new(6, "abcdef");
@@ -133,10 +124,10 @@ TEST(test_push_pop_sequence) {
 
   // root has 2 tokens, child has 1
   assert(darray_size(tree->table[0].tokens) == 2);
-  assert(tree->table[0].tokens[0].tok_id == 10);
-  assert(tree->table[0].tokens[1].tok_id == 11);
+  assert(tree->table[0].tokens[0].term_id == 10);
+  assert(tree->table[0].tokens[1].term_id == 11);
   assert(darray_size(tree->table[1].tokens) == 1);
-  assert(tree->table[1].tokens[0].tok_id == 20);
+  assert(tree->table[1].tokens[0].term_id == 20);
 
   tt_tree_del(tree);
   ustr_del(s);
@@ -233,17 +224,17 @@ TEST(test_tree_structure) {
 
   // root chunk (index 0)
   assert(darray_size(tree->table[0].tokens) == 1);
-  assert(tree->table[0].tokens[0].tok_id == 1);
+  assert(tree->table[0].tokens[0].term_id == 1);
   assert(tree->table[0].parent_id == -1);
 
   // child1 (index 1)
   assert(darray_size(tree->table[1].tokens) == 1);
-  assert(tree->table[1].tokens[0].tok_id == 2);
+  assert(tree->table[1].tokens[0].term_id == 2);
   assert(tree->table[1].parent_id == 0);
 
   // child2 (index 2)
   assert(darray_size(tree->table[2].tokens) == 1);
-  assert(tree->table[2].tokens[0].tok_id == 3);
+  assert(tree->table[2].tokens[0].term_id == 3);
   assert(tree->table[2].parent_id == 0);
 
   tt_tree_del(tree);
@@ -261,7 +252,6 @@ int main(void) {
   RUN(test_push);
   RUN(test_push_nested);
   RUN(test_pop);
-  RUN(test_pop_at_root);
   RUN(test_push_pop_sequence);
 
   RUN(test_locate_no_newlines);

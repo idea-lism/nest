@@ -348,6 +348,11 @@ Parser should produce what vpa_gen / peg_gen requires.
   - action_unit_id > 0: maps to token_id
   - action_unit_id <= 0: maps to -hook_id
 
+### Misc
+
+- re_str stores ReIr in `token_chunk.value`, and the transformed string buffer in `token_chunk.aux_value`
+- peg_str stores transformed string buffer in `token_chunk.aux_value`
+
 ### What is FORBIDDEN, a no-go
 
 - Re-inventing regexp/lexer machine in parse.c

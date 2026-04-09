@@ -1,9 +1,13 @@
 [[vpa]]
 %ignore @space
-main = {
-  /if/ @kw_if
-  /else/ @kw_else
-  /while/ @kw_while
+
+*keywords = @{
+  "if"
+  "else"
+  "while"
+}
+
+*common = {
   /[a-zA-Z_]\w*/ @ident
   /\d+/ @number
   /\s+/ @space
@@ -15,8 +19,6 @@ main = {
   /;/ @semi
   /\(/ @lparen
   /\)/ @rparen
-  /\{/ @lbrace
-  /\}/ @rbrace
   /==/ @eq
   /!=/ @ne
   /</ @lt
@@ -24,6 +26,20 @@ main = {
   /<=/ @le
   />=/ @ge
 }
+
+main = {
+  *keywords
+  block
+  *common
+}
+
+block = /{/ .begin @lbrace {
+  /}/ @rbrace .end
+  *keywords
+  block
+  *common
+}
+
 [[peg]]
 main = stmt*
 stmt = [
@@ -31,9 +47,9 @@ stmt = [
   while_stmt
   assign_stmt
 ]
-if_stmt = @kw_if @lparen expr @rparen block else_block?
-else_block = @kw_else block
-while_stmt = @kw_while @lparen expr @rparen block
+if_stmt = "if" @lparen expr @rparen block else_block?
+else_block = "else" block
+while_stmt = "while" @lparen expr @rparen block
 block = @lbrace stmt* @rbrace
 assign_stmt = @ident @assign expr @semi
 expr = cmp

@@ -61,7 +61,7 @@ typedef enum {
 } LitId;
 
 typedef enum {
-  TOK_START = LIT_COUNT,
+  TOK_START = 1 << 16,
 
   TOK_NL,
 

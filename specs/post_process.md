@@ -6,7 +6,8 @@ Create "src/post_process.c".
 
 `bool pp_inline_macros(ParseState* ps);`:
 1. inline macro vpa rules
-2. then build a new list of VPA scopes to replace the old one, including only the non-macro ones.
+2. check sub-scope calls: if a sub-scope call is a macro, report error
+3. then build a new list of VPA scopes to replace the old one, including only the non-macro ones.
 
 ### peg: auto tag branches
 
@@ -43,11 +44,12 @@ foo = a [
 ]
 ```
 
-### peg: left recursion detect
+### peg: left recursion / infinite loop detect
 
 `bool pp_detect_left_recursions(ParseState* ps)`:
 - walk down peg rules to detect left recursions -- we don't allow this infinite loop.
   - when analyzing, be ware of the scope boundary: if there is a scope, we don't expand it. for example str is defined `str = str_char*`, but it always takes a slot in token stream so parsing the scope won't result in infinite loop.
+- for interlace rule `lhs*<rhs>` / `lhs+<rhs>`, if both `lhs` and `rhs` are nullable, report error.
 
 ### vpa scope validity
 
@@ -73,6 +75,8 @@ foo = a [
 - for every PEG scope, `used_set` must be the same as `emit_set` in the related VPA scope
   - emit_set including tokens and scopes, but if the scope doesn't have a mapping peg parser, expand it.
     - exclude ignore tokens in emit_set
+    - if scope leader has token emits after `.begin` hook, include it
+    - if a token is emit after `.end` hook, scopes that calls current scope should include the token
   - used_set including tokens and scopes, if a child-rule doesn't have a mapping vpa scope, expand it.
   - for example,
     1. with vpa rule `foo = /.../ { @a ... }`, `bar = /.../ { @b ... foo ... }`, then `bar`'s emit_set is `{@b, foo}`

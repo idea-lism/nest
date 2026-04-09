@@ -1,50 +1,78 @@
 The PEG IR helpers in src/peg_ir.c wrap irwriter for multi-instruction sequences.
 
-Single LLVM instructions (add, icmp, select, phi, br) are emitted directly via irwriter.
+# API
 
-# Low level ops
+```c
+typedef struct {
+  IrWriter* ir_writer;
+  IrVal tokens;     // TokenChunk->tokens register, so we can find the token id
+  IrVal col_index;  // to match: tokens[col_index].term_id
+  IrVal fail_label; // label for failure path
+  IrVal stack;      // register for backtrack stack
+  IrVal stack_bp;   // base-pointer for stack calls
+  IrVal ret_register;
+  // and other context vars if needed in implementation
 
-All values are `i32`. Convention: negative return = failure.
+  const char* scope_name;
+  Symtab scoped_rule_names;
+} PegIrCtx;
+```
 
-| Operation                              | LLVM IR expansion | Semantics |
-|----------------------------------------|-------------------|-----------|
-| `define internal @tok(token_id, col)`  | `%token_id == %col` | Match token at `col`. Returns match length (≥0) or negative on failure. |
-| `define internal @call(rule_id, col)`  | `sext` + `call i32 @parse_{id}(ptr %table, i64 %col)` | Call rule function (which checks memo table internally). Returns match length or negative. |
+- `peg_ir_term(ctx, int32_t term_id)`: emit code to match a terminal
+- `peg_ir_call(ctx, int32_t scoped_rule_id)`: emit code to call a rule
+- `peg_ir_seq(ctx, int32_t* seq)`: generate matcher IR for the broken down rule
+- `peg_ir_choice(ctx, int32_t* branches)`: generate matcher IR for the broken down rule
+- `peg_ir_maybe(ctx, kind, int32_t id)`
+- `peg_ir_star(ctx, kind, int32_t id, rhs_kind, int32_t rhs_id)`
+- `peg_ir_plus(ctx, kind, int32_t id, rhs_kind, int32_t rhs_id)`
 
-### Backtrack stack
+# Stack data layout and pseudo sub-rule calling
 
-At the beginning of main vpa loop, malloc a 1M `i32 * 256K` stack as local variable.
+Layout
 
-And all scope's backtracking can share this same stack.
+```c
+typedef union {
+  int32_t col;
+  void* ret_site;
+} StackSlot;
 
-| Operation                              | Semantics                                                   |
-|----------------------------------------|-------------------------------------------------------------|
-| `define internal @save(ptr %stack, i32 %col)` | Push column position onto backtrack stack.           |
-| `define internal @restore(ptr %stack)` | Read saved column without popping. Returns the saved `col`. |
-| `define internal @discard(ptr %stack)` | Drop top of backtrack stack.                                |
+StackSlot* stack;
+```
 
-The backtrack stack type and operations are emitted as `define internal` functions in the generated LLVM IR, so LLVM can inline them.
+Operations
+
+```c
+// save
+  stack++;
+  stack->col = col;
+
+// restore
+  col = stack->col;
+  stack--;
+
+// discard
+  stack--;
+
+// call sub-rule
+  stack++;
+  stack->ret_site = &&ret_label;
+  br {scope_name}${scoped_rule_name};
+ret_label:
+  parsed = %ret;
+
+// return
+{scope_name}${scoped_rule_name}:
+  %ret_addr = stack->ret_size;
+  stack--;
+  %bp = stack
+  %ret = ...
+  stack = %bp;
+  br %ret_addr;
+```
 
 # Code gen
 
-`gen(pattern, col, on_fail)` generates IR for matching `pattern` at column `col`, branching to `on_fail` on failure. Returns match length on success.
-
-### Primitives Translation
-
-```
-gen(empty, col, fail):
-  return 0
-
-gen(token, col, fail):
-  br(token_id == tokens[col].token_id, good, fail)
-good:
-  ret 1
-fail:
-  ret -1
-
-gen(Rule, col, fail):
-  ret call(Rule, col)
-```
+`fail` means passing the on-failure label.
 
 ### Sequence
 
@@ -52,7 +80,7 @@ gen(Rule, col, fail):
 gen(a b, col, fail):
   r1 = gen(a, col, fail)
   r2 = gen(b, col + r1, fail)
-  return r1 + r2
+  %ret = r1 + r2
 ```
 
 ### Ordered choice
@@ -72,8 +100,7 @@ alt_bb:
   discard()
   br(done_bb)
 done_bb:
-  result = phi(r from succ_bb, r2 from alt_bb)
-  return result
+  %ret = phi(r from succ_bb, r2 from alt_bb)
 ```
 
 For N-ary ordered choice `a / b / c / ...`, the pattern generalizes: one `save` at the start, `discard` after each successful match, `restore` + `discard` + `save` at each non-last retry, `restore` + `discard` before the last attempt.
@@ -89,8 +116,7 @@ gen(e?, col, fail):
 miss_bb:
   br(done_bb)
 done_bb:
-  result = phi(r from try_bb, 0 from miss_bb)
-  return result
+  %ret = phi(r from try_bb, 0 from miss_bb)
 ```
 
 ### One-or-more (+), possessive
@@ -107,7 +133,7 @@ loop_bb:
   next = acc + r
   br(loop_bb)
 end_bb:
-  return acc
+  %ret = acc
 ```
 
 ### Zero-or-more (*), possessive
@@ -123,7 +149,7 @@ loop_bb:
   next = acc + r
   br(loop_bb)
 end_bb:
-  return acc
+  %ret = acc
 ```
 
 ### One-or-more with interlace (+\<sep\>)
@@ -141,7 +167,7 @@ loop_bb:
   next = acc + sr + er
   br(loop_bb)
 end_bb:
-  return acc
+  %ret = acc
 ```
 
 ### Zero-or-more with interlace (*\<sep\>)
@@ -162,12 +188,12 @@ empty_bb:
   br(end_bb)
 end_bb:
   result = phi(acc from loop_bb, 0 from empty_bb)
-  return result
+  %ret = result
 ```
 
 # Notes
 
-- `gen` always has an `on_fail` label. On failure, control transfers there. On success, it falls through and returns the match length.
-- `?` and `*` always succeed — they never branch to `on_fail`.
+- `gen` always has an `fail` label. On failure, control transfers there. On success, it falls through and returns the match length.
+- `?` and `*` always succeed — they never branch to `fail`.
 - `+` and `*` are possessive (no backtracking).
 - `+<sep>` / `*<sep>` interlace: the separator is only consumed when followed by a successful element match. The loop exits before accumulating the separator, discarding both `sr` and `er`.

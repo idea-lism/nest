@@ -181,13 +181,13 @@ TEST(test_auto_tag_branches) {
 
   PegUnit b1 = {.kind = PEG_SEQ};
   b1.children = darray_new(sizeof(PegUnit), 0);
-  PegUnit t1 = {.kind = PEG_TOK, .id = symtab_intern(&ps->tokens, "id")};
+  PegUnit t1 = {.kind = PEG_TERM, .id = symtab_intern(&ps->tokens, "id")};
   darray_push(b1.children, t1);
   darray_push(branches.children, b1);
 
   PegUnit b2 = {.kind = PEG_SEQ};
   b2.children = darray_new(sizeof(PegUnit), 0);
-  PegUnit t2 = {.kind = PEG_TOK, .id = symtab_intern(&ps->tokens, "num")};
+  PegUnit t2 = {.kind = PEG_TERM, .id = symtab_intern(&ps->tokens, "num")};
   darray_push(b2.children, t2);
   darray_push(branches.children, b2);
 
@@ -223,13 +223,13 @@ TEST(test_duplicate_tag_error) {
 
   PegUnit b1 = {.kind = PEG_SEQ, .tag = strdup("dup")};
   b1.children = darray_new(sizeof(PegUnit), 0);
-  PegUnit t1 = {.kind = PEG_TOK, .id = symtab_intern(&ps->tokens, "tok_a")};
+  PegUnit t1 = {.kind = PEG_TERM, .id = symtab_intern(&ps->tokens, "tok_a")};
   darray_push(b1.children, t1);
   darray_push(branches.children, b1);
 
   PegUnit b2 = {.kind = PEG_SEQ, .tag = strdup("dup")};
   b2.children = darray_new(sizeof(PegUnit), 0);
-  PegUnit t2 = {.kind = PEG_TOK, .id = symtab_intern(&ps->tokens, "tok_b")};
+  PegUnit t2 = {.kind = PEG_TERM, .id = symtab_intern(&ps->tokens, "tok_b")};
   darray_push(b2.children, t2);
   darray_push(branches.children, b2);
 
@@ -296,7 +296,7 @@ static void _make_left_rec_peg(ParseState* ps) {
 
   PegUnit branch1 = {.kind = PEG_SEQ, .tag = strdup("id")};
   branch1.children = darray_new(sizeof(PegUnit), 0);
-  PegUnit tok_id1 = {.kind = PEG_TOK, .id = symtab_intern(&ps->tokens, "id")};
+  PegUnit tok_id1 = {.kind = PEG_TERM, .id = symtab_intern(&ps->tokens, "id")};
   darray_push(branch1.children, tok_id1);
   darray_push(branches.children, branch1);
 
@@ -304,7 +304,7 @@ static void _make_left_rec_peg(ParseState* ps) {
   branch2.children = darray_new(sizeof(PegUnit), 0);
   PegUnit self_ref = {.kind = PEG_CALL, .id = symtab_intern(&ps->rule_names, "expr")};
   darray_push(branch2.children, self_ref);
-  PegUnit tok_id2 = {.kind = PEG_TOK, .id = symtab_intern(&ps->tokens, "id")};
+  PegUnit tok_id2 = {.kind = PEG_TERM, .id = symtab_intern(&ps->tokens, "id")};
   darray_push(branch2.children, tok_id2);
   darray_push(branches.children, branch2);
 
@@ -332,14 +332,105 @@ TEST(test_no_left_recursion) {
   // main = @id+ @num?
   PegRule main_rule = {.global_id = symtab_intern(&ps->rule_names, "main"), .scope_id = -1, .seq = {.kind = PEG_SEQ}};
   main_rule.seq.children = darray_new(sizeof(PegUnit), 0);
-  PegUnit tok1 = {.kind = PEG_TOK, .id = symtab_intern(&ps->tokens, "id"), .multiplier = '+'};
+  PegUnit tok1 = {.kind = PEG_TERM, .id = symtab_intern(&ps->tokens, "id"), .multiplier = '+'};
   darray_push(main_rule.seq.children, tok1);
-  PegUnit tok2 = {.kind = PEG_TOK, .id = symtab_intern(&ps->tokens, "num"), .multiplier = '?'};
+  PegUnit tok2 = {.kind = PEG_TERM, .id = symtab_intern(&ps->tokens, "num"), .multiplier = '?'};
   darray_push(main_rule.seq.children, tok2);
   darray_push(ps->peg_rules, main_rule);
 
   bool ok = pp_detect_left_recursions(ps);
   assert(ok);
+
+  parse_state_del(ps);
+}
+
+// ============================================================================
+// pp_detect_left_recursions: interlace nullable
+// ============================================================================
+
+TEST(test_interlace_both_nullable) {
+  ParseState* ps = parse_state_new();
+  _init_symtabs(ps);
+  ps->peg_rules = darray_new(sizeof(PegRule), 0);
+
+  // opt = @tok?
+  PegRule opt_rule = {.global_id = symtab_intern(&ps->rule_names, "opt"), .scope_id = -1, .seq = {.kind = PEG_SEQ}};
+  opt_rule.seq.children = darray_new(sizeof(PegUnit), 0);
+  PegUnit opt_tok = {.kind = PEG_TERM, .id = symtab_intern(&ps->tokens, "tok"), .multiplier = '?'};
+  darray_push(opt_rule.seq.children, opt_tok);
+  darray_push(ps->peg_rules, opt_rule);
+
+  // main = opt*<opt>  (both lhs and rhs call nullable rule)
+  PegRule main_rule = {.global_id = symtab_intern(&ps->rule_names, "main"), .scope_id = -1, .seq = {.kind = PEG_SEQ}};
+  main_rule.seq.children = darray_new(sizeof(PegUnit), 0);
+  int32_t opt_id = symtab_find(&ps->rule_names, "opt");
+  PegUnit interlace = {
+      .kind = PEG_CALL, .id = opt_id, .multiplier = '*', .interlace_rhs_kind = PEG_CALL, .interlace_rhs_id = opt_id};
+  darray_push(main_rule.seq.children, interlace);
+  darray_push(ps->peg_rules, main_rule);
+
+  bool ok = pp_detect_left_recursions(ps);
+  assert(!ok);
+  assert(parse_has_error(ps));
+  assert(strstr(parse_get_error(ps), "interlace") != NULL);
+  assert(strstr(parse_get_error(ps), "nullable") != NULL);
+
+  parse_state_del(ps);
+}
+
+TEST(test_interlace_rhs_not_nullable) {
+  ParseState* ps = parse_state_new();
+  _init_symtabs(ps);
+  ps->peg_rules = darray_new(sizeof(PegRule), 0);
+
+  // main = @id*<@comma>  (rhs is a token, never nullable)
+  PegRule main_rule = {.global_id = symtab_intern(&ps->rule_names, "main"), .scope_id = -1, .seq = {.kind = PEG_SEQ}};
+  main_rule.seq.children = darray_new(sizeof(PegUnit), 0);
+  PegUnit interlace = {.kind = PEG_TERM,
+                       .id = symtab_intern(&ps->tokens, "id"),
+                       .multiplier = '*',
+                       .interlace_rhs_kind = PEG_TERM,
+                       .interlace_rhs_id = symtab_intern(&ps->tokens, "comma")};
+  darray_push(main_rule.seq.children, interlace);
+  darray_push(ps->peg_rules, main_rule);
+
+  bool ok = pp_detect_left_recursions(ps);
+  assert(ok);
+
+  parse_state_del(ps);
+}
+
+TEST(test_interlace_indirect_nullable) {
+  ParseState* ps = parse_state_new();
+  _init_symtabs(ps);
+  ps->peg_rules = darray_new(sizeof(PegRule), 0);
+
+  // inner = @tok?
+  PegRule inner = {.global_id = symtab_intern(&ps->rule_names, "inner"), .scope_id = -1, .seq = {.kind = PEG_SEQ}};
+  inner.seq.children = darray_new(sizeof(PegUnit), 0);
+  PegUnit inner_tok = {.kind = PEG_TERM, .id = symtab_intern(&ps->tokens, "tok"), .multiplier = '?'};
+  darray_push(inner.seq.children, inner_tok);
+  darray_push(ps->peg_rules, inner);
+
+  // wrap = inner  (nullable through call chain)
+  PegRule wrap = {.global_id = symtab_intern(&ps->rule_names, "wrap"), .scope_id = -1, .seq = {.kind = PEG_SEQ}};
+  wrap.seq.children = darray_new(sizeof(PegUnit), 0);
+  PegUnit wrap_call = {.kind = PEG_CALL, .id = symtab_find(&ps->rule_names, "inner")};
+  darray_push(wrap.seq.children, wrap_call);
+  darray_push(ps->peg_rules, wrap);
+
+  // main = wrap+<wrap>  (both lhs and rhs nullable through call chain)
+  PegRule main_rule = {.global_id = symtab_intern(&ps->rule_names, "main"), .scope_id = -1, .seq = {.kind = PEG_SEQ}};
+  main_rule.seq.children = darray_new(sizeof(PegUnit), 0);
+  int32_t wrap_id = symtab_find(&ps->rule_names, "wrap");
+  PegUnit interlace = {
+      .kind = PEG_CALL, .id = wrap_id, .multiplier = '+', .interlace_rhs_kind = PEG_CALL, .interlace_rhs_id = wrap_id};
+  darray_push(main_rule.seq.children, interlace);
+  darray_push(ps->peg_rules, main_rule);
+
+  bool ok = pp_detect_left_recursions(ps);
+  assert(!ok);
+  assert(strstr(parse_get_error(ps), "interlace") != NULL);
 
   parse_state_del(ps);
 }
@@ -604,9 +695,9 @@ TEST(test_match_scopes_token_mismatch) {
   // PEG main uses @id and @num (num not emitted by VPA)
   PegRule pr = {.global_id = symtab_intern(&ps->rule_names, "main"), .scope_id = -1, .seq = {.kind = PEG_SEQ}};
   pr.seq.children = darray_new(sizeof(PegUnit), 0);
-  PegUnit t1 = {.kind = PEG_TOK, .id = symtab_intern(&ps->tokens, "id")};
+  PegUnit t1 = {.kind = PEG_TERM, .id = symtab_intern(&ps->tokens, "id")};
   darray_push(pr.seq.children, t1);
-  PegUnit t2 = {.kind = PEG_TOK, .id = symtab_intern(&ps->tokens, "num")};
+  PegUnit t2 = {.kind = PEG_TERM, .id = symtab_intern(&ps->tokens, "num")};
   darray_push(pr.seq.children, t2);
   darray_push(ps->peg_rules, pr);
 
@@ -640,9 +731,9 @@ TEST(test_match_scopes_ok) {
   // PEG main uses @id and @num
   PegRule pr = {.global_id = symtab_intern(&ps->rule_names, "main"), .scope_id = -1, .seq = {.kind = PEG_SEQ}};
   pr.seq.children = darray_new(sizeof(PegUnit), 0);
-  PegUnit t1 = {.kind = PEG_TOK, .id = symtab_intern(&ps->tokens, "id")};
+  PegUnit t1 = {.kind = PEG_TERM, .id = symtab_intern(&ps->tokens, "id")};
   darray_push(pr.seq.children, t1);
-  PegUnit t2 = {.kind = PEG_TOK, .id = symtab_intern(&ps->tokens, "num")};
+  PegUnit t2 = {.kind = PEG_TERM, .id = symtab_intern(&ps->tokens, "num")};
   darray_push(pr.seq.children, t2);
   darray_push(ps->peg_rules, pr);
 
@@ -687,7 +778,7 @@ TEST(test_match_scopes_scope_ref_in_sets) {
   // PEG: foo = @a  (foo is a scope, won't be expanded)
   PegRule foo_pr = {.global_id = symtab_intern(&ps->rule_names, "foo"), .scope_id = -1, .seq = {.kind = PEG_SEQ}};
   foo_pr.seq.children = darray_new(sizeof(PegUnit), 0);
-  PegUnit foo_tok = {.kind = PEG_TOK, .id = symtab_intern(&ps->tokens, "a")};
+  PegUnit foo_tok = {.kind = PEG_TERM, .id = symtab_intern(&ps->tokens, "a")};
   darray_push(foo_pr.seq.children, foo_tok);
   darray_push(ps->peg_rules, foo_pr);
 
@@ -696,7 +787,7 @@ TEST(test_match_scopes_scope_ref_in_sets) {
   main_pr.seq.children = darray_new(sizeof(PegUnit), 0);
   PegUnit main_foo = {.kind = PEG_CALL, .id = symtab_intern(&ps->rule_names, "foo")};
   darray_push(main_pr.seq.children, main_foo);
-  PegUnit main_tok = {.kind = PEG_TOK, .id = symtab_intern(&ps->tokens, "b")};
+  PegUnit main_tok = {.kind = PEG_TERM, .id = symtab_intern(&ps->tokens, "b")};
   darray_push(main_pr.seq.children, main_tok);
   darray_push(ps->peg_rules, main_pr);
 
@@ -736,13 +827,63 @@ TEST(test_match_scopes_scope_ref_mismatch) {
   // PEG: main = @b  (used_set = {@b}, missing foo)
   PegRule main_pr = {.global_id = symtab_intern(&ps->rule_names, "main"), .scope_id = -1, .seq = {.kind = PEG_SEQ}};
   main_pr.seq.children = darray_new(sizeof(PegUnit), 0);
-  PegUnit main_tok = {.kind = PEG_TOK, .id = symtab_intern(&ps->tokens, "b")};
+  PegUnit main_tok = {.kind = PEG_TERM, .id = symtab_intern(&ps->tokens, "b")};
   darray_push(main_pr.seq.children, main_tok);
   darray_push(ps->peg_rules, main_pr);
 
   bool ok = pp_match_scopes(ps);
   assert(!ok);
   assert(strstr(parse_get_error(ps), "foo") != NULL);
+
+  parse_state_del(ps);
+}
+
+// VPA_CALL to a non-parser scope should expand its emit_set rather than
+// keeping the opaque scope_id.  main calls inner (no peg parser), inner
+// emits @c.  PEG main uses @b @c -- sets should match after expansion.
+TEST(test_match_scopes_expand_non_parser_scope) {
+  ParseState* ps = parse_state_new();
+  _init_symtabs(ps);
+  symtab_intern(&ps->scope_names, "main");  // 0
+  symtab_intern(&ps->scope_names, "inner"); // 1
+  ps->vpa_scopes = darray_new(sizeof(VpaScope), 0);
+  ps->peg_rules = darray_new(sizeof(PegRule), 0);
+  ps->effect_decls = darray_new(sizeof(EffectDecl), 0);
+  symtab_init(&ps->ignores.names, 0);
+
+  // VPA: inner = { @c }  (no peg parser for inner)
+  VpaScope inner_vr = _make_scope("inner", 1, false);
+  VpaUnit inner_c = _make_re_unit('c', "c", &ps->tokens);
+  darray_push(inner_vr.children, inner_c);
+  darray_push(ps->vpa_scopes, inner_vr);
+
+  // VPA: main = { @b inner }  (emit_set should expand to {@b, @c})
+  VpaScope main_vr = _make_scope("main", 0, false);
+  VpaUnit main_b = _make_re_unit('b', "b", &ps->tokens);
+  darray_push(main_vr.children, main_b);
+  VpaUnit main_inner_ref = _make_call_unit(1);
+  darray_push(main_vr.children, main_inner_ref);
+  darray_push(ps->vpa_scopes, main_vr);
+
+  // PEG: inner_helper = @c  (a plain peg rule, not a scope)
+  PegRule inner_pr = {
+      .global_id = symtab_intern(&ps->rule_names, "inner_helper"), .scope_id = -1, .seq = {.kind = PEG_SEQ}};
+  inner_pr.seq.children = darray_new(sizeof(PegUnit), 0);
+  PegUnit inner_tok = {.kind = PEG_TERM, .id = symtab_intern(&ps->tokens, "c")};
+  darray_push(inner_pr.seq.children, inner_tok);
+  darray_push(ps->peg_rules, inner_pr);
+
+  // PEG: main = @b inner_helper  (used_set expands inner_helper -> {@b, @c})
+  PegRule main_pr = {.global_id = symtab_intern(&ps->rule_names, "main"), .scope_id = -1, .seq = {.kind = PEG_SEQ}};
+  main_pr.seq.children = darray_new(sizeof(PegUnit), 0);
+  PegUnit main_tok_b = {.kind = PEG_TERM, .id = symtab_intern(&ps->tokens, "b")};
+  darray_push(main_pr.seq.children, main_tok_b);
+  PegUnit main_call_ih = {.kind = PEG_CALL, .id = symtab_intern(&ps->rule_names, "inner_helper")};
+  darray_push(main_pr.seq.children, main_call_ih);
+  darray_push(ps->peg_rules, main_pr);
+
+  bool ok = pp_match_scopes(ps);
+  assert(ok);
 
   parse_state_del(ps);
 }
@@ -758,6 +899,9 @@ int main(void) {
   RUN(test_no_duplicate_tags);
   RUN(test_detect_left_recursion);
   RUN(test_no_left_recursion);
+  RUN(test_interlace_both_nullable);
+  RUN(test_interlace_rhs_not_nullable);
+  RUN(test_interlace_indirect_nullable);
   RUN(test_validate_vpa_missing_main);
   RUN(test_validate_vpa_duplicate_scope);
   RUN(test_validate_vpa_leading_re_empty);
@@ -770,6 +914,7 @@ int main(void) {
   RUN(test_match_scopes_ok);
   RUN(test_match_scopes_scope_ref_in_sets);
   RUN(test_match_scopes_scope_ref_mismatch);
+  RUN(test_match_scopes_expand_non_parser_scope);
 
   printf("all ok\n");
   return 0;

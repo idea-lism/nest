@@ -1,480 +1,534 @@
-// specs/peg_ir.md
+// specs/peg_ir.md — PEG IR helpers
+//
+// Col ownership: only peg_ir_seq advances ctx->col_index after each child.
+// All other helpers (term, call, choice, maybe, plus, star) read col_index
+// but do NOT permanently advance it. They return consumed length.
+// On failure they branch to ctx->fail_label; col_index may be dirty and
+// the caller is responsible for save/restore via the stack.
 
 #include "peg_ir.h"
 #include "darray.h"
 
-#include <stdarg.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 
-// --- Internal helpers ---
+// ============================================================
+// Table GEP: table_base + col * col_sizeof + byte_offset
+// ============================================================
 
-static void _fmt_reg(char* out, int32_t out_size, IrVal reg) { snprintf(out, (size_t)out_size, "%%r%d", (int)reg); }
-
-static IrVal _gep_raw(IrWriter* w, const char* base_ty, IrVal ptr, const char* indices_fmt, ...)
-    __attribute__((format(printf, 4, 5)));
-static IrVal _gep_raw(IrWriter* w, const char* base_ty, IrVal ptr, const char* indices_fmt, ...) {
+static IrVal _table_gep(PegIrCtx* ctx, IrVal col, int32_t byte_offset) {
+  IrWriter* w = ctx->w;
+  IrVal col_ext = irwriter_sext(w, "i32", col, "i64");
+  IrVal stride = irwriter_sext(w, "i32", irwriter_imm_int(w, ctx->col_sizeof), "i64");
+  IrVal row_off = irwriter_binop(w, "mul", "i64", col_ext, stride);
+  IrVal fld_off = irwriter_sext(w, "i32", irwriter_imm_int(w, byte_offset), "i64");
+  IrVal tot_off = irwriter_binop(w, "add", "i64", row_off, fld_off);
   IrVal r = irwriter_next_reg(w);
-  irwriter_rawf(w, "  %%r%d = getelementptr %s, ptr ", (int)r, base_ty);
-  irwriter_emit_val(w, ptr);
-  irwriter_raw(w, ", ");
-  va_list ap;
-  va_start(ap, indices_fmt);
-  irwriter_vrawf(w, indices_fmt, ap);
-  va_end(ap);
-  irwriter_raw(w, "\n");
+  irwriter_rawf(w, "  %%r%d = getelementptr i8, ptr ", (int)r);
+  irwriter_emit_val(w, ctx->table);
+  irwriter_rawf(w, ", i64 ");
+  irwriter_emit_val(w, tot_off);
+  irwriter_rawf(w, "\n");
   return r;
 }
 
-// --- Low-level ops ---
+// ============================================================
+// Slot read / write
+// ============================================================
 
-static IrVal _tok(IrWriter* w, int32_t token_id, const char* col) {
-  return irwriter_call_retf(w, "i32", "match_tok", "i32 %d, i32 %s", token_id, col);
+IrVal peg_ir_read_slot(PegIrCtx* ctx, IrVal col, uint32_t slot_index) {
+  IrVal ptr = _table_gep(ctx, col, ctx->slots_offset + (int32_t)slot_index * 4);
+  return irwriter_load(ctx->w, "i32", ptr);
 }
 
-static IrVal _call(IrWriter* w, const char* rule_name, const char* table, const char* col) {
+void peg_ir_write_slot(PegIrCtx* ctx, IrVal col, uint32_t slot_index, IrVal val) {
+  IrVal ptr = _table_gep(ctx, col, ctx->slots_offset + (int32_t)slot_index * 4);
+  irwriter_store(ctx->w, "i32", val, ptr);
+}
+
+// ============================================================
+// Bit operations (row_shared)
+// ============================================================
+
+static IrVal _read_bits(PegIrCtx* ctx, IrVal col, uint32_t seg_idx) {
+  IrVal ptr = _table_gep(ctx, col, ctx->bits_offset + (int32_t)seg_idx * 4);
+  return irwriter_load(ctx->w, "i32", ptr);
+}
+
+static void _write_bits(PegIrCtx* ctx, IrVal col, uint32_t seg_idx, IrVal val) {
+  IrVal ptr = _table_gep(ctx, col, ctx->bits_offset + (int32_t)seg_idx * 4);
+  irwriter_store(ctx->w, "i32", val, ptr);
+}
+
+IrVal peg_ir_bit_test(PegIrCtx* ctx, IrVal col, uint32_t seg_idx, uint32_t rule_bit) {
+  IrWriter* w = ctx->w;
+  IrVal bits = _read_bits(ctx, col, seg_idx);
+  IrVal anded = irwriter_binop(w, "and", "i32", bits, irwriter_imm_int(w, (int)rule_bit));
+  return irwriter_icmp(w, "ne", "i32", anded, irwriter_imm_int(w, 0));
+}
+
+void peg_ir_bit_deny(PegIrCtx* ctx, IrVal col, uint32_t seg_idx, uint32_t rule_bit) {
+  IrWriter* w = ctx->w;
+  IrVal bits = _read_bits(ctx, col, seg_idx);
+  IrVal cleared = irwriter_binop(w, "and", "i32", bits, irwriter_imm_int(w, (int)(~rule_bit)));
+  _write_bits(ctx, col, seg_idx, cleared);
+}
+
+void peg_ir_bit_exclude(PegIrCtx* ctx, IrVal col, uint32_t seg_idx, uint32_t rule_bit) {
+  IrWriter* w = ctx->w;
+  IrVal bits = _read_bits(ctx, col, seg_idx);
+  IrVal kept = irwriter_binop(w, "and", "i32", bits, irwriter_imm_int(w, (int)rule_bit));
+  _write_bits(ctx, col, seg_idx, kept);
+}
+
+// ============================================================
+// Stack operations (i64 slots)
+// ============================================================
+
+static IrVal _load_sp(PegIrCtx* ctx) { return irwriter_load(ctx->w, "ptr", ctx->stack); }
+
+static void _store_sp(PegIrCtx* ctx, IrVal sp) { irwriter_store(ctx->w, "ptr", sp, ctx->stack); }
+
+static IrVal _sp_inc(PegIrCtx* ctx) {
+  IrWriter* w = ctx->w;
+  IrVal sp = _load_sp(ctx);
   IrVal r = irwriter_next_reg(w);
-  irwriter_rawf(w, "  %%r%d = call i32 @parse_%s(ptr %s, i32 %s, ptr %%bt_stack)\n", (int)r, rule_name, table, col);
+  irwriter_rawf(w, "  %%r%d = getelementptr i64, ptr ", (int)r);
+  irwriter_emit_val(w, sp);
+  irwriter_rawf(w, ", i64 1\n");
+  _store_sp(ctx, r);
   return r;
 }
 
-static void _save(IrWriter* w, const char* stack, const char* col) {
-  irwriter_call_void_fmtf(w, "save", "ptr %s, i32 %s", stack, col);
+static void _sp_dec(PegIrCtx* ctx) {
+  IrWriter* w = ctx->w;
+  IrVal sp = _load_sp(ctx);
+  IrVal r = irwriter_next_reg(w);
+  irwriter_rawf(w, "  %%r%d = getelementptr i64, ptr ", (int)r);
+  irwriter_emit_val(w, sp);
+  irwriter_rawf(w, ", i64 -1\n");
+  _store_sp(ctx, r);
 }
 
-static IrVal _restore(IrWriter* w, const char* stack) {
-  return irwriter_call_retf(w, "i32", "restore", "ptr %s", stack);
+static void _stack_save(PegIrCtx* ctx) {
+  IrWriter* w = ctx->w;
+  IrVal new_sp = _sp_inc(ctx);
+  IrVal col = irwriter_load(w, "i32", ctx->col_index);
+  IrVal col64 = irwriter_sext(w, "i32", col, "i64");
+  irwriter_store(w, "i64", col64, new_sp);
 }
 
-static void _discard(IrWriter* w, const char* stack) { irwriter_call_void_fmtf(w, "discard", "ptr %s", stack); }
+static void _stack_restore(PegIrCtx* ctx) {
+  IrWriter* w = ctx->w;
+  IrVal sp = _load_sp(ctx);
+  IrVal v64 = irwriter_load(w, "i64", sp);
+  IrVal col = irwriter_next_reg(w);
+  irwriter_rawf(w, "  %%r%d = trunc i64 ", (int)col);
+  irwriter_emit_val(w, v64);
+  irwriter_rawf(w, " to i32\n");
+  irwriter_store(w, "i32", col, ctx->col_index);
+}
 
-// --- gen() context ---
+static void _stack_discard(PegIrCtx* ctx) { _sp_dec(ctx); }
 
-typedef struct {
-  IrWriter* w;
-  ScopedRule* rules;
-  const char* col_type;
-  const char* bt_stack;
-  IrVal slot_val_ptr;
-  int32_t* branch_ids;
-  int32_t branch_offset;
-} GenCtx;
+// ============================================================
+// Col helpers
+// ============================================================
 
-static IrVal _to_val(GenCtx* ctx, const char* val) { return irwriter_imm(ctx->w, val); }
+static IrVal _load_col(PegIrCtx* ctx) { return irwriter_load(ctx->w, "i32", ctx->col_index); }
 
-// --- Leaf emission: emit the call/tok for a leaf rule ---
+static void _store_col(PegIrCtx* ctx, IrVal v) { irwriter_store(ctx->w, "i32", v, ctx->col_index); }
 
-static IrVal _emit_leaf(GenCtx* ctx, int32_t rule_id, const char* col_expr) {
-  ScopedRule* sr = &ctx->rules[rule_id];
-  if (sr->kind == SCOPED_RULE_KIND_TOK) {
-    irwriter_comment(ctx->w, "token @%s", sr->name);
-    return _tok(ctx->w, sr->as.tok, col_expr);
+static void _advance_col(PegIrCtx* ctx, IrVal n) {
+  IrVal c = _load_col(ctx);
+  _store_col(ctx, irwriter_binop(ctx->w, "add", "i32", c, n));
+}
+
+// ============================================================
+// Token access: tokens[col].term_id (Token = 16 bytes, offset 0)
+// ============================================================
+
+static IrVal _read_term_id(PegIrCtx* ctx, IrVal col) {
+  IrWriter* w = ctx->w;
+  IrVal col_ext = irwriter_sext(w, "i32", col, "i64");
+  IrVal byte_off = irwriter_binop(w, "mul", "i64", col_ext, irwriter_imm(w, "16"));
+  IrVal ptr = irwriter_next_reg(w);
+  irwriter_rawf(w, "  %%r%d = getelementptr i8, ptr ", (int)ptr);
+  irwriter_emit_val(w, ctx->tokens);
+  irwriter_rawf(w, ", i64 ");
+  irwriter_emit_val(w, byte_off);
+  irwriter_rawf(w, "\n");
+  return irwriter_load(w, "i32", ptr);
+}
+
+// ============================================================
+// Forward decl
+// ============================================================
+
+static IrVal _gen_scoped(PegIrCtx* ctx, int32_t scoped_rule_id);
+static IrVal _gen_bare(PegIrCtx* ctx, int32_t scoped_rule_id);
+
+// ============================================================
+// Terminal — does NOT advance col
+// ============================================================
+
+IrVal peg_ir_term(PegIrCtx* ctx, int32_t term_id) {
+  IrWriter* w = ctx->w;
+  IrVal col = _load_col(ctx);
+  IrVal ok = irwriter_icmp(w, "slt", "i32", col, ctx->n_tokens);
+  int32_t chk = irwriter_label(w);
+  irwriter_br_cond(w, ok, chk, ctx->fail_label);
+  irwriter_bb_at(w, chk);
+
+  IrVal tid = _read_term_id(ctx, col);
+  IrVal match = irwriter_icmp(w, "eq", "i32", tid, irwriter_imm_int(w, term_id));
+  int32_t succ = irwriter_label(w);
+  irwriter_br_cond(w, match, succ, ctx->fail_label);
+  irwriter_bb_at(w, succ);
+
+  return irwriter_imm_int(w, 1);
+}
+
+// ============================================================
+// Sub-rule call — does NOT advance col (callee does via its own seq)
+// ============================================================
+
+IrVal peg_ir_call(PegIrCtx* ctx, int32_t scoped_rule_id) {
+  IrWriter* w = ctx->w;
+  ScopedRule* rule = &ctx->rules[scoped_rule_id];
+
+  IrVal new_sp = _sp_inc(ctx);
+  int32_t ret_lbl = irwriter_label(w);
+  IrVal addr = irwriter_next_reg(w);
+  irwriter_rawf(w, "  %%r%d = blockaddress(@parse_%s, %%L%d)\n", (int)addr, ctx->scope_name, ret_lbl);
+  irwriter_store(w, "ptr", addr, new_sp);
+
+  IrVal bp = _load_sp(ctx);
+  irwriter_store(w, "ptr", bp, ctx->stack_bp);
+
+  irwriter_rawf(w, "  br label %%%s\n", rule->name);
+
+  irwriter_bb_at(w, ret_lbl);
+  return irwriter_load(w, "i32", ctx->ret_val);
+}
+
+// ============================================================
+// Sequence — the ONLY helper that advances col_index
+//
+// Spec: gen(a b, col, fail):
+//   r1 = gen(a, col, fail)
+//   r2 = gen(b, col + r1, fail)
+//   ret = r1 + r2
+// ============================================================
+
+IrVal peg_ir_seq(PegIrCtx* ctx, int32_t* seq) {
+  IrWriter* w = ctx->w;
+  int32_t n = (int32_t)darray_size(seq);
+  IrVal acc = irwriter_alloca(w, "i32");
+  irwriter_store(w, "i32", irwriter_imm_int(w, 0), acc);
+
+  for (int32_t i = 0; i < n; i++) {
+    IrVal r = _gen_scoped(ctx, seq[i]);
+    _advance_col(ctx, r);
+    IrVal prev = irwriter_load(w, "i32", acc);
+    irwriter_store(w, "i32", irwriter_binop(w, "add", "i32", prev, r), acc);
   }
-  if (sr->kind == SCOPED_RULE_KIND_CALL) {
-    return _call(ctx->w, ctx->rules[sr->as.call].name, "%table", col_expr);
+  return irwriter_load(w, "i32", acc);
+}
+
+// ============================================================
+// Ordered choice — does NOT advance col
+// ============================================================
+
+IrVal peg_ir_choice(PegIrCtx* ctx, int32_t* branches) {
+  IrWriter* w = ctx->w;
+  int32_t n = (int32_t)darray_size(branches);
+  if (n == 0) {
+    return irwriter_imm_int(w, 0);
   }
-  if (sr->kind == SCOPED_RULE_KIND_EXTERNAL_SCOPE) {
-    return _call(ctx->w, sr->name, "%table", col_expr);
-  }
-  return irwriter_imm(ctx->w, "-1");
-}
-
-// --- gen() sub-generators ---
-
-static IrVal _gen_ir(GenCtx* ctx, int32_t rule_id, const char* col_expr, int32_t fail_label);
-
-static IrVal _gen_empty(GenCtx* ctx) { return irwriter_imm(ctx->w, "0"); }
-
-// Plain leaf match (no multiplier)
-static IrVal _gen_leaf_plain(GenCtx* ctx, int32_t rule_id, const char* col_expr, int32_t fail_label) {
-  IrVal r = _emit_leaf(ctx, rule_id, col_expr);
-  int32_t ok = irwriter_label(ctx->w);
-  irwriter_br_cond(ctx->w, irwriter_icmp(ctx->w, "slt", "i32", r, irwriter_imm(ctx->w, "0")), fail_label, ok);
-  irwriter_bb_at(ctx->w, ok);
-  return r;
-}
-
-// Optional (?)
-static IrVal _gen_optional(GenCtx* ctx, int32_t rule_id, const char* col_expr) {
-  IrVal r = _emit_leaf(ctx, rule_id, col_expr);
-  IrVal zero = _gen_empty(ctx);
-
-  int32_t try_bb = irwriter_label(ctx->w);
-  int32_t miss_bb = irwriter_label(ctx->w);
-  int32_t done_bb = irwriter_label(ctx->w);
-
-  irwriter_br_cond(ctx->w, irwriter_icmp(ctx->w, "slt", "i32", r, irwriter_imm(ctx->w, "0")), miss_bb, try_bb);
-
-  irwriter_bb_at(ctx->w, try_bb);
-  irwriter_br(ctx->w, done_bb);
-
-  irwriter_bb_at(ctx->w, miss_bb);
-  irwriter_br(ctx->w, done_bb);
-
-  irwriter_bb_at(ctx->w, done_bb);
-  return irwriter_phi2(ctx->w, "i32", r, try_bb, zero, miss_bb);
-}
-
-// Greedy loop helper (shared by + and *)
-static IrVal _gen_greedy_loop(GenCtx* ctx, int32_t rule_id, const char* col_expr, IrVal acc_ptr, int32_t loop_bb,
-                              int32_t body_bb, int32_t end_bb) {
-  irwriter_bb_at(ctx->w, loop_bb);
-  IrVal cur_acc = irwriter_load(ctx->w, "i32", acc_ptr);
-  IrVal next_col = irwriter_binop(ctx->w, "add", "i32", _to_val(ctx, col_expr), cur_acc);
-  char next_col_s[16];
-  _fmt_reg(next_col_s, sizeof(next_col_s), next_col);
-  IrVal r = _emit_leaf(ctx, rule_id, next_col_s);
-  irwriter_br_cond(ctx->w, irwriter_icmp(ctx->w, "slt", "i32", r, irwriter_imm(ctx->w, "0")), end_bb, body_bb);
-
-  irwriter_bb_at(ctx->w, body_bb);
-  IrVal prev = irwriter_load(ctx->w, "i32", acc_ptr);
-  IrVal next = irwriter_binop(ctx->w, "add", "i32", prev, r);
-  irwriter_store(ctx->w, "i32", next, acc_ptr);
-  irwriter_br(ctx->w, loop_bb);
-
-  irwriter_bb_at(ctx->w, end_bb);
-  return irwriter_load(ctx->w, "i32", acc_ptr);
-}
-
-// One-or-more (+)
-static IrVal _gen_plus(GenCtx* ctx, int32_t rule_id, const char* col_expr, int32_t fail_label) {
-  int32_t ok_bb = irwriter_label(ctx->w);
-  int32_t loop_bb = irwriter_label(ctx->w);
-  int32_t body_bb = irwriter_label(ctx->w);
-  int32_t end_bb = irwriter_label(ctx->w);
-
-  IrVal acc_ptr = irwriter_alloca(ctx->w, "i32");
-  irwriter_store(ctx->w, "i32", irwriter_imm(ctx->w, "0"), acc_ptr);
-
-  IrVal first = _emit_leaf(ctx, rule_id, col_expr);
-  irwriter_br_cond(ctx->w, irwriter_icmp(ctx->w, "slt", "i32", first, irwriter_imm(ctx->w, "0")), fail_label, ok_bb);
-
-  irwriter_bb_at(ctx->w, ok_bb);
-  irwriter_store(ctx->w, "i32", first, acc_ptr);
-  irwriter_br(ctx->w, loop_bb);
-
-  return _gen_greedy_loop(ctx, rule_id, col_expr, acc_ptr, loop_bb, body_bb, end_bb);
-}
-
-// Zero-or-more (*)
-static IrVal _gen_star(GenCtx* ctx, int32_t rule_id, const char* col_expr) {
-  int32_t loop_bb = irwriter_label(ctx->w);
-  int32_t body_bb = irwriter_label(ctx->w);
-  int32_t end_bb = irwriter_label(ctx->w);
-
-  IrVal acc_ptr = irwriter_alloca(ctx->w, "i32");
-  irwriter_store(ctx->w, "i32", irwriter_imm(ctx->w, "0"), acc_ptr);
-  irwriter_br(ctx->w, loop_bb);
-
-  return _gen_greedy_loop(ctx, rule_id, col_expr, acc_ptr, loop_bb, body_bb, end_bb);
-}
-
-// Interlace loop helper (shared by +<sep> and *<sep>)
-static IrVal _gen_interlace_loop(GenCtx* ctx, int32_t lhs_id, int32_t rhs_id, const char* col_expr, IrVal acc_ptr,
-                                 int32_t loop_bb, int32_t sep_ok_bb, int32_t body_bb, int32_t end_bb) {
-  irwriter_bb_at(ctx->w, loop_bb);
-  IrVal cur_acc = irwriter_load(ctx->w, "i32", acc_ptr);
-  IrVal cur_col = irwriter_binop(ctx->w, "add", "i32", _to_val(ctx, col_expr), cur_acc);
-  char cur_col_s[16];
-  _fmt_reg(cur_col_s, sizeof(cur_col_s), cur_col);
-
-  IrVal sr = _emit_leaf(ctx, rhs_id, cur_col_s);
-  irwriter_br_cond(ctx->w, irwriter_icmp(ctx->w, "slt", "i32", sr, irwriter_imm(ctx->w, "0")), end_bb, sep_ok_bb);
-
-  irwriter_bb_at(ctx->w, sep_ok_bb);
-  IrVal after_sep = irwriter_binop(ctx->w, "add", "i32", cur_col, sr);
-  char after_sep_s[16];
-  _fmt_reg(after_sep_s, sizeof(after_sep_s), after_sep);
-  IrVal er = _emit_leaf(ctx, lhs_id, after_sep_s);
-  irwriter_br_cond(ctx->w, irwriter_icmp(ctx->w, "slt", "i32", er, irwriter_imm(ctx->w, "0")), end_bb, body_bb);
-
-  irwriter_bb_at(ctx->w, body_bb);
-  IrVal prev_acc = irwriter_load(ctx->w, "i32", acc_ptr);
-  IrVal sep_elem = irwriter_binop(ctx->w, "add", "i32", sr, er);
-  IrVal next = irwriter_binop(ctx->w, "add", "i32", prev_acc, sep_elem);
-  irwriter_store(ctx->w, "i32", next, acc_ptr);
-  irwriter_br(ctx->w, loop_bb);
-
-  irwriter_bb_at(ctx->w, end_bb);
-  return irwriter_load(ctx->w, "i32", acc_ptr);
-}
-
-// JOIN with + multiplier: lhs+<rhs>
-static IrVal _gen_join_plus(GenCtx* ctx, int32_t lhs_id, int32_t rhs_id, const char* col_expr, int32_t fail_label) {
-  int32_t first_ok_bb = irwriter_label(ctx->w);
-  int32_t loop_bb = irwriter_label(ctx->w);
-  int32_t sep_ok_bb = irwriter_label(ctx->w);
-  int32_t body_bb = irwriter_label(ctx->w);
-  int32_t end_bb = irwriter_label(ctx->w);
-
-  IrVal acc_ptr = irwriter_alloca(ctx->w, "i32");
-  irwriter_store(ctx->w, "i32", irwriter_imm(ctx->w, "0"), acc_ptr);
-
-  IrVal first = _emit_leaf(ctx, lhs_id, col_expr);
-  irwriter_br_cond(ctx->w, irwriter_icmp(ctx->w, "slt", "i32", first, irwriter_imm(ctx->w, "0")), fail_label,
-                   first_ok_bb);
-
-  irwriter_bb_at(ctx->w, first_ok_bb);
-  irwriter_store(ctx->w, "i32", first, acc_ptr);
-  irwriter_br(ctx->w, loop_bb);
-
-  return _gen_interlace_loop(ctx, lhs_id, rhs_id, col_expr, acc_ptr, loop_bb, sep_ok_bb, body_bb, end_bb);
-}
-
-// JOIN with * multiplier: lhs*<rhs>
-static IrVal _gen_join_star(GenCtx* ctx, int32_t lhs_id, int32_t rhs_id, const char* col_expr) {
-  int32_t first_ok_bb = irwriter_label(ctx->w);
-  int32_t loop_bb = irwriter_label(ctx->w);
-  int32_t sep_ok_bb = irwriter_label(ctx->w);
-  int32_t body_bb = irwriter_label(ctx->w);
-  int32_t end_bb = irwriter_label(ctx->w);
-  int32_t empty_bb = irwriter_label(ctx->w);
-
-  IrVal acc_ptr = irwriter_alloca(ctx->w, "i32");
-  irwriter_store(ctx->w, "i32", irwriter_imm(ctx->w, "0"), acc_ptr);
-
-  IrVal first = _emit_leaf(ctx, lhs_id, col_expr);
-  irwriter_br_cond(ctx->w, irwriter_icmp(ctx->w, "slt", "i32", first, irwriter_imm(ctx->w, "0")), empty_bb,
-                   first_ok_bb);
-
-  irwriter_bb_at(ctx->w, first_ok_bb);
-  irwriter_store(ctx->w, "i32", first, acc_ptr);
-  irwriter_br(ctx->w, loop_bb);
-
-  IrVal result = _gen_interlace_loop(ctx, lhs_id, rhs_id, col_expr, acc_ptr, loop_bb, sep_ok_bb, body_bb, end_bb);
-
-  irwriter_bb_at(ctx->w, empty_bb);
-  irwriter_br(ctx->w, end_bb);
-
-  return result;
-}
-
-// --- Main gen() dispatcher ---
-
-static IrVal _gen_ir(GenCtx* ctx, int32_t rule_id, const char* col_expr, int32_t fail_label) {
-  ScopedRule* sr = &ctx->rules[rule_id];
-
-  // Leaf kinds with multiplier handling
-  if (sr->kind == SCOPED_RULE_KIND_TOK || sr->kind == SCOPED_RULE_KIND_CALL ||
-      sr->kind == SCOPED_RULE_KIND_EXTERNAL_SCOPE) {
-    if (sr->multiplier == 0) {
-      return _gen_leaf_plain(ctx, rule_id, col_expr, fail_label);
-    }
-    if (sr->multiplier == '?') {
-      return _gen_optional(ctx, rule_id, col_expr);
-    }
-    if (sr->multiplier == '+') {
-      return _gen_plus(ctx, rule_id, col_expr, fail_label);
-    }
-    if (sr->multiplier == '*') {
-      return _gen_star(ctx, rule_id, col_expr);
-    }
+  if (n == 1) {
+    return _gen_scoped(ctx, branches[0]);
   }
 
-  // JOIN: interlace patterns
-  if (sr->kind == SCOPED_RULE_KIND_JOIN) {
-    if (sr->multiplier == '+') {
-      return _gen_join_plus(ctx, sr->as.join.lhs, sr->as.join.rhs, col_expr, fail_label);
-    }
-    if (sr->multiplier == '*') {
-      return _gen_join_star(ctx, sr->as.join.lhs, sr->as.join.rhs, col_expr);
-    }
-    // Fallback: treat as single match of lhs
-    return _gen_ir(ctx, sr->as.join.lhs, col_expr, fail_label);
-  }
+  IrVal outer_fail = ctx->fail_label;
+  int32_t done_bb = irwriter_label(w);
+  IrVal res = irwriter_alloca(w, "i32");
 
-  // SEQ
-  if (sr->kind == SCOPED_RULE_KIND_SEQ) {
-    int32_t n = sr->as.seq ? (int32_t)darray_size(sr->as.seq) : 0;
-    if (n == 0) {
-      return _gen_empty(ctx);
-    }
+  _stack_save(ctx);
 
-    IrVal total_ptr = irwriter_alloca(ctx->w, "i32");
-    irwriter_store(ctx->w, "i32", irwriter_imm(ctx->w, "0"), total_ptr);
+  for (int32_t i = 0; i < n; i++) {
+    bool last = (i == n - 1);
+    int32_t alt = last ? outer_fail : irwriter_label(w);
+    ctx->fail_label = alt;
 
-    int32_t running_branch_offset = 0;
-    for (int32_t i = 0; i < n; i++) {
-      IrVal prev = irwriter_load(ctx->w, "i32", total_ptr);
-      IrVal child_col = irwriter_binop(ctx->w, "add", "i32", _to_val(ctx, col_expr), prev);
-      char child_col_s[16];
-      _fmt_reg(child_col_s, sizeof(child_col_s), child_col);
+    IrVal r = _gen_scoped(ctx, branches[i]);
 
-      int32_t child_id = sr->as.seq[i];
-      if (ctx->rules[child_id].kind == SCOPED_RULE_KIND_BRANCHES) {
-        ctx->branch_offset = running_branch_offset;
-        running_branch_offset += (int32_t)darray_size(ctx->rules[child_id].as.branches);
-      }
+    _stack_discard(ctx);
+    irwriter_store(w, "i32", r, res);
+    irwriter_br(w, done_bb);
 
-      IrVal child_len = _gen_ir(ctx, child_id, child_col_s, fail_label);
-
-      IrVal new_total = irwriter_load(ctx->w, "i32", total_ptr);
-      IrVal updated = irwriter_binop(ctx->w, "add", "i32", new_total, child_len);
-      irwriter_store(ctx->w, "i32", updated, total_ptr);
-    }
-    return irwriter_load(ctx->w, "i32", total_ptr);
-  }
-
-  // BRANCHES
-  if (sr->kind == SCOPED_RULE_KIND_BRANCHES) {
-    int32_t n = sr->as.branches ? (int32_t)darray_size(sr->as.branches) : 0;
-    if (n == 0) {
-      return _gen_empty(ctx);
-    }
-
-    int32_t done_bb = irwriter_label(ctx->w);
-    IrVal result_ptr = irwriter_alloca(ctx->w, "i32");
-
-    _save(ctx->w, ctx->bt_stack, col_expr);
-
-    for (int32_t i = 0; i < n; i++) {
-      int32_t is_last = (i == n - 1);
-      int32_t alt_bb = is_last ? -1 : irwriter_label(ctx->w);
-      int32_t ft = is_last ? fail_label : alt_bb;
-
-      IrVal r = _gen_ir(ctx, sr->as.branches[i], col_expr, ft);
-
-      _discard(ctx->w, ctx->bt_stack);
-      irwriter_store(ctx->w, "i32", r, result_ptr);
-      if (ctx->slot_val_ptr >= 0 && ctx->branch_ids) {
-        int32_t bid_val = ctx->branch_ids[ctx->branch_offset + i];
-        if (bid_val >= 0) {
-          irwriter_store(ctx->w, "i32", irwriter_imm_int(ctx->w, bid_val), ctx->slot_val_ptr);
-        } else {
-          int32_t branch_idx = -(bid_val + 1);
-          IrVal bi = irwriter_imm_int(ctx->w, branch_idx << 16);
-          IrVal packed = irwriter_binop(ctx->w, "or", "i32", bi, r);
-          IrVal plus3 = irwriter_binop(ctx->w, "add", "i32", packed, irwriter_imm(ctx->w, "3"));
-          IrVal negated = irwriter_binop(ctx->w, "sub", "i32", irwriter_imm(ctx->w, "0"), plus3);
-          irwriter_store(ctx->w, "i32", negated, ctx->slot_val_ptr);
-        }
-      }
-      irwriter_br(ctx->w, done_bb);
-
-      if (!is_last) {
-        irwriter_bb_at(ctx->w, alt_bb);
-        IrVal restored = _restore(ctx->w, ctx->bt_stack);
-        _discard(ctx->w, ctx->bt_stack);
-        char restored_s[16];
-        _fmt_reg(restored_s, sizeof(restored_s), restored);
-        _save(ctx->w, ctx->bt_stack, restored_s);
+    if (!last) {
+      irwriter_bb_at(w, alt);
+      _stack_restore(ctx);
+      if (i < n - 2) {
+        _stack_save(ctx);
       }
     }
-
-    irwriter_bb_at(ctx->w, done_bb);
-    return irwriter_load(ctx->w, "i32", result_ptr);
   }
 
-  return _gen_empty(ctx);
+  ctx->fail_label = outer_fail;
+  irwriter_bb_at(w, done_bb);
+  return irwriter_load(w, "i32", res);
 }
 
-// --- Public: rule body code generation ---
+// ============================================================
+// Optional (?) — does NOT advance col. Always succeeds.
+// ============================================================
 
-IrVal peg_ir_gen_rule_body(IrWriter* w, ScopedRule* rules, int32_t root_id, const char* col_type, int32_t* branch_ids,
-                           int32_t n_branch_ids, int32_t fail_label, IrVal slot_val_ptr) {
-  (void)n_branch_ids;
+IrVal peg_ir_maybe(PegIrCtx* ctx, ScopedRuleKind kind, int32_t id) {
+  (void)kind;
+  IrWriter* w = ctx->w;
+  IrVal outer_fail = ctx->fail_label;
 
-  GenCtx ctx = {
-      .w = w,
-      .rules = rules,
-      .col_type = col_type,
-      .bt_stack = "%bt_stack",
-      .slot_val_ptr = slot_val_ptr,
-      .branch_ids = branch_ids,
-      .branch_offset = 0,
-  };
-  IrVal match_len = _gen_ir(&ctx, root_id, "%col", fail_label);
+  int32_t miss_bb = irwriter_label(w);
+  int32_t done_bb = irwriter_label(w);
+  IrVal res = irwriter_alloca(w, "i32");
+  IrVal col_before = _load_col(ctx);
 
-  if (!branch_ids && slot_val_ptr >= 0) {
-    irwriter_store(w, "i32", match_len, slot_val_ptr);
+  ctx->fail_label = miss_bb;
+  IrVal r = _gen_bare(ctx, id);
+  irwriter_store(w, "i32", r, res);
+  irwriter_br(w, done_bb);
+
+  irwriter_bb_at(w, miss_bb);
+  _store_col(ctx, col_before);
+  irwriter_store(w, "i32", irwriter_imm_int(w, 0), res);
+  irwriter_br(w, done_bb);
+
+  irwriter_bb_at(w, done_bb);
+  ctx->fail_label = outer_fail;
+  return irwriter_load(w, "i32", res);
+}
+
+// ============================================================
+// One-or-more (+) — does NOT permanently advance col.
+// Returns total consumed. Caller advances col.
+//
+// Spec: gen(e+, col, fail):
+//   first = gen(e, col, fail)
+//   loop: acc = phi(first, next)
+//     r = gen(e, col+acc, end)
+//     next = acc + r
+//     br loop
+//   end: ret = acc
+//
+// We use col_index as a scratch that we restore on exit.
+// ============================================================
+
+IrVal peg_ir_plus(PegIrCtx* ctx, ScopedRuleKind kind, int32_t id, ScopedRuleKind rhs_kind, int32_t rhs_id) {
+  (void)kind;
+  IrWriter* w = ctx->w;
+  bool interlace = (rhs_kind != 0);
+  IrVal acc = irwriter_alloca(w, "i32");
+  IrVal col_save = irwriter_alloca(w, "i32");
+  IrVal col_origin = _load_col(ctx);
+
+  // save original col so we can restore on exit
+  irwriter_store(w, "i32", col_origin, col_save);
+
+  // first must succeed
+  IrVal first = _gen_bare(ctx, id);
+  _advance_col(ctx, first);
+  irwriter_store(w, "i32", first, acc);
+
+  int32_t loop_bb = irwriter_label(w);
+  int32_t end_bb = irwriter_label(w);
+  irwriter_br(w, loop_bb);
+  irwriter_bb_at(w, loop_bb);
+
+  IrVal outer_fail = ctx->fail_label;
+  ctx->fail_label = end_bb;
+
+  // save col before loop body (for rollback on failure)
+  IrVal col_before_iter = _load_col(ctx);
+  irwriter_store(w, "i32", col_before_iter, col_save);
+
+  IrVal iter;
+  if (interlace) {
+    IrVal sr = _gen_bare(ctx, rhs_id);
+    _advance_col(ctx, sr);
+    IrVal er = _gen_bare(ctx, id);
+    _advance_col(ctx, er);
+    iter = irwriter_binop(w, "add", "i32", sr, er);
+  } else {
+    iter = _gen_bare(ctx, id);
+    _advance_col(ctx, iter);
   }
-  return match_len;
+
+  IrVal prev = irwriter_load(w, "i32", acc);
+  irwriter_store(w, "i32", irwriter_binop(w, "add", "i32", prev, iter), acc);
+  irwriter_br(w, loop_bb);
+
+  irwriter_bb_at(w, end_bb);
+  // restore col to before failed iteration
+  _store_col(ctx, irwriter_load(w, "i32", col_save));
+  // then restore to origin — caller will advance by returned acc
+  _store_col(ctx, col_origin);
+  ctx->fail_label = outer_fail;
+
+  return irwriter_load(w, "i32", acc);
 }
 
-// --- Public: memoize table ops ---
+// ============================================================
+// Zero-or-more (*) — does NOT permanently advance col.
+// Returns total consumed. Always succeeds.
+// ============================================================
 
-IrVal peg_ir_memo_get(IrWriter* w, const char* col_type, const char* table, const char* col, int32_t field_idx,
-                      int32_t slot_idx) {
-  IrVal tbl = irwriter_imm(w, table);
-  IrVal g = _gep_raw(w, col_type, tbl, "i32 %s, i32 %d, i32 %d", col, field_idx, slot_idx);
-  return irwriter_load(w, "i32", g);
+IrVal peg_ir_star(PegIrCtx* ctx, ScopedRuleKind kind, int32_t id, ScopedRuleKind rhs_kind, int32_t rhs_id) {
+  (void)kind;
+  IrWriter* w = ctx->w;
+  bool interlace = (rhs_kind != 0);
+  IrVal acc = irwriter_alloca(w, "i32");
+  IrVal col_save = irwriter_alloca(w, "i32");
+  IrVal col_origin = _load_col(ctx);
+  irwriter_store(w, "i32", irwriter_imm_int(w, 0), acc);
+
+  if (interlace) {
+    // e*<sep> = (e (sep e)*)?
+    int32_t first_bb = irwriter_label(w);
+    int32_t empty_bb = irwriter_label(w);
+    int32_t loop_bb = irwriter_label(w);
+    int32_t loop_exit_bb = irwriter_label(w);
+    int32_t final_bb = irwriter_label(w);
+
+    IrVal outer_fail = ctx->fail_label;
+
+    irwriter_br(w, first_bb);
+    irwriter_bb_at(w, first_bb);
+    ctx->fail_label = empty_bb;
+
+    IrVal first = _gen_bare(ctx, id);
+    _advance_col(ctx, first);
+    irwriter_store(w, "i32", first, acc);
+    irwriter_br(w, loop_bb);
+
+    irwriter_bb_at(w, loop_bb);
+    ctx->fail_label = loop_exit_bb;
+    irwriter_store(w, "i32", _load_col(ctx), col_save);
+
+    IrVal sr = _gen_bare(ctx, rhs_id);
+    _advance_col(ctx, sr);
+    IrVal er = _gen_bare(ctx, id);
+    _advance_col(ctx, er);
+    IrVal iter = irwriter_binop(w, "add", "i32", sr, er);
+    IrVal prev = irwriter_load(w, "i32", acc);
+    irwriter_store(w, "i32", irwriter_binop(w, "add", "i32", prev, iter), acc);
+    irwriter_br(w, loop_bb);
+
+    irwriter_bb_at(w, loop_exit_bb);
+    _store_col(ctx, irwriter_load(w, "i32", col_save));
+    irwriter_br(w, final_bb);
+
+    irwriter_bb_at(w, empty_bb);
+    irwriter_br(w, final_bb);
+
+    irwriter_bb_at(w, final_bb);
+    // restore col to origin; caller advances by returned acc
+    _store_col(ctx, col_origin);
+    ctx->fail_label = outer_fail;
+  } else {
+    int32_t loop_bb = irwriter_label(w);
+    int32_t end_bb = irwriter_label(w);
+    irwriter_br(w, loop_bb);
+    irwriter_bb_at(w, loop_bb);
+
+    IrVal outer_fail = ctx->fail_label;
+    ctx->fail_label = end_bb;
+    irwriter_store(w, "i32", _load_col(ctx), col_save);
+
+    IrVal r = _gen_bare(ctx, id);
+    _advance_col(ctx, r);
+    IrVal prev = irwriter_load(w, "i32", acc);
+    irwriter_store(w, "i32", irwriter_binop(w, "add", "i32", prev, r), acc);
+    irwriter_br(w, loop_bb);
+
+    irwriter_bb_at(w, end_bb);
+    _store_col(ctx, irwriter_load(w, "i32", col_save));
+    // restore col to origin; caller advances by returned acc
+    _store_col(ctx, col_origin);
+    ctx->fail_label = outer_fail;
+  }
+
+  return irwriter_load(w, "i32", acc);
 }
 
-void peg_ir_memo_set(IrWriter* w, const char* col_type, const char* table, const char* col, int32_t field_idx,
-                     int32_t slot_idx, IrVal val) {
-  IrVal tbl = irwriter_imm(w, table);
-  IrVal g = _gep_raw(w, col_type, tbl, "i32 %s, i32 %d, i32 %d", col, field_idx, slot_idx);
-  irwriter_store(w, "i32", val, g);
+// ============================================================
+// _gen_bare: match by kind only, ignoring multiplier
+// ============================================================
+
+static IrVal _gen_bare(PegIrCtx* ctx, int32_t scoped_rule_id) {
+  ScopedRule* r = &ctx->rules[scoped_rule_id];
+  switch (r->kind) {
+  case SCOPED_RULE_KIND_TERM:
+    return peg_ir_term(ctx, r->as.term);
+  case SCOPED_RULE_KIND_CALL:
+    return peg_ir_call(ctx, r->as.call);
+  case SCOPED_RULE_KIND_SEQ:
+    return peg_ir_seq(ctx, r->as.seq);
+  case SCOPED_RULE_KIND_BRANCHES:
+    return peg_ir_choice(ctx, r->as.branches);
+  case SCOPED_RULE_KIND_JOIN:
+    return irwriter_imm_int(ctx->w, 0);
+  }
+  return irwriter_imm_int(ctx->w, 0);
 }
 
-// --- Public: backtrack stack definitions ---
+// ============================================================
+// Element dispatch
+// ============================================================
 
-void peg_ir_emit_bt_defs(IrWriter* w) {
-  irwriter_type_def(w, "BtStack", "{ [262144 x i32], i32 }");
-  irwriter_raw(w, "\n");
-
-  irwriter_raw(w, "define internal void @save(ptr %stack, i32 %col) {\n"
-                  "entry:\n"
-                  "  %top_ptr = getelementptr %BtStack, ptr %stack, i32 0, i32 1\n"
-                  "  %top = load i32, ptr %top_ptr\n"
-                  "  %new_top = add i32 %top, 1\n"
-                  "  store i32 %new_top, ptr %top_ptr\n"
-                  "  %slot = getelementptr %BtStack, ptr %stack, i32 0, i32 0, i32 %new_top\n"
-                  "  store i32 %col, ptr %slot\n"
-                  "  ret void\n"
-                  "}\n\n");
-
-  irwriter_raw(w, "define internal i32 @restore(ptr %stack) {\n"
-                  "entry:\n"
-                  "  %top_ptr = getelementptr %BtStack, ptr %stack, i32 0, i32 1\n"
-                  "  %top = load i32, ptr %top_ptr\n"
-                  "  %slot = getelementptr %BtStack, ptr %stack, i32 0, i32 0, i32 %top\n"
-                  "  %val = load i32, ptr %slot\n"
-                  "  ret i32 %val\n"
-                  "}\n\n");
-
-  irwriter_raw(w, "define internal void @discard(ptr %stack) {\n"
-                  "entry:\n"
-                  "  %top_ptr = getelementptr %BtStack, ptr %stack, i32 0, i32 1\n"
-                  "  %top = load i32, ptr %top_ptr\n"
-                  "  %new_top = add i32 %top, -1\n"
-                  "  store i32 %new_top, ptr %top_ptr\n"
-                  "  ret void\n"
-                  "}\n\n");
+IrVal peg_ir_element(PegIrCtx* ctx, ScopedRuleKind kind, int32_t id) {
+  (void)kind;
+  return _gen_scoped(ctx, id);
 }
 
-// --- Public: bit ops (row_shared mode) ---
+// ============================================================
+// _gen_scoped: dispatch on ScopedRule kind/multiplier
+// ============================================================
 
-IrVal peg_ir_bit_test(IrWriter* w, const char* col_type, const char* table, const char* col, int32_t seg_idx,
-                      int32_t rule_bit) {
-  IrVal tbl = irwriter_imm(w, table);
-  IrVal g = _gep_raw(w, col_type, tbl, "i32 %s, i32 0, i32 %d", col, seg_idx);
-  IrVal bits = irwriter_load(w, "i32", g);
-  IrVal rb = irwriter_imm_int(w, rule_bit);
-  IrVal m = irwriter_binop(w, "and", "i32", bits, rb);
-  return irwriter_icmp(w, "ne", "i32", m, irwriter_imm(w, "0"));
+static IrVal _gen_scoped(PegIrCtx* ctx, int32_t scoped_rule_id) {
+  ScopedRule* r = &ctx->rules[scoped_rule_id];
+
+  if (r->multiplier == '?') {
+    return peg_ir_maybe(ctx, r->kind, scoped_rule_id);
+  }
+  if (r->multiplier == '+') {
+    if (r->kind == SCOPED_RULE_KIND_JOIN) {
+      return peg_ir_plus(ctx, ctx->rules[r->as.join.lhs].kind, r->as.join.lhs, ctx->rules[r->as.join.rhs].kind,
+                         r->as.join.rhs);
+    }
+    return peg_ir_plus(ctx, r->kind, scoped_rule_id, 0, 0);
+  }
+  if (r->multiplier == '*') {
+    if (r->kind == SCOPED_RULE_KIND_JOIN) {
+      return peg_ir_star(ctx, ctx->rules[r->as.join.lhs].kind, r->as.join.lhs, ctx->rules[r->as.join.rhs].kind,
+                         r->as.join.rhs);
+    }
+    return peg_ir_star(ctx, r->kind, scoped_rule_id, 0, 0);
+  }
+
+  switch (r->kind) {
+  case SCOPED_RULE_KIND_TERM:
+    return peg_ir_term(ctx, r->as.term);
+  case SCOPED_RULE_KIND_CALL:
+    return peg_ir_call(ctx, r->as.call);
+  case SCOPED_RULE_KIND_SEQ:
+    return peg_ir_seq(ctx, r->as.seq);
+  case SCOPED_RULE_KIND_BRANCHES:
+    return peg_ir_choice(ctx, r->as.branches);
+  case SCOPED_RULE_KIND_JOIN:
+    return irwriter_imm_int(ctx->w, 0);
+  }
+  return irwriter_imm_int(ctx->w, 0);
 }
-
-void peg_ir_bit_deny(IrWriter* w, const char* col_type, const char* table, const char* col, int32_t seg_idx,
-                     int32_t rule_bit) {
-  IrVal tbl = irwriter_imm(w, table);
-  IrVal g = _gep_raw(w, col_type, tbl, "i32 %s, i32 0, i32 %d", col, seg_idx);
-  IrVal bits = irwriter_load(w, "i32", g);
-  IrVal mask = irwriter_imm_int(w, ~rule_bit);
-  IrVal cleared = irwriter_binop(w, "and", "i32", bits, mask);
-  irwriter_store(w, "i32", cleared, g);
-}
-
-void peg_ir_bit_exclude(IrWriter* w, const char* col_type, const char* table, const char* col, int32_t seg_idx,
-                        int32_t rule_bit) {
-  IrVal tbl = irwriter_imm(w, table);
-  IrVal g = _gep_raw(w, col_type, tbl, "i32 %s, i32 0, i32 %d", col, seg_idx);
-  IrVal bits = irwriter_load(w, "i32", g);
-  IrVal rb = irwriter_imm_int(w, rule_bit);
-  IrVal kept = irwriter_binop(w, "and", "i32", bits, rb);
-  irwriter_store(w, "i32", kept, g);
-}
-
-// --- Public: extern declarations ---
-
-void peg_ir_declare_externs(IrWriter* w) { irwriter_declare(w, "i32", "match_tok", "i32, i32"); }

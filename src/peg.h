@@ -1,111 +1,109 @@
+// specs/peg.md
 #pragma once
 
 #include "bitset.h"
 #include "header_writer.h"
 #include "irwriter.h"
 #include "symtab.h"
+#include "token_tree.h"
 
 #include <stdbool.h>
 #include <stdint.h>
 
-// --- Parser-produced PEG tree (input to peg_gen) ---
+// --- PEG input types (produced by parser, consumed by peg_gen) ---
 
 typedef enum {
   PEG_CALL = 1,
-  PEG_TOK,
+  PEG_TERM,
   PEG_BRANCHES,
   PEG_SEQ,
 } PegUnitKind;
 
 typedef struct PegUnit PegUnit;
-
 typedef PegUnit* PegUnits; // darray
 
 struct PegUnit {
   PegUnitKind kind;
 
-  // PEG_CALL: rule's global_id
-  // PEG_TOK: token id, keywords are converted to token_id during parse
+  // PEG_CALL: callee rule's global_id
+  // PEG_TERM: token id | scope id
   int32_t id;
 
   char multiplier;                // '?','+','*', or 0
-  PegUnitKind interlace_rhs_kind; // 0 | PEG_CALL | PEG_TOK
-  int32_t interlace_rhs_id;       // rule's global_id | token id
+  PegUnitKind interlace_rhs_kind; // 0 | PEG_CALL | PEG_TERM
+  int32_t interlace_rhs_id;
 
-  char* tag; // (owned, may be NULL)
-  PegUnits children;
+  char* tag;         // (owned, may be NULL)
+  PegUnits children; // darray
 };
 
 typedef struct {
-  // name = symtab_get(rule_names, global_id)
   int32_t global_id;
-  // scope_id = symtab_intern(scope_names, name)
   int32_t scope_id; // -1 for non-scope
   PegUnit seq;
 } PegRule;
 
+typedef PegRule* PegRules; // darray
+
 typedef struct {
-  PegRule* rules;
+  PegRules rules;
   Symtab tokens;      // owned by ParseState
   Symtab scope_names; // owned by ParseState
   Symtab rule_names;  // owned by ParseState
 } PegGenInput;
 
-// --- Broken-down scoped rules (output of rule breakdown) ---
-
-typedef struct {
-  int32_t source_file_line;
-  int32_t source_file_col;
-} PegDebugInfo;
+// --- Internal types for code generation ---
 
 typedef enum {
   SCOPED_RULE_KIND_BRANCHES,
   SCOPED_RULE_KIND_SEQ,
   SCOPED_RULE_KIND_CALL,
   SCOPED_RULE_KIND_JOIN,
-  SCOPED_RULE_KIND_TOK,
-  SCOPED_RULE_KIND_EXTERNAL_SCOPE,
+  SCOPED_RULE_KIND_TERM,
 } ScopedRuleKind;
 
 typedef struct {
-  const char* name; // e.g. "foo$1$2"
+  const char* name;
   ScopedRuleKind kind;
   union {
     int32_t* branches; // darray of scoped_rule_ids
     int32_t* seq;      // darray of scoped_rule_ids
     int32_t call;      // scoped_rule_id
     struct {
-      int32_t lhs, rhs;
-    } join;                 // lhs*<rhs> / lhs+<rhs>
-    int32_t tok;            // token id
-    int32_t external_scope; // global rule index
+      int32_t lhs;
+      int32_t rhs;
+    } join;
+    int32_t term; // token id | scope id
   } as;
-  char multiplier; // '?', '*', '+', or 0
-  PegDebugInfo di;
+  char multiplier; // ?, *, +
 
-  // analysis fields (populated by _analyze_closure):
-  bool nullable;     // can the rule match 0-length input?
-  Bitset* first_set; // tokens that can start a match (excluding epsilon)
-  Bitset* last_set;  // tokens that can end a match (excluding epsilon)
+  bool nullable;
+  Bitset* first_set;
+  Bitset* last_set;
 
-  // per-scope codegen results (populated by peg_gen):
-  uint32_t scoped_rule_id; // unique in a scope closure
-  uint32_t segment_index;  // check Col.bits[segment_index]
-  uint32_t segment_mask;   // OR of all rule_bit_masks sharing this segment
-  uint32_t rule_bit_mask;  // single bit in segment_mask
-  uint32_t slot_index;     // Col.slots[slot_index]
+  uint32_t scoped_rule_id;
+  uint32_t segment_index;
+  uint32_t segment_mask;
+  uint32_t rule_bit_mask;
+  uint32_t slot_index;
 } ScopedRule;
 
 typedef struct {
   const char* scope_name;
-  Symtab defined_rules; // maps rule name -> scoped_rule_id
-  ScopedRule* rules;    // darray of ScopedRule
-
-  // populated during analysis/codegen:
-  int32_t n_slots;
-  int32_t n_bits;
-  char col_type[64];     // LLVM IR type name (e.g. "Col.main")
-  char hdr_col_type[64]; // C header type name (e.g. "Col_main")
+  int32_t scope_id;
+  Symtab defined_rules;
+  ScopedRule* rules; // darray
+  int32_t* root_ids; // darray: root_ids[symtab_id] = ScopedRule index of that rule's root
 } ScopeClosure;
+
+// --- User API: parse tree retrieval ---
+
+typedef struct {
+  TokenChunk* tc;
+  int32_t col;
+  int32_t next_col;
+} PegRef;
+
+// --- Public API ---
 
 void peg_gen(PegGenInput* input, HeaderWriter* hw, IrWriter* w, bool compress_memoize, const char* prefix);

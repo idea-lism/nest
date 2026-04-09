@@ -3,31 +3,69 @@
 
 #include "irwriter.h"
 #include "peg.h"
+#include "symtab.h"
 
+#include <stdbool.h>
 #include <stdint.h>
 
-// --- Code gen: gen(pattern, col, on_fail) dispatcher ---
-// Generates IR for an entire rule body from a ScopedRule graph.
-// For branch rules, stores the slot indicator via slot_val_ptr.
-// For non-branch rules, stores match_len there.
-// Always returns match_len.
-IrVal peg_ir_gen_rule_body(IrWriter* w, ScopedRule* rules, int32_t root_id, const char* col_type, int32_t* branch_ids,
-                           int32_t n_branch_ids, int32_t fail_label, IrVal slot_val_ptr);
+typedef struct {
+  IrWriter* w;
+  IrVal tokens;     // ptr to Token array (TokenChunk->tokens)
+  IrVal col_index;  // alloca'd i32: current column index
+  IrVal fail_label; // current failure destination label
+  IrVal stack;      // alloca'd ptr: stack pointer
+  IrVal stack_bp;   // alloca'd ptr: base pointer for calls
+  IrVal ret_val;    // alloca'd i32: return value register
+  IrVal table;      // ptr to memoize table base
+  IrVal n_tokens;   // i32: total token count in scope
 
-// --- Memoize table ops ---
-IrVal peg_ir_memo_get(IrWriter* w, const char* col_type, const char* table, const char* col, int32_t field_idx,
-                      int32_t slot_idx);
-void peg_ir_memo_set(IrWriter* w, const char* col_type, const char* table, const char* col, int32_t field_idx,
-                     int32_t slot_idx, IrVal val);
+  const char* scope_name;
+  Symtab* scoped_rule_names;
+  ScopedRule* rules; // darray of ScopedRule for this scope
+  bool compress;     // row_shared mode
 
-// --- Bit ops (row_shared mode) ---
-IrVal peg_ir_bit_test(IrWriter* w, const char* col_type, const char* table, const char* col, int32_t seg_idx,
-                      int32_t rule_bit);
-void peg_ir_bit_deny(IrWriter* w, const char* col_type, const char* table, const char* col, int32_t seg_idx,
-                     int32_t rule_bit);
-void peg_ir_bit_exclude(IrWriter* w, const char* col_type, const char* table, const char* col, int32_t seg_idx,
-                        int32_t rule_bit);
+  int32_t col_sizeof;   // bytes per Col struct
+  int32_t bits_offset;  // byte offset of bits[] in Col (0)
+  int32_t slots_offset; // byte offset of slots[] in Col
+  int32_t n_seg_groups; // number of segment groups (row_shared)
+  int32_t n_slots;      // number of slots per Col
+} PegIrCtx;
 
-// --- Module-level declarations ---
-void peg_ir_declare_externs(IrWriter* w);
-void peg_ir_emit_bt_defs(IrWriter* w);
+// emit IR for a terminal match. returns IrVal = consumed count (always 1 on success)
+IrVal peg_ir_term(PegIrCtx* ctx, int32_t term_id);
+
+// emit IR for a sub-rule call. returns IrVal = consumed count
+IrVal peg_ir_call(PegIrCtx* ctx, int32_t scoped_rule_id);
+
+// emit IR for a sequence of sub-rules. returns IrVal = total consumed
+IrVal peg_ir_seq(PegIrCtx* ctx, int32_t* seq);
+
+// emit IR for ordered choice. returns IrVal = consumed count of chosen branch
+IrVal peg_ir_choice(PegIrCtx* ctx, int32_t* branches);
+
+// emit IR for optional (?). returns IrVal = 0 or consumed
+IrVal peg_ir_maybe(PegIrCtx* ctx, ScopedRuleKind kind, int32_t id);
+
+// emit IR for zero-or-more (*). returns IrVal = total consumed
+IrVal peg_ir_star(PegIrCtx* ctx, ScopedRuleKind kind, int32_t id, ScopedRuleKind rhs_kind, int32_t rhs_id);
+
+// emit IR for one-or-more (+). returns IrVal = total consumed
+IrVal peg_ir_plus(PegIrCtx* ctx, ScopedRuleKind kind, int32_t id, ScopedRuleKind rhs_kind, int32_t rhs_id);
+
+// emit IR for a single element match (dispatches to term/call based on kind)
+IrVal peg_ir_element(PegIrCtx* ctx, ScopedRuleKind kind, int32_t id);
+
+// memoize table access: read slot value
+IrVal peg_ir_read_slot(PegIrCtx* ctx, IrVal col, uint32_t slot_index);
+
+// memoize table access: write slot value
+void peg_ir_write_slot(PegIrCtx* ctx, IrVal col, uint32_t slot_index, IrVal val);
+
+// row_shared: test rule bit (returns i1: 1=may match, 0=proven fail)
+IrVal peg_ir_bit_test(PegIrCtx* ctx, IrVal col, uint32_t seg_idx, uint32_t rule_bit);
+
+// row_shared: deny rule bit (cache failure)
+void peg_ir_bit_deny(PegIrCtx* ctx, IrVal col, uint32_t seg_idx, uint32_t rule_bit);
+
+// row_shared: exclude other bits in segment (cache exclusive match)
+void peg_ir_bit_exclude(PegIrCtx* ctx, IrVal col, uint32_t seg_idx, uint32_t rule_bit);

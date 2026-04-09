@@ -46,8 +46,8 @@ typedef struct {
 typedef VpaUnit* VpaUnits;
 
 typedef struct {
-  int32_t scope_id;
-  char* name; // (owned)
+  int32_t scope_id; // scopes[scope_id - tokens_count]
+  char* name;       // (owned)
   VpaUnit leader;
   VpaUnits children;
   bool has_parser;
