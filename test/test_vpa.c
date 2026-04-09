@@ -25,116 +25,116 @@
 TEST(test_tree_new_del) {
   char* ustr = ustr_new(5, "hello");
   assert(ustr != NULL);
-  TokenTree* tree = tc_tree_new(ustr);
+  TokenTree* tree = tt_tree_new(ustr);
   assert(tree != NULL);
   assert(tree->src == ustr);
   assert(tree->root != NULL);
   assert(tree->current == tree->root);
-  tc_tree_del(tree);
+  tt_tree_del(tree);
   ustr_del(ustr);
 }
 
 TEST(test_tree_add_token) {
   char* ustr = ustr_new(3, "abc");
-  TokenTree* tree = tc_tree_new(ustr);
+  TokenTree* tree = tt_tree_new(ustr);
 
-  tc_add(tree, TOK_CHAR, 0, 1, -1);
-  tc_add(tree, TOK_CHAR, 1, 1, -1);
+  tt_add(tree, TOK_CHAR, 0, 1, -1);
+  tt_add(tree, TOK_CHAR, 1, 1, -1);
 
   assert(darray_size(tree->current->tokens) == 2);
   assert(tree->current->tokens[0].tok_id == TOK_CHAR);
   assert(tree->current->tokens[0].cp_start == 0);
   assert(tree->current->tokens[1].cp_start == 1);
 
-  tc_tree_del(tree);
+  tt_tree_del(tree);
   ustr_del(ustr);
 }
 
 TEST(test_tree_push_pop) {
   char* ustr = ustr_new(5, "ab\ncd");
-  TokenTree* tree = tc_tree_new(ustr);
+  TokenTree* tree = tt_tree_new(ustr);
 
   TokenChunk* root = tree->current;
   assert(root->parent_id == -1);
 
-  TokenChunk* child = tc_push(tree, 0);
+  TokenChunk* child = tt_push(tree, 0);
   assert(child != NULL);
   assert(tree->current == child);
   assert(child->parent_id != -1);
 
-  tc_add(tree, TOK_VPA_ID, 0, 2, -1);
+  tt_add(tree, TOK_VPA_ID, 0, 2, -1);
   assert(darray_size(child->tokens) == 1);
 
-  TokenChunk* popped = tc_pop(tree);
+  TokenChunk* popped = tt_pop(tree);
   assert(popped != NULL);
   assert(tree->current == root);
 
-  tc_tree_del(tree);
+  tt_tree_del(tree);
   ustr_del(ustr);
 }
 
 TEST(test_tree_nested_push_pop) {
   char* ustr = ustr_new(1, "x");
-  TokenTree* tree = tc_tree_new(ustr);
+  TokenTree* tree = tt_tree_new(ustr);
 
   TokenChunk* root = tree->current;
 
-  TokenChunk* l1 = tc_push(tree, 0);
+  TokenChunk* l1 = tt_push(tree, 0);
   assert(tree->current == l1);
 
-  TokenChunk* l2 = tc_push(tree, 0);
+  TokenChunk* l2 = tt_push(tree, 0);
   assert(tree->current == l2);
 
-  tc_pop(tree);
+  tt_pop(tree);
   assert(tree->current == l1);
 
-  tc_pop(tree);
+  tt_pop(tree);
   assert(tree->current == root);
 
-  tc_tree_del(tree);
+  tt_tree_del(tree);
   ustr_del(ustr);
 }
 
 TEST(test_tree_locate_single_line) {
   char* ustr = ustr_new(5, "hello");
-  TokenTree* tree = tc_tree_new(ustr);
+  TokenTree* tree = tt_tree_new(ustr);
 
-  Location loc = tc_locate(tree, 0);
+  Location loc = tt_locate(tree, 0);
   assert(loc.line == 0);
   assert(loc.col == 0);
 
-  loc = tc_locate(tree, 3);
+  loc = tt_locate(tree, 3);
   assert(loc.line == 0);
   assert(loc.col == 3);
 
-  tc_tree_del(tree);
+  tt_tree_del(tree);
   ustr_del(ustr);
 }
 
 TEST(test_tree_locate_multiline) {
   char* ustr = ustr_new(7, "ab\ncd\ne");
-  TokenTree* tree = tc_tree_new(ustr);
+  TokenTree* tree = tt_tree_new(ustr);
 
   tree->newline_map[0] |= (1ULL << 2);
   tree->newline_map[0] |= (1ULL << 5);
 
   Location loc;
-  loc = tc_locate(tree, 0);
+  loc = tt_locate(tree, 0);
   assert(loc.line == 0 && loc.col == 0);
 
-  loc = tc_locate(tree, 1);
+  loc = tt_locate(tree, 1);
   assert(loc.line == 0 && loc.col == 1);
 
-  loc = tc_locate(tree, 3);
+  loc = tt_locate(tree, 3);
   assert(loc.line == 1 && loc.col == 0);
 
-  loc = tc_locate(tree, 4);
+  loc = tt_locate(tree, 4);
   assert(loc.line == 1 && loc.col == 1);
 
-  loc = tc_locate(tree, 6);
+  loc = tt_locate(tree, 6);
   assert(loc.line == 2 && loc.col == 0);
 
-  tc_tree_del(tree);
+  tt_tree_del(tree);
   ustr_del(ustr);
 }
 
@@ -186,36 +186,36 @@ TEST(test_re_ir_build_literal) {
 
 TEST(test_chunk_scope_ids) {
   char* ustr = ustr_new(1, "x");
-  TokenTree* tree = tc_tree_new(ustr);
+  TokenTree* tree = tt_tree_new(ustr);
 
   tree->root->scope_id = SCOPE_MAIN;
 
-  tc_push(tree, SCOPE_VPA);
+  tt_push(tree, SCOPE_VPA);
   assert(tree->current->scope_id == SCOPE_VPA);
 
-  tc_push(tree, SCOPE_RE);
+  tt_push(tree, SCOPE_RE);
   assert(tree->current->scope_id == SCOPE_RE);
 
-  tc_pop(tree);
+  tt_pop(tree);
   assert(tree->current->scope_id == SCOPE_VPA);
 
-  tc_pop(tree);
+  tt_pop(tree);
   assert(tree->current->scope_id == SCOPE_MAIN);
 
-  tc_tree_del(tree);
+  tt_tree_del(tree);
   ustr_del(ustr);
 }
 
 TEST(test_token_scope_reference) {
   char* ustr = ustr_new(3, "abc");
-  TokenTree* tree = tc_tree_new(ustr);
+  TokenTree* tree = tt_tree_new(ustr);
 
-  tc_push(tree, SCOPE_VPA);
+  tt_push(tree, SCOPE_VPA);
   int32_t child_chunk_id = (int32_t)(darray_size(tree->table) - 1);
 
-  tc_pop(tree);
+  tt_pop(tree);
 
-  tc_add(tree, SCOPE_VPA, 0, 3, child_chunk_id);
+  tt_add(tree, SCOPE_VPA, 0, 3, child_chunk_id);
 
   assert(darray_size(tree->root->tokens) == 1);
   Token stored = tree->root->tokens[0];
@@ -225,7 +225,7 @@ TEST(test_token_scope_reference) {
 
   assert(tree->table[stored.chunk_id].scope_id == SCOPE_VPA);
 
-  tc_tree_del(tree);
+  tt_tree_del(tree);
   ustr_del(ustr);
 }
 
@@ -360,7 +360,7 @@ TEST(test_vpa_gen_single_scope) {
   assert(strstr(h_buf, "SCOPE_MAIN") != NULL);
   assert(strstr(h_buf, "TOK_TOK_A") != NULL);
   assert(strstr(h_buf, "TOK_TOK_B") != NULL);
-  assert(strstr(h_buf, "tc_tree_new") != NULL);
+  assert(strstr(h_buf, "tt_tree_new") != NULL);
   free(h_buf);
 
   _compile_test(BUILD_DIR "/test_vpa_gen_scope.h", BUILD_DIR "/test_vpa_gen_scope.ll");
@@ -431,13 +431,13 @@ TEST(test_vpa_gen_exec) {
               "  return ((const unsigned char*)src)[cp_off];\n"
               "}\n"
               "void vpa_error_add(void* errors, int32_t type, int32_t off, int32_t sz) {}\n"
-              "int32_t tc_depth(void* tt) { return 1; }\n"
+              "int32_t tt_depth(void* tt) { return 1; }\n"
               "\n"
               "int main(void) {\n"
               "  const char* input = \"aabb\";\n"
               "  int32_t len = 4;\n"
               "  char* us = ustr_new(len, input);\n"
-              "  TokenTree* tt = tc_tree_new(us);\n"
+              "  TokenTree* tt = tt_tree_new(us);\n"
               "  vpa_lex((void*)input, len, (void*)tt, (void*)0, (void*)0);\n"
               "  int32_t n = (int32_t)darray_size(tt->root->tokens);\n"
               "  assert(n == 4);\n"
@@ -448,7 +448,7 @@ TEST(test_vpa_gen_exec) {
               "  assert(tt->root->tokens[0].cp_start == 0);\n"
               "  assert(tt->root->tokens[0].cp_size == 1);\n"
               "  assert(tt->root->tokens[3].cp_start == 3);\n"
-              "  tc_tree_del(tt);\n"
+              "  tt_tree_del(tt);\n"
               "  ustr_del(us);\n"
               "  return 0;\n"
               "}\n");
@@ -497,7 +497,7 @@ TEST(test_vpa_gen_user_hook) {
   char* ir_buf = _read_file(BUILD_DIR "/test_vpa_hook.ll");
   assert(strstr(ir_buf, "@vpa_hook_on_x") != NULL);
   assert(strstr(ir_buf, "call i32 @vpa_hook_on_x") != NULL);
-  assert(strstr(ir_buf, "tc_add") != NULL);
+  assert(strstr(ir_buf, "tt_add") != NULL);
   free(ir_buf);
 
   _compile_test(BUILD_DIR "/test_vpa_hook.h", BUILD_DIR "/test_vpa_hook.ll");
@@ -698,11 +698,11 @@ TEST(test_vpa_gen_begin_end_push_pop) {
   _run_vpa_gen(&input, BUILD_DIR "/test_vpa_beginend.h", BUILD_DIR "/test_vpa_beginend.ll");
 
   char* ir_buf = _read_file(BUILD_DIR "/test_vpa_beginend.ll");
-  // .begin action must actually call tc_push (not just declare it)
+  // .begin action must actually call tt_push (not just declare it)
   assert(strstr(ir_buf, "call") != NULL);
-  assert(strstr(ir_buf, "call i8* @tc_push") != NULL);
-  // .end action must actually call tc_pop (not just declare it)
-  assert(strstr(ir_buf, "call i8* @tc_pop") != NULL);
+  assert(strstr(ir_buf, "call i8* @tt_push") != NULL);
+  // .end action must actually call tt_pop (not just declare it)
+  assert(strstr(ir_buf, "call i8* @tt_pop") != NULL);
   free(ir_buf);
 
   _free_gen_input(&input);

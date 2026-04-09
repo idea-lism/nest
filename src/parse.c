@@ -50,7 +50,7 @@ static void _error_at(ParseState* ps, Token* t, const char* fmt, ...) {
   }
   int32_t off = 0;
   if (t && ps->tree) {
-    Location loc = tc_locate(ps->tree, t->cp_start);
+    Location loc = tt_locate(ps->tree, t->cp_start);
     off = snprintf(ps->error, sizeof(ps->error), "%d:%d: ", loc.line + 1, loc.col + 1);
   }
   va_list ap;
@@ -171,7 +171,7 @@ static void _lex_scope(LexCtx* ctx, ScopeId scope_id) {
   };
   ScopeConfig cfg = configs[scope_id];
 
-  tc_push(ctx->tree, scope_id);
+  tt_push(ctx->tree, scope_id);
   int32_t chunk_idx = (int32_t)(darray_size(ctx->tree->table) - 1);
   int32_t scope_cp_start = ctx->it.cp_idx;
 
@@ -205,7 +205,7 @@ static void _lex_scope(LexCtx* ctx, ScopeId scope_id) {
       if (ustr_cp_at(ctx->ps->src, tok_start) == ctx->shared.last_quote_cp) {
         break;
       }
-      tc_add(ctx->tree, TOK_CHAR, tok_start, saved - tok_start, -1);
+      tt_add(ctx->tree, TOK_CHAR, tok_start, saved - tok_start, -1);
     } else if (last_action == ACTION_SET_RE_MODE_BEGIN) {
       ctx->shared.re_mode_icase = false;
       ctx->shared.re_mode_binary = false;
@@ -238,7 +238,7 @@ static void _lex_scope(LexCtx* ctx, ScopeId scope_id) {
     } else if (last_action > 0 && last_action < SCOPE_COUNT) {
       _lex_scope(ctx, last_action);
     } else if (last_action >= LIT_START) {
-      tc_add(ctx->tree, last_action, tok_start, saved - tok_start, -1);
+      tt_add(ctx->tree, last_action, tok_start, saved - tok_start, -1);
     } else if (last_action == 0) {
       if (saved >= ctx->cp_count) {
         break;
@@ -258,9 +258,9 @@ static void _lex_scope(LexCtx* ctx, ScopeId scope_id) {
   }
 
   TokenChunk* chunk = ctx->tree->current;
-  tc_pop(ctx->tree);
+  tt_pop(ctx->tree);
   if (ctx->tree->current->scope_id != SCOPE_START) {
-    tc_add(ctx->tree, scope_id, scope_cp_start, ctx->it.cp_idx - scope_cp_start, chunk_idx);
+    tt_add(ctx->tree, scope_id, scope_cp_start, ctx->it.cp_idx - scope_cp_start, chunk_idx);
   }
   if (cfg.parse_fn) {
     cfg.parse_fn(ctx->ps, chunk);
@@ -1171,7 +1171,7 @@ static void _free_peg_unit(PegUnit* u) {
 static void _free_vpa_unit(VpaUnit* u);
 
 static void _free_state(ParseState* ps) {
-  tc_tree_del(ps->tree);
+  tt_tree_del(ps->tree);
   for (int32_t i = 0; i < (int32_t)darray_size(ps->vpa_scopes); i++) {
     free(ps->vpa_scopes[i].name);
     _free_vpa_unit(&ps->vpa_scopes[i].leader);
@@ -1227,7 +1227,7 @@ bool parse_nest(ParseState* ps, const char* src) {
   }
   ps->src = src;
   ps->src_len = ustr_size(src);
-  ps->tree = tc_tree_new(src);
+  ps->tree = tt_tree_new(src);
 
   // init symtabs for VPA token/hook numbering
   symtab_init(&ps->tokens, 1);

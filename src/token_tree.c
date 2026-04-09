@@ -4,7 +4,7 @@
 #include <stdlib.h>
 #include <string.h>
 
-TokenTree* tc_tree_new(const char* ustr) {
+TokenTree* tt_tree_new(const char* ustr) {
   TokenTree* tree = malloc(sizeof(TokenTree));
   tree->src = ustr;
 
@@ -22,7 +22,7 @@ TokenTree* tc_tree_new(const char* ustr) {
   return tree;
 }
 
-void tc_tree_del(TokenTree* tree) {
+void tt_tree_del(TokenTree* tree) {
   if (!tree) {
     return;
   }
@@ -35,7 +35,7 @@ void tc_tree_del(TokenTree* tree) {
   free(tree);
 }
 
-Location tc_locate(TokenTree* tree, int32_t cp_offset) {
+Location tt_locate(TokenTree* tree, int32_t cp_offset) {
   int32_t line = 0;
   int32_t col = cp_offset;
 
@@ -60,11 +60,11 @@ Location tc_locate(TokenTree* tree, int32_t cp_offset) {
   return (Location){.line = line, .col = col};
 }
 
-void tc_add(TokenTree* tree, int32_t tok_id, int32_t cp_start, int32_t cp_size, int32_t chunk_id) {
+void tt_add(TokenTree* tree, int32_t tok_id, int32_t cp_start, int32_t cp_size, int32_t chunk_id) {
   darray_push(tree->current->tokens, ((Token){tok_id, cp_start, cp_size, chunk_id}));
 }
 
-TokenChunk* tc_push(TokenTree* tree, int32_t scope_id) {
+TokenChunk* tt_push(TokenTree* tree, int32_t scope_id) {
   int32_t parent_idx = tree->current - tree->table;
   TokenChunk new_chunk = {.scope_id = scope_id, .parent_id = parent_idx, .tokens = darray_new(sizeof(Token), 0)};
   darray_push(tree->table, new_chunk);
@@ -73,30 +73,15 @@ TokenChunk* tc_push(TokenTree* tree, int32_t scope_id) {
   return tree->current;
 }
 
-TokenChunk* tc_pop(TokenTree* tree) {
+TokenChunk* tt_pop(TokenTree* tree) {
   if (tree->current->parent_id == -1) {
-    return tree->current;
+    fprintf(stderr, "Error: Attempting to pop root chunk, which is not allowed.\n");
+    abort(); // trying to pop root chunk, which is not allowed
   }
   tree->current = &tree->table[tree->current->parent_id];
   return tree->current;
 }
 
-int32_t tc_size(TokenTree* tree) { return (int32_t)darray_size(tree->current->tokens); }
+int32_t tt_current_size(TokenTree* tree) { return darray_size(tree->current->tokens); }
 
-int32_t tc_scope(TokenTree* tree) { return (tree && tree->current) ? tree->current->scope_id : 0; }
-
-static TokenChunk* _parse_chunk = NULL;
-
-void tc_parse_begin(TokenTree* tree) { _parse_chunk = tree ? tree->current : NULL; }
-
-void tc_parse_end(void) { _parse_chunk = NULL; }
-
-int32_t match_tok(int32_t tok_id, int32_t col) {
-  if (!_parse_chunk) {
-    return -1;
-  }
-  if (col < 0 || col >= (int32_t)darray_size(_parse_chunk->tokens)) {
-    return -1;
-  }
-  return _parse_chunk->tokens[col].tok_id == tok_id ? 1 : -1;
-}
+TokenChunk* tt_current(TokenTree* tree) { return tree->current; }

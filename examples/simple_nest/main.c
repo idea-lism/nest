@@ -68,7 +68,7 @@ int main(int argc, char** argv) {
   int32_t len = (int32_t)strlen(input);
 
   char* ustr = ustr_new(len, input);
-  TokenTree* tt = tc_tree_new(ustr);
+  TokenTree* tt = tt_tree_new(ustr);
   vpa_lex((int64_t)(intptr_t)input, (int64_t)len, (int64_t)(intptr_t)tt);
 
   int32_t n_chunks = (int32_t)darray_size(tt->table);
@@ -86,7 +86,7 @@ int main(int argc, char** argv) {
     }
   }
 
-  tc_tree_del(tt);
+  tt_tree_del(tt);
   ustr_del(ustr);
   return 0;
 }

@@ -17,7 +17,7 @@
 
 TEST(test_tree_new) {
   char* s = ustr_new(5, "hello");
-  TokenTree* tree = tc_tree_new(s);
+  TokenTree* tree = tt_tree_new(s);
   assert(tree != NULL);
   assert(tree->root != NULL);
   assert(tree->current != NULL);
@@ -26,7 +26,7 @@ TEST(test_tree_new) {
   assert(tree->root->scope_id == 0);
   assert(darray_size(tree->root->tokens) == 0);
   assert(darray_size(tree->table) == 1);
-  tc_tree_del(tree);
+  tt_tree_del(tree);
   ustr_del(s);
 }
 
@@ -34,29 +34,29 @@ TEST(test_tree_new) {
 
 TEST(test_add_single) {
   char* s = ustr_new(3, "abc");
-  TokenTree* tree = tc_tree_new(s);
-  tc_add(tree, 1, 0, 3, -1);
+  TokenTree* tree = tt_tree_new(s);
+  tt_add(tree, 1, 0, 3, -1);
   assert(darray_size(tree->root->tokens) == 1);
   assert(tree->root->tokens[0].tok_id == 1);
   assert(tree->root->tokens[0].cp_start == 0);
   assert(tree->root->tokens[0].cp_size == 3);
   assert(tree->root->tokens[0].chunk_id == -1);
-  tc_tree_del(tree);
+  tt_tree_del(tree);
   ustr_del(s);
 }
 
 TEST(test_add_multiple) {
   char* s = ustr_new(6, "abcdef");
-  TokenTree* tree = tc_tree_new(s);
+  TokenTree* tree = tt_tree_new(s);
   for (int i = 0; i < 5; i++) {
-    tc_add(tree, i, i, 1, -1);
+    tt_add(tree, i, i, 1, -1);
   }
   assert(darray_size(tree->root->tokens) == 5);
   for (int i = 0; i < 5; i++) {
     assert(tree->root->tokens[i].tok_id == i);
     assert(tree->root->tokens[i].cp_start == i);
   }
-  tc_tree_del(tree);
+  tt_tree_del(tree);
   ustr_del(s);
 }
 
@@ -64,23 +64,23 @@ TEST(test_add_multiple) {
 
 TEST(test_push) {
   char* s = ustr_new(3, "abc");
-  TokenTree* tree = tc_tree_new(s);
-  TokenChunk* child = tc_push(tree, 0);
+  TokenTree* tree = tt_tree_new(s);
+  TokenChunk* child = tt_push(tree, 0);
   assert(child != NULL);
   assert(tree->current == child);
   assert(tree->current != tree->root);
   assert(child->parent_id == 0);
   assert(darray_size(tree->table) == 2);
-  tc_tree_del(tree);
+  tt_tree_del(tree);
   ustr_del(s);
 }
 
 TEST(test_push_nested) {
   char* s = ustr_new(3, "abc");
-  TokenTree* tree = tc_tree_new(s);
-  tc_push(tree, 0);
+  TokenTree* tree = tt_tree_new(s);
+  tt_push(tree, 0);
   assert(tree->current->parent_id == 0);
-  tc_push(tree, 0);
+  tt_push(tree, 0);
   assert(tree->current->parent_id == 1);
   assert(darray_size(tree->table) == 3);
   // grandchild -> child -> root
@@ -88,48 +88,48 @@ TEST(test_push_nested) {
   int32_t c_parent = tree->table[gc_parent].parent_id;
   assert(c_parent == 0);
   assert(tree->table[c_parent].parent_id == -1);
-  tc_tree_del(tree);
+  tt_tree_del(tree);
   ustr_del(s);
 }
 
 TEST(test_pop) {
   char* s = ustr_new(3, "abc");
-  TokenTree* tree = tc_tree_new(s);
-  tc_push(tree, 0);
+  TokenTree* tree = tt_tree_new(s);
+  tt_push(tree, 0);
   assert(tree->current != tree->root);
-  TokenChunk* popped = tc_pop(tree);
+  TokenChunk* popped = tt_pop(tree);
   assert(popped == tree->current);
   assert(tree->current == &tree->table[0]);
   assert(tree->current->parent_id == -1);
-  tc_tree_del(tree);
+  tt_tree_del(tree);
   ustr_del(s);
 }
 
 TEST(test_pop_at_root) {
   char* s = ustr_new(3, "abc");
-  TokenTree* tree = tc_tree_new(s);
+  TokenTree* tree = tt_tree_new(s);
   TokenChunk* before = tree->current;
-  TokenChunk* after = tc_pop(tree);
+  TokenChunk* after = tt_pop(tree);
   assert(after == before);
   assert(tree->current->parent_id == -1);
-  tc_tree_del(tree);
+  tt_tree_del(tree);
   ustr_del(s);
 }
 
 TEST(test_push_pop_sequence) {
   char* s = ustr_new(6, "abcdef");
-  TokenTree* tree = tc_tree_new(s);
+  TokenTree* tree = tt_tree_new(s);
 
   // add token to root
-  tc_add(tree, 10, 0, 1, -1);
+  tt_add(tree, 10, 0, 1, -1);
 
   // push child, add token there
-  tc_push(tree, 0);
-  tc_add(tree, 20, 1, 2, -1);
+  tt_push(tree, 0);
+  tt_add(tree, 20, 1, 2, -1);
 
   // pop back to root, add another token
-  tc_pop(tree);
-  tc_add(tree, 11, 3, 1, -1);
+  tt_pop(tree);
+  tt_add(tree, 11, 3, 1, -1);
 
   // root has 2 tokens, child has 1
   assert(darray_size(tree->table[0].tokens) == 2);
@@ -138,7 +138,7 @@ TEST(test_push_pop_sequence) {
   assert(darray_size(tree->table[1].tokens) == 1);
   assert(tree->table[1].tokens[0].tok_id == 20);
 
-  tc_tree_del(tree);
+  tt_tree_del(tree);
   ustr_del(s);
 }
 
@@ -146,67 +146,67 @@ TEST(test_push_pop_sequence) {
 
 TEST(test_locate_no_newlines) {
   char* s = ustr_new(5, "hello");
-  TokenTree* tree = tc_tree_new(s);
+  TokenTree* tree = tt_tree_new(s);
   // no newlines set in map, everything is line 0
-  Location loc0 = tc_locate(tree, 0);
+  Location loc0 = tt_locate(tree, 0);
   assert(loc0.line == 0 && loc0.col == 0);
-  Location loc3 = tc_locate(tree, 3);
+  Location loc3 = tt_locate(tree, 3);
   assert(loc3.line == 0 && loc3.col == 3);
-  tc_tree_del(tree);
+  tt_tree_del(tree);
   ustr_del(s);
 }
 
 TEST(test_locate_with_newlines) {
   // "ab\ncd\ne" = 7 codepoints, newlines at cp index 2 and 5
   char* s = ustr_new(7, "ab\ncd\ne");
-  TokenTree* tree = tc_tree_new(s);
+  TokenTree* tree = tt_tree_new(s);
   // set newline bits at positions 2 and 5
   tree->newline_map[0] |= (1ULL << 2);
   tree->newline_map[0] |= (1ULL << 5);
 
   // 'a' at cp 0 => line 0, col 0
-  Location loc = tc_locate(tree, 0);
+  Location loc = tt_locate(tree, 0);
   assert(loc.line == 0 && loc.col == 0);
 
   // 'b' at cp 1 => line 0, col 1
-  loc = tc_locate(tree, 1);
+  loc = tt_locate(tree, 1);
   assert(loc.line == 0 && loc.col == 1);
 
   // '\n' at cp 2 => line 0, col 2
-  loc = tc_locate(tree, 2);
+  loc = tt_locate(tree, 2);
   assert(loc.line == 0 && loc.col == 2);
 
   // 'c' at cp 3 => line 1, col 0
-  loc = tc_locate(tree, 3);
+  loc = tt_locate(tree, 3);
   assert(loc.line == 1 && loc.col == 0);
 
   // 'd' at cp 4 => line 1, col 1
-  loc = tc_locate(tree, 4);
+  loc = tt_locate(tree, 4);
   assert(loc.line == 1 && loc.col == 1);
 
   // '\n' at cp 5 => line 1, col 2
-  loc = tc_locate(tree, 5);
+  loc = tt_locate(tree, 5);
   assert(loc.line == 1 && loc.col == 2);
 
   // 'e' at cp 6 => line 2, col 0
-  loc = tc_locate(tree, 6);
+  loc = tt_locate(tree, 6);
   assert(loc.line == 2 && loc.col == 0);
 
-  tc_tree_del(tree);
+  tt_tree_del(tree);
   ustr_del(s);
 }
 
 TEST(test_locate_at_start_of_line) {
   // "x\ny" = newline at cp 1
   char* s = ustr_new(3, "x\ny");
-  TokenTree* tree = tc_tree_new(s);
+  TokenTree* tree = tt_tree_new(s);
   tree->newline_map[0] |= (1ULL << 1);
 
   // 'y' at cp 2 => line 1, col 0
-  Location loc = tc_locate(tree, 2);
+  Location loc = tt_locate(tree, 2);
   assert(loc.line == 1 && loc.col == 0);
 
-  tc_tree_del(tree);
+  tt_tree_del(tree);
   ustr_del(s);
 }
 
@@ -214,20 +214,20 @@ TEST(test_locate_at_start_of_line) {
 
 TEST(test_tree_structure) {
   char* s = ustr_new(10, "0123456789");
-  TokenTree* tree = tc_tree_new(s);
+  TokenTree* tree = tt_tree_new(s);
 
   // root: add a token
-  tc_add(tree, 1, 0, 2, -1);
+  tt_add(tree, 1, 0, 2, -1);
 
   // push child1, add token, pop
-  tc_push(tree, 0);
-  tc_add(tree, 2, 2, 3, -1);
-  tc_pop(tree);
+  tt_push(tree, 0);
+  tt_add(tree, 2, 2, 3, -1);
+  tt_pop(tree);
 
   // push child2, add token, pop
-  tc_push(tree, 0);
-  tc_add(tree, 3, 5, 5, -1);
-  tc_pop(tree);
+  tt_push(tree, 0);
+  tt_add(tree, 3, 5, 5, -1);
+  tt_pop(tree);
 
   assert(darray_size(tree->table) == 3);
 
@@ -246,7 +246,7 @@ TEST(test_tree_structure) {
   assert(tree->table[2].tokens[0].tok_id == 3);
   assert(tree->table[2].parent_id == 0);
 
-  tc_tree_del(tree);
+  tt_tree_del(tree);
   ustr_del(s);
 }
 

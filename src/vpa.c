@@ -137,9 +137,9 @@ static void _gen_scope_dfa(VpaGenInput* input, IrWriter* w, VpaScope* scope, Act
 static void _gen_dispatch(VpaGenInput* input, IrWriter* w, Actions actions) {
   int32_t n_actions = (int32_t)darray_size(actions);
 
-  irwriter_declare(w, "void", "tc_add", "i8*, i32, i32, i32, i32");
-  irwriter_declare(w, "i8*", "tc_push", "i8*, i32");
-  irwriter_declare(w, "i8*", "tc_pop", "i8*");
+  irwriter_declare(w, "void", "tt_add", "i8*, i32, i32, i32, i32");
+  irwriter_declare(w, "i8*", "tt_push", "i8*, i32");
+  irwriter_declare(w, "i8*", "tt_pop", "i8*");
   irwriter_declare(w, "void", "vpa_error_add", "i8*, i32, i32, i32");
 
   // pre-declare user hooks
@@ -192,15 +192,15 @@ static void _gen_dispatch(VpaGenInput* input, IrWriter* w, Actions actions) {
       int32_t auid = au[j];
       if (auid > 0) {
         // emit token
-        irwriter_call_void_fmtf(w, "tc_add", "i8* %%tt, i32 %d, i32 %%cp_start, i32 %%cp_size, i32 -1", auid);
+        irwriter_call_void_fmtf(w, "tt_add", "i8* %%tt, i32 %d, i32 %%cp_start, i32 %%cp_size, i32 -1", auid);
       } else {
         int32_t hook_id = -auid;
         if (hook_id == HOOK_ID_BEGIN) {
           // push scope onto VPA stack
-          irwriter_call_retf(w, "i8*", "tc_push", "i8* %%tt, i32 0");
+          irwriter_call_retf(w, "i8*", "tt_push", "i8* %%tt, i32 0");
         } else if (hook_id == HOOK_ID_END) {
           // pop scope from VPA stack
-          irwriter_call_retf(w, "i8*", "tc_pop", "i8* %%tt");
+          irwriter_call_retf(w, "i8*", "tt_pop", "i8* %%tt");
         } else if (hook_id >= HOOK_ID_BUILTIN_COUNT) {
           // user hook
           const char* hook_name = symtab_get(&input->hooks, hook_id);
@@ -235,7 +235,7 @@ static void _gen_dispatch(VpaGenInput* input, IrWriter* w, Actions actions) {
               irwriter_bb_at(w, effect_bbs[e]);
               int32_t ev = ed->effects[e];
               if (ev > 0) {
-                irwriter_call_void_fmtf(w, "tc_add", "i8* %%tt, i32 %d, i32 %%cp_start, i32 %%cp_size, i32 -1", ev);
+                irwriter_call_void_fmtf(w, "tt_add", "i8* %%tt, i32 %d, i32 %%cp_start, i32 %%cp_size, i32 -1", ev);
               }
               // builtin hook effects (e.g. .fail) would be handled here
               irwriter_br(w, ok_bb);
@@ -269,8 +269,8 @@ static void _gen_vpa_lex(VpaGenInput* input, IrWriter* w) {
 
   irwriter_declare(w, "i32", "vpa_rt_read_cp", "i8*, i32");
   irwriter_declare(w, "void", "vpa_error_add", "i8*, i32, i32, i32");
-  irwriter_declare(w, "i32", "tc_depth", "i8*");
-  irwriter_declare(w, "void", "tc_add", "i8*, i32, i32, i32, i32");
+  irwriter_declare(w, "i32", "tt_depth", "i8*");
+  irwriter_declare(w, "void", "tt_add", "i8*, i32, i32, i32, i32");
 
   const char* arg_types[] = {"i8*", "i32", "i8*", "i8*", "i8*"};
   const char* arg_names[] = {"src", "len", "tt", "errors", "ctx"};
@@ -385,7 +385,7 @@ static void _gen_parse_entry(IrWriter* w, const char* prefix) {
 
   // declare externs for the parse entry
   irwriter_declare(w, "void", "vpa_lex", "i8*, i32, i8*, i8*, i8*");
-  irwriter_declare(w, "i8*", "tc_tree_new", "i8*");
+  irwriter_declare(w, "i8*", "tt_tree_new", "i8*");
   irwriter_declare(w, "i32", "ustr_size", "i8*");
 
   // {prefix}_parse(ctx_ptr, src) -> void (simplified: populates token tree)
@@ -396,7 +396,7 @@ static void _gen_parse_entry(IrWriter* w, const char* prefix) {
   irwriter_define_start(w, parse_name, "void", 2, parse_arg_types, parse_arg_names);
   irwriter_bb(w);
   IrVal len = irwriter_call_retf(w, "i32", "ustr_size", "i8* %%src");
-  IrVal tt = irwriter_call_retf(w, "i8*", "tc_tree_new", "i8* %%src");
+  IrVal tt = irwriter_call_retf(w, "i8*", "tt_tree_new", "i8* %%src");
   irwriter_call_void_fmtf(w, "vpa_lex", "i8* %%src, i32 %%r%d, i8* %%r%d, i8* null, i8* %%ctx", (int)len, (int)tt);
   irwriter_ret_void(w);
   irwriter_define_end(w);

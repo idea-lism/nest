@@ -48,18 +48,20 @@ typedef struct {
 } TokenTree;
 ```
 
+current is always non-null.
+
 ### Helper functions
 
 ```c
-TokenTree* tc_tree_new(ustr);
-void tc_tree_del(TokenTree*);
-struct {line, col} tc_locate(TokenTree* tree, int32_t cp_offset);
-tc_add(TokenTree* tree, int32_t tok_id, int32_t cp_start, int32_t cp_size, int32_t chunk_id);
-TokenChunk* tc_push(TokenTree* tree, int32_t scope_id);
-TokenChunk* tc_pop(TokenTree* tree);
-int32_t tc_size(TokenTree* tree);     // current chunk token count
-int32_t tc_scope(TokenTree* tree);    // current chunk scope_id
-void tc_parse_begin(TokenTree* tree); // set parse chunk = current
-void tc_parse_end(void);              // clear parse chunk
-int32_t match_tok(int32_t tok_id, int32_t col); // PEG token matcher
+TokenTree* tt_tree_new(ustr);
+void tt_tree_del(TokenTree*);
+struct {line, col} tt_locate(TokenTree* tree, int32_t cp_offset);
+tt_add(TokenTree* tree, int32_t tok_id, int32_t cp_start, int32_t cp_size, int32_t chunk_id);
+TokenChunk* tt_push(TokenTree* tree, int32_t scope_id);
+TokenChunk* tt_pop(TokenTree* tree);
+
+int32_t tt_current_size(TokenTree* tree); // current chunk token count
+TokenChunk* tt_current(TokenTree* tree); // get current chunk
 ```
+
+With `tc = tt_current(tree)`, we can check `tc->scope_id`, `tc->tokens[col]`
