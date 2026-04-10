@@ -15,6 +15,7 @@ typedef struct {
 struct IrWriter {
   FILE* out;
   char* imms;
+  char* labels;
   int reg;
   int label;
   int32_t dbg_line;
@@ -73,6 +74,8 @@ IrWriter* irwriter_new(FILE* out, const char* target_triple) {
   w->dbg_line = -1;
   w->imms = darray_new(1, 1);
   w->imms[0] = '\0';
+  w->labels = darray_new(1, 1);
+  w->labels[0] = '\0';
   return w;
 }
 
@@ -80,6 +83,7 @@ void irwriter_del(IrWriter* w) {
   symtab_free(&w->decls);
   darray_del(w->locs);
   darray_del(w->imms);
+  darray_del(w->labels);
   free(w->entry_prologue);
   free(w);
 }
@@ -109,6 +113,14 @@ static void _emit_val(FILE* out, const char* imms, IrVal v) {
     fprintf(out, "%s", imms + (-v));
   } else {
     fprintf(out, "%%r%d", (int)v);
+  }
+}
+
+static void _emit_label(FILE* out, const char* labels, IrLabel l) {
+  if (l < 0) {
+    fprintf(out, "%s", labels + (-l));
+  } else {
+    fprintf(out, "L%d", (int)l);
   }
 }
 
@@ -162,6 +174,7 @@ void irwriter_define_start(IrWriter* w, const char* name, const char* ret_type, 
 
   w->reg = 0;
   w->label = 0;
+  w->labels = darray_grow(w->labels, 1);
   w->widen_ret = strcmp(ret_type, "{i32, i32}") == 0;
   free(w->entry_prologue);
   w->entry_prologue = NULL;
@@ -211,10 +224,26 @@ void irwriter_define_end(IrWriter* w) {
   }
 }
 
-int32_t irwriter_label(IrWriter* w) { return w->label++; }
+IrLabel irwriter_label(IrWriter* w) { return w->label++; }
 
-int32_t irwriter_bb(IrWriter* w) {
-  int32_t id = w->label++;
+IrLabel irwriter_label_f(IrWriter* w, const char* fmt, ...) {
+  va_list ap;
+  va_start(ap, fmt);
+  int len = vsnprintf(NULL, 0, fmt, ap);
+  va_end(ap);
+
+  intptr_t offset = (intptr_t)darray_size(w->labels);
+  w->labels = darray_grow(w->labels, darray_size(w->labels) + (size_t)len + 1);
+
+  va_start(ap, fmt);
+  vsnprintf(w->labels + offset, (size_t)len + 1, fmt, ap);
+  va_end(ap);
+
+  return -(int32_t)offset;
+}
+
+IrLabel irwriter_bb(IrWriter* w) {
+  IrLabel id = w->label++;
   fprintf(w->out, "L%d:\n", id);
   if (w->entry_prologue) {
     fputs(w->entry_prologue, w->out);
@@ -224,7 +253,10 @@ int32_t irwriter_bb(IrWriter* w) {
   return id;
 }
 
-void irwriter_bb_at(IrWriter* w, int32_t label) { fprintf(w->out, "L%d:\n", label); }
+void irwriter_bb_at(IrWriter* w, IrLabel label) {
+  _emit_label(w->out, w->labels, label);
+  fprintf(w->out, ":\n");
+}
 
 void irwriter_dbg(IrWriter* w, int32_t line, int32_t col) {
   w->dbg_line = line;
@@ -269,32 +301,40 @@ IrVal irwriter_icmp(IrWriter* w, const char* pred, const char* ty, IrVal lhs, Ir
   return r;
 }
 
-void irwriter_br(IrWriter* w, int32_t label) {
+void irwriter_br(IrWriter* w, IrLabel label) {
   int dbg = _reserve_dbg(w);
-  fprintf(w->out, "  br label %%L%d", label);
+  fprintf(w->out, "  br label %%");
+  _emit_label(w->out, w->labels, label);
   _emit_dbg_suffix(w, dbg);
   fprintf(w->out, "\n");
 }
 
-void irwriter_br_cond(IrWriter* w, IrVal cond, int32_t if_true, int32_t if_false) {
+void irwriter_br_cond(IrWriter* w, IrVal cond, IrLabel if_true, IrLabel if_false) {
   int dbg = _reserve_dbg(w);
   fprintf(w->out, "  br i1 ");
   _emit_val(w->out, w->imms, cond);
-  fprintf(w->out, ", label %%L%d, label %%L%d", if_true, if_false);
+  fprintf(w->out, ", label %%");
+  _emit_label(w->out, w->labels, if_true);
+  fprintf(w->out, ", label %%");
+  _emit_label(w->out, w->labels, if_false);
   _emit_dbg_suffix(w, dbg);
   fprintf(w->out, "\n");
 }
 
-void irwriter_switch_start(IrWriter* w, const char* ty, IrVal val, int32_t default_label) {
+void irwriter_switch_start(IrWriter* w, const char* ty, IrVal val, IrLabel default_label) {
   w->switch_dbg_id = _reserve_dbg(w);
   fprintf(w->out, "  switch %s ", ty);
   _emit_val(w->out, w->imms, val);
-  fprintf(w->out, ", label %%L%d [\n", default_label);
+  fprintf(w->out, ", label %%");
+  _emit_label(w->out, w->labels, default_label);
+  fprintf(w->out, " [\n");
   w->in_switch = 1;
 }
 
-void irwriter_switch_case(IrWriter* w, const char* ty, int64_t val, int32_t label) {
-  fprintf(w->out, "    %s %lld, label %%L%d\n", ty, (long long)val, label);
+void irwriter_switch_case(IrWriter* w, const char* ty, int64_t val, IrLabel label) {
+  fprintf(w->out, "    %s %lld, label %%", ty, (long long)val);
+  _emit_label(w->out, w->labels, label);
+  fprintf(w->out, "\n");
 }
 
 void irwriter_switch_end(IrWriter* w) {
@@ -431,13 +471,17 @@ IrVal irwriter_next_reg(IrWriter* w) { return _next_reg(w); }
 
 void irwriter_emit_val(IrWriter* w, IrVal val) { _emit_val(w->out, w->imms, val); }
 
-IrVal irwriter_phi2(IrWriter* w, const char* ty, IrVal v1, int32_t bb1, IrVal v2, int32_t bb2) {
+IrVal irwriter_phi2(IrWriter* w, const char* ty, IrVal v1, IrLabel bb1, IrVal v2, IrLabel bb2) {
   IrVal r = _next_reg(w);
   fprintf(w->out, "  %%r%d = phi %s [ ", (int)r, ty);
   _emit_val(w->out, w->imms, v1);
-  fprintf(w->out, ", %%L%d ], [ ", bb1);
+  fprintf(w->out, ", %%");
+  _emit_label(w->out, w->labels, bb1);
+  fprintf(w->out, " ], [ ");
   _emit_val(w->out, w->imms, v2);
-  fprintf(w->out, ", %%L%d ]\n", bb2);
+  fprintf(w->out, ", %%");
+  _emit_label(w->out, w->labels, bb2);
+  fprintf(w->out, " ]\n");
   return r;
 }
 

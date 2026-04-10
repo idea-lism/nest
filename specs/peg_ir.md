@@ -20,11 +20,12 @@ typedef struct {
 
 - `peg_ir_term(ctx, int32_t term_id)`: emit code to match a terminal
 - `peg_ir_call(ctx, int32_t scoped_rule_id)`: emit code to call a rule
-- `peg_ir_seq(ctx, int32_t* seq)`: generate matcher IR for the broken down rule
+- `peg_ir_fast_call(ctx, int32_t scoped_rule_id)`: emit code to go to a rule, which doesn't require stack manipulation
+- `peg_ir_seq(ctx, int32_t* seq)`: generate matcher IR for the seq
 - `peg_ir_choice(ctx, int32_t* branches)`: generate matcher IR for the broken down rule
-- `peg_ir_maybe(ctx, kind, int32_t id)`
-- `peg_ir_star(ctx, kind, int32_t id, rhs_kind, int32_t rhs_id)`
-- `peg_ir_plus(ctx, kind, int32_t id, rhs_kind, int32_t rhs_id)`
+- `peg_ir_maybe(ctx, scoped_rule_id)`
+- `peg_ir_star(ctx, lhs_scoped_rule_id, rhs_scoped_rule_id)`
+- `peg_ir_plus(ctx, lhs_scoped_rule_id, rhs_scoped_rule_id)`
 - `peg_ir_emit_helpers(irwriter)`: define internal functions `@table_gep` (to access memoize table's slot), `@save`, `@restore`, and `@bit_test`, `@bit_deny`, `@bit_exclude` as defined in [PEG](peg.md)
 
 # Stack data layout and pseudo sub-rule calling
@@ -33,7 +34,7 @@ Layout
 
 ```c
 typedef union {
-  int32_t col;
+  int64_t col;
   void* ret_site;
 } StackSlot;
 
@@ -61,7 +62,7 @@ Operations
 ret_label:
   parsed = %ret;
 
-// return
+// call return
 {scope_name}${scoped_rule_name}:
   %ret_addr = stack->ret_size;
   stack--;
@@ -69,6 +70,17 @@ ret_label:
   %ret = ...
   stack = %bp;
   br %ret_addr;
+
+// fast_call sub-rule
+  %fast_ret_addr = &&ret_label;
+  br {scope_name}${scoped_rule_name};
+ret_label:
+  parsed = %ret
+
+// fast_call return
+{scope_name}${scoped_rule_name}:
+  %ret = ...
+  br %%fast_ret_addr
 ```
 
 # Code gen

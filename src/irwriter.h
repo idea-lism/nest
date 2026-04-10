@@ -6,6 +6,7 @@
 
 typedef struct IrWriter IrWriter;
 typedef int32_t IrVal;
+typedef int32_t IrLabel;
 
 IrWriter* irwriter_new(FILE* out, const char* target_triple);
 void irwriter_del(IrWriter* w);
@@ -17,9 +18,10 @@ void irwriter_define_start(IrWriter* w, const char* name, const char* ret_type, 
                            const char** arg_names);
 void irwriter_define_end(IrWriter* w);
 
-int32_t irwriter_label(IrWriter* w);
-int32_t irwriter_bb(IrWriter* w);
-void irwriter_bb_at(IrWriter* w, int32_t label);
+IrLabel irwriter_label(IrWriter* w);
+IrLabel irwriter_label_f(IrWriter* w, const char* fmt, ...);
+IrLabel irwriter_bb(IrWriter* w);
+void irwriter_bb_at(IrWriter* w, IrLabel label);
 
 void irwriter_dbg(IrWriter* w, int32_t line, int32_t col);
 
@@ -29,11 +31,11 @@ IrVal irwriter_binop(IrWriter* w, const char* op, const char* ty, IrVal lhs, IrV
 
 IrVal irwriter_icmp(IrWriter* w, const char* pred, const char* ty, IrVal lhs, IrVal rhs);
 
-void irwriter_br(IrWriter* w, int32_t label);
-void irwriter_br_cond(IrWriter* w, IrVal cond, int32_t if_true, int32_t if_false);
+void irwriter_br(IrWriter* w, IrLabel label);
+void irwriter_br_cond(IrWriter* w, IrVal cond, IrLabel if_true, IrLabel if_false);
 
-void irwriter_switch_start(IrWriter* w, const char* ty, IrVal val, int32_t default_label);
-void irwriter_switch_case(IrWriter* w, const char* ty, int64_t val, int32_t label);
+void irwriter_switch_start(IrWriter* w, const char* ty, IrVal val, IrLabel default_label);
+void irwriter_switch_case(IrWriter* w, const char* ty, int64_t val, IrLabel label);
 void irwriter_switch_end(IrWriter* w);
 
 void irwriter_ret(IrWriter* w, const char* ty, IrVal val);
@@ -56,7 +58,7 @@ void irwriter_store(IrWriter* w, const char* ty, IrVal val, IrVal ptr);
 IrVal irwriter_next_reg(IrWriter* w);
 void irwriter_emit_val(IrWriter* w, IrVal val);
 
-IrVal irwriter_phi2(IrWriter* w, const char* ty, IrVal v1, int32_t bb1, IrVal v2, int32_t bb2);
+IrVal irwriter_phi2(IrWriter* w, const char* ty, IrVal v1, IrLabel bb1, IrVal v2, IrLabel bb2);
 IrVal irwriter_sext(IrWriter* w, const char* from_ty, IrVal val, const char* to_ty);
 
 void irwriter_type_def(IrWriter* w, const char* name, const char* body);

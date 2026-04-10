@@ -177,8 +177,8 @@ static void _gen_dispatch(VpaGenInput* input, IrWriter* w, Actions actions) {
     return;
   }
 
-  int32_t default_bb = irwriter_label(w);
-  int32_t* case_bbs = malloc((size_t)n_actions * sizeof(int32_t));
+  IrLabel default_bb = irwriter_label(w);
+  IrLabel* case_bbs = malloc((size_t)n_actions * sizeof(IrLabel));
   for (int32_t i = 1; i < n_actions; i++) {
     case_bbs[i] = irwriter_label(w);
   }
@@ -221,11 +221,11 @@ static void _gen_dispatch(VpaGenInput* input, IrWriter* w, Actions actions) {
           if (ed) {
             int32_t n_effects = (int32_t)darray_size(ed->effects);
             // build a chain: check ret_val against each valid effect, if none match -> error
-            int32_t ok_bb = irwriter_label(w);
-            int32_t err_bb = irwriter_label(w);
-            int32_t* effect_bbs = NULL;
+            IrLabel ok_bb = irwriter_label(w);
+            IrLabel err_bb = irwriter_label(w);
+            IrLabel* effect_bbs = NULL;
             if (n_effects > 0) {
-              effect_bbs = malloc((size_t)n_effects * sizeof(int32_t));
+              effect_bbs = malloc((size_t)n_effects * sizeof(IrLabel));
               for (int32_t e = 0; e < n_effects; e++) {
                 effect_bbs[e] = irwriter_label(w);
               }
@@ -298,11 +298,11 @@ static void _gen_vpa_lex(VpaGenInput* input, IrWriter* w) {
   irwriter_store(w, "i32", irwriter_imm_int(w, 0), last_match_off_ptr);
   irwriter_store(w, "i32", irwriter_imm_int(w, 0), token_start_ptr);
 
-  int32_t loop_bb = irwriter_label(w);
-  int32_t read_bb = irwriter_label(w);
-  int32_t dispatch_bb = irwriter_label(w);
-  int32_t dispatch_action_bb = irwriter_label(w);
-  int32_t done_bb = irwriter_label(w);
+  IrLabel loop_bb = irwriter_label(w);
+  IrLabel read_bb = irwriter_label(w);
+  IrLabel dispatch_bb = irwriter_label(w);
+  IrLabel dispatch_action_bb = irwriter_label(w);
+  IrLabel done_bb = irwriter_label(w);
 
   irwriter_br(w, loop_bb);
 
@@ -327,14 +327,14 @@ static void _gen_vpa_lex(VpaGenInput* input, IrWriter* w) {
     IrVal new_state = irwriter_extractvalue(w, "{i32, i32}", result, 0);
     IrVal action = irwriter_extractvalue(w, "{i32, i32}", result, 1);
 
-    int32_t has_action_bb = irwriter_label(w);
-    int32_t no_action_bb = irwriter_label(w);
+    IrLabel has_action_bb = irwriter_label(w);
+    IrLabel no_action_bb = irwriter_label(w);
     IrVal action_valid = irwriter_icmp(w, "ne", "i32", action, irwriter_imm_int(w, -2));
     irwriter_br_cond(w, action_valid, has_action_bb, no_action_bb);
 
     irwriter_bb_at(w, has_action_bb);
-    int32_t action_pos_bb = irwriter_label(w);
-    int32_t advance_bb = irwriter_label(w);
+    IrLabel action_pos_bb = irwriter_label(w);
+    IrLabel advance_bb = irwriter_label(w);
     IrVal action_is_pos = irwriter_icmp(w, "sgt", "i32", action, irwriter_imm_int(w, 0));
     irwriter_br_cond(w, action_is_pos, action_pos_bb, advance_bb);
 

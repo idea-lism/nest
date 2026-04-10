@@ -57,10 +57,11 @@ TEST(test_slot_access) {
   ctx.table = irwriter_imm(w, "%table");
   ctx.tokens = irwriter_imm(w, "%tokens");
   ctx.n_tokens = irwriter_imm(w, "%ntoks");
-  ctx.col_index = irwriter_alloca(w, "i32");
+  ctx.col_index = irwriter_alloca(w, "i64");
   ctx.stack = irwriter_alloca(w, "ptr");
   ctx.stack_bp = irwriter_alloca(w, "ptr");
   ctx.ret_val = irwriter_alloca(w, "i32");
+  ctx.fast_ret = irwriter_alloca(w, "ptr");
   ctx.col_sizeof = 8; // 2 slots * 4 bytes
 
   IrVal col = irwriter_imm_int(w, 0);
@@ -102,7 +103,7 @@ TEST(test_bit_ops) {
   ScopedRule rules[1] = {{.name = "r0", .kind = SCOPED_RULE_KIND_TERM, .as.term = 1}};
   PegIrCtx ctx = _make_ctx(w, rules, 1);
   ctx.table = irwriter_imm(w, "%table");
-  ctx.col_index = irwriter_alloca(w, "i32");
+  ctx.col_index = irwriter_alloca(w, "i64");
   ctx.col_sizeof = 8; // 1 seg_group (4 bytes) + 1 slot (4 bytes)
   ctx.bits_offset = 0;
   ctx.slots_offset = 4;
@@ -152,14 +153,15 @@ TEST(test_term) {
   PegIrCtx ctx = _make_ctx(w, rules, 1);
   ctx.tokens = irwriter_imm(w, "%tokens");
   ctx.n_tokens = irwriter_imm(w, "%ntoks");
-  ctx.col_index = irwriter_alloca(w, "i32");
-  irwriter_store(w, "i32", irwriter_imm_int(w, 0), ctx.col_index);
+  ctx.col_index = irwriter_alloca(w, "i64");
+  irwriter_store(w, "i64", irwriter_imm_int(w, 0), ctx.col_index);
   ctx.table = irwriter_imm(w, "null");
   ctx.stack = irwriter_alloca(w, "ptr");
   ctx.stack_bp = irwriter_alloca(w, "ptr");
   ctx.ret_val = irwriter_alloca(w, "i32");
+  ctx.fast_ret = irwriter_alloca(w, "ptr");
 
-  int32_t fail_bb = irwriter_label(w);
+  IrLabel fail_bb = irwriter_label(w);
   ctx.fail_label = fail_bb;
 
   IrVal r = peg_ir_term(&ctx, 5);
@@ -213,14 +215,15 @@ TEST(test_seq) {
   PegIrCtx ctx = _make_ctx(w, rules, 3);
   ctx.tokens = irwriter_imm(w, "%tokens");
   ctx.n_tokens = irwriter_imm(w, "%ntoks");
-  ctx.col_index = irwriter_alloca(w, "i32");
-  irwriter_store(w, "i32", irwriter_imm_int(w, 0), ctx.col_index);
+  ctx.col_index = irwriter_alloca(w, "i64");
+  irwriter_store(w, "i64", irwriter_imm_int(w, 0), ctx.col_index);
   ctx.table = irwriter_imm(w, "null");
   ctx.stack = irwriter_alloca(w, "ptr");
   ctx.stack_bp = irwriter_alloca(w, "ptr");
   ctx.ret_val = irwriter_alloca(w, "i32");
+  ctx.fast_ret = irwriter_alloca(w, "ptr");
 
-  int32_t fail_bb = irwriter_label(w);
+  IrLabel fail_bb = irwriter_label(w);
   ctx.fail_label = fail_bb;
 
   IrVal r = peg_ir_seq(&ctx, rules[2].as.seq);
@@ -235,10 +238,10 @@ TEST(test_seq) {
   irwriter_del(w);
   fclose(f);
 
-  // seq should have two icmp eq checks (one for each terminal)
+  // seq should emit two peg_ir_call (one per terminal child)
   int count = 0;
   const char* p = buf;
-  while ((p = strstr(p, "icmp eq")) != NULL) {
+  while ((p = strstr(p, "blockaddress")) != NULL) {
     count++;
     p++;
   }
@@ -276,15 +279,16 @@ TEST(test_choice) {
   PegIrCtx ctx = _make_ctx(w, rules, 2);
   ctx.tokens = irwriter_imm(w, "%tokens");
   ctx.n_tokens = irwriter_imm(w, "%ntoks");
-  ctx.col_index = irwriter_alloca(w, "i32");
-  irwriter_store(w, "i32", irwriter_imm_int(w, 0), ctx.col_index);
+  ctx.col_index = irwriter_alloca(w, "i64");
+  irwriter_store(w, "i64", irwriter_imm_int(w, 0), ctx.col_index);
   ctx.table = irwriter_imm(w, "null");
   ctx.stack = irwriter_alloca(w, "ptr");
   irwriter_store(w, "ptr", irwriter_imm(w, "%stack"), ctx.stack);
   ctx.stack_bp = irwriter_alloca(w, "ptr");
   ctx.ret_val = irwriter_alloca(w, "i32");
+  ctx.fast_ret = irwriter_alloca(w, "ptr");
 
-  int32_t fail_bb = irwriter_label(w);
+  IrLabel fail_bb = irwriter_label(w);
   ctx.fail_label = fail_bb;
 
   IrVal r = peg_ir_choice(&ctx, branches);
@@ -301,10 +305,10 @@ TEST(test_choice) {
 
   // choice should have stack save/restore calls
   assert(strstr(buf, "@save") != NULL);
-  // should have two terminal checks
+  // should have two sub-rule calls
   int count = 0;
   const char* p = buf;
-  while ((p = strstr(p, "icmp eq")) != NULL) {
+  while ((p = strstr(p, "blockaddress")) != NULL) {
     count++;
     p++;
   }
@@ -337,18 +341,19 @@ TEST(test_maybe) {
   PegIrCtx ctx = _make_ctx(w, rules, 1);
   ctx.tokens = irwriter_imm(w, "%tokens");
   ctx.n_tokens = irwriter_imm(w, "%ntoks");
-  ctx.col_index = irwriter_alloca(w, "i32");
-  irwriter_store(w, "i32", irwriter_imm_int(w, 0), ctx.col_index);
+  ctx.col_index = irwriter_alloca(w, "i64");
+  irwriter_store(w, "i64", irwriter_imm_int(w, 0), ctx.col_index);
   ctx.table = irwriter_imm(w, "null");
   ctx.stack = irwriter_alloca(w, "ptr");
   ctx.stack_bp = irwriter_alloca(w, "ptr");
   ctx.ret_val = irwriter_alloca(w, "i32");
+  ctx.fast_ret = irwriter_alloca(w, "ptr");
 
-  int32_t fail_bb = irwriter_label(w);
+  IrLabel fail_bb = irwriter_label(w);
   ctx.fail_label = fail_bb;
 
   // maybe should always succeed (never go to fail)
-  IrVal r = peg_ir_maybe(&ctx, SCOPED_RULE_KIND_TERM, 0);
+  IrVal r = peg_ir_maybe(&ctx, 0);
   (void)r;
   irwriter_ret_void(w);
 
@@ -393,18 +398,19 @@ TEST(test_seq_with_plus_child) {
   PegIrCtx ctx = _make_ctx(w, rules, 1);
   ctx.tokens = irwriter_imm(w, "%tokens");
   ctx.n_tokens = irwriter_imm(w, "%ntoks");
-  ctx.col_index = irwriter_alloca(w, "i32");
-  irwriter_store(w, "i32", irwriter_imm_int(w, 0), ctx.col_index);
+  ctx.col_index = irwriter_alloca(w, "i64");
+  irwriter_store(w, "i64", irwriter_imm_int(w, 0), ctx.col_index);
   ctx.table = irwriter_imm(w, "null");
   ctx.stack = irwriter_alloca(w, "ptr");
   ctx.stack_bp = irwriter_alloca(w, "ptr");
   ctx.ret_val = irwriter_alloca(w, "i32");
+  ctx.fast_ret = irwriter_alloca(w, "ptr");
 
-  int32_t fail_bb = irwriter_label(w);
+  IrLabel fail_bb = irwriter_label(w);
   ctx.fail_label = fail_bb;
 
   irwriter_comment(w, "PLUS_BEGIN");
-  IrVal result = peg_ir_plus(&ctx, SCOPED_RULE_KIND_TERM, 0, 0, 0);
+  IrVal result = peg_ir_plus(&ctx, 0, 0);
   (void)result;
   irwriter_comment(w, "PLUS_END");
 
@@ -435,9 +441,9 @@ TEST(test_seq_with_plus_child) {
 
   int store_count = 0;
   const char* p = begin;
-  while (p < end && (p = strstr(p, "store i32")) != NULL && p < end) {
+  while (p < end && (p = strstr(p, "store i")) != NULL && p < end) {
     store_count++;
-    p += 9;
+    p += 7;
   }
   // With fix: stores include col_save(1), loop col_save(1),
   // loop-exit col_save restore(1), origin restore(1), acc stores(2+) = 5+
@@ -471,18 +477,19 @@ TEST(test_star_does_not_own_col) {
   PegIrCtx ctx = _make_ctx(w, rules, 1);
   ctx.tokens = irwriter_imm(w, "%tokens");
   ctx.n_tokens = irwriter_imm(w, "%ntoks");
-  ctx.col_index = irwriter_alloca(w, "i32");
-  irwriter_store(w, "i32", irwriter_imm_int(w, 0), ctx.col_index);
+  ctx.col_index = irwriter_alloca(w, "i64");
+  irwriter_store(w, "i64", irwriter_imm_int(w, 0), ctx.col_index);
   ctx.table = irwriter_imm(w, "null");
   ctx.stack = irwriter_alloca(w, "ptr");
   ctx.stack_bp = irwriter_alloca(w, "ptr");
   ctx.ret_val = irwriter_alloca(w, "i32");
+  ctx.fast_ret = irwriter_alloca(w, "ptr");
 
-  int32_t fail_bb = irwriter_label(w);
+  IrLabel fail_bb = irwriter_label(w);
   ctx.fail_label = fail_bb;
 
   irwriter_comment(w, "STAR_BEGIN");
-  IrVal result = peg_ir_star(&ctx, SCOPED_RULE_KIND_TERM, 0, 0, 0);
+  IrVal result = peg_ir_star(&ctx, 0, 0);
   (void)result;
   irwriter_comment(w, "STAR_END");
 
@@ -507,9 +514,9 @@ TEST(test_star_does_not_own_col) {
   // Without fix: no origin restore, fewer stores.
   int store_count = 0;
   const char* p = begin;
-  while (p < end && (p = strstr(p, "store i32")) != NULL && p < end) {
+  while (p < end && (p = strstr(p, "store i")) != NULL && p < end) {
     store_count++;
-    p += 9;
+    p += 7;
   }
   assert(store_count >= 4 && "star must restore col_index to origin before returning");
 

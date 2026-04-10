@@ -50,7 +50,7 @@ typedef struct {
   Symtab tokens;      // owned by ParseState
   Symtab scope_names; // owned by ParseState
   Symtab rule_names;  // owned by ParseState
-  bool verbose;
+  int32_t verbose;
 } PegGenInput;
 
 // --- Internal types for code generation ---
@@ -97,6 +97,7 @@ typedef struct {
   Symtab defined_rules;
   ScopedRule* rules; // darray
   int32_t* root_ids; // darray: root_ids[symtab_id] = ScopedRule index of that rule's root
+  int32_t memoizable_size;
 } ScopeClosure;
 
 // --- User API: parse tree retrieval ---

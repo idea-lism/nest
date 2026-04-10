@@ -28,7 +28,8 @@ Internal structure
 ```c
 struct IrWriter {
   FILE* out;
-  char* imms;
+  char* imm;
+  char* labels;
   int32_t max_reg;
   int32_t max_label;
 };
@@ -42,7 +43,7 @@ Value token: universal representation for imm & regs so ops won't need to distin
 
 ```c
 // in irwriter.h
-typedef int32_t IrVal
+typedef int32_t IrVal;
 
 // using
 IrVal lhs = irwriter_reg(w); // alloc a new register to use, positive integer
@@ -53,7 +54,10 @@ IrVal res = irwriter_binop(w, op, ty, lhs, rhs);
 Labeling:
 
 ```c
-int32_t my_label = irwriter_label(w); // creates a label
+typedef int32_t IrLabel;
+
+IrLabel numbered = irwriter_label(w);           // creates a numbered label, which outputs "Lxx", positive integer
+IrLabel my_label = irwriter_label_f(w, "name"); // creates a string label, user decides the name, returns negative integer
 irwriter_bb_at(w, my_label);
 ```
 

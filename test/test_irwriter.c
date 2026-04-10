@@ -98,8 +98,8 @@ static void _emit_icmp_branch(IrWriter* w) {
   const char* arg_names[] = {"x"};
   irwriter_define_start(w, "f", "i32", 1, arg_types, arg_names);
 
-  int32_t positive = irwriter_label(w); // L0
-  int32_t negative = irwriter_label(w); // L1
+  IrLabel positive = irwriter_label(w); // L0
+  IrLabel negative = irwriter_label(w); // L1
 
   irwriter_bb(w); // entry, emits prologue
   IrVal x = irwriter_imm(w, "%x");
@@ -133,10 +133,10 @@ static void _emit_switch(IrWriter* w) {
   const char* arg_names[] = {"s"};
   irwriter_define_start(w, "dispatch", "void", 1, arg_types, arg_names);
 
-  int32_t dead = irwriter_label(w);   // L0
-  int32_t state0 = irwriter_label(w); // L1
-  int32_t state1 = irwriter_label(w); // L2
-  int32_t done = irwriter_label(w);   // L3
+  IrLabel dead = irwriter_label(w);   // L0
+  IrLabel state0 = irwriter_label(w); // L1
+  IrLabel state1 = irwriter_label(w); // L2
+  IrLabel done = irwriter_label(w);   // L3
 
   irwriter_bb(w); // entry
   irwriter_switch_start(w, "i32", irwriter_imm(w, "%s"), dead);
@@ -229,10 +229,10 @@ static void _emit_dfa_function(IrWriter* w) {
   const char* arg_names[] = {"state", "cp"};
   irwriter_define_start(w, "match", "{i32, i32}", 2, arg_types, arg_names);
 
-  int32_t dead = irwriter_label(w);     // L0
-  int32_t state0 = irwriter_label(w);   // L1
-  int32_t s0_match = irwriter_label(w); // L2
-  int32_t s0_fail = irwriter_label(w);  // L3
+  IrLabel dead = irwriter_label(w);     // L0
+  IrLabel state0 = irwriter_label(w);   // L1
+  IrLabel s0_match = irwriter_label(w); // L2
+  IrLabel s0_fail = irwriter_label(w);  // L3
 
   // entry: switch on state
   irwriter_bb(w);
@@ -291,6 +291,39 @@ TEST(test_dfa_function) {
   free(out);
 }
 
+static void _emit_label_f(IrWriter* w) {
+  irwriter_start(w, "test.ll", ".");
+  const char* arg_types[] = {"i32"};
+  const char* arg_names[] = {"x"};
+  irwriter_define_start(w, "f", "i32", 1, arg_types, arg_names);
+
+  IrLabel entry_bb = irwriter_bb(w);
+  (void)entry_bb;
+  IrLabel yes = irwriter_label_f(w, "yes");
+  IrLabel no = irwriter_label_f(w, "no");
+
+  IrVal x = irwriter_imm(w, "%x");
+  IrVal cmp = irwriter_icmp(w, "sge", "i32", x, irwriter_imm(w, "0"));
+  irwriter_br_cond(w, cmp, yes, no);
+
+  irwriter_bb_at(w, yes);
+  irwriter_ret(w, "i32", x);
+
+  irwriter_bb_at(w, no);
+  irwriter_ret(w, "i32", irwriter_imm(w, "0"));
+
+  irwriter_define_end(w);
+  irwriter_end(w);
+}
+
+TEST(test_label_f) {
+  char* out = _capture(_emit_label_f);
+  assert(strstr(out, "br i1 %r0, label %yes, label %no"));
+  assert(strstr(out, "yes:"));
+  assert(strstr(out, "no:"));
+  free(out);
+}
+
 TEST(test_lifecycle) {
   FILE* f = compat_devnull_w();
   assert(f);
@@ -324,10 +357,10 @@ TEST(test_clang_compile) {
   const char* arg_names[] = {"state", "cp"};
   irwriter_define_start(w, "match", "{i32, i32}", 2, arg_types, arg_names);
 
-  int32_t state0 = irwriter_label(w);   // L0
-  int32_t dead = irwriter_label(w);     // L1
-  int32_t s0_match = irwriter_label(w); // L2
-  int32_t s0_fail = irwriter_label(w);  // L3
+  IrLabel state0 = irwriter_label(w);   // L0
+  IrLabel dead = irwriter_label(w);     // L1
+  IrLabel s0_match = irwriter_label(w); // L2
+  IrLabel s0_fail = irwriter_label(w);  // L3
 
   // entry BB (emits prologue)
   irwriter_bb(w); // L4
@@ -405,6 +438,7 @@ int main(void) {
   RUN(test_insertvalue);
   RUN(test_debug_locations);
   RUN(test_dfa_function);
+  RUN(test_label_f);
   RUN(test_lifecycle);
   RUN(test_clang_compile);
   printf("all ok\n");

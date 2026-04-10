@@ -254,9 +254,12 @@ static int32_t _cmd_compile(int32_t argc, char** argv) {
   ParseState* ps = parse_state_new();
 
   int verbose = arg_v ? atoi(arg_v) : 0;
+  if (verbose < 0) {
+    verbose = 0;
+  }
 
   int ret = 0;
-  if (verbose >= 1) {
+  if (verbose) {
     fprintf(stderr, "[nest] parse\n");
   }
   if (!parse_nest(ps, src)) {
@@ -264,17 +267,17 @@ static int32_t _cmd_compile(int32_t argc, char** argv) {
     ret = -1;
     goto cleanup;
   }
-  if (verbose >= 1) {
+  if (verbose) {
     fprintf(stderr, "[nest] post_process\n");
   }
-  if (!(verbose >= 1 ? pp_all_passes_verbose(ps) : pp_all_passes(ps))) {
+  if (!(verbose ? pp_all_passes_verbose(ps) : pp_all_passes(ps))) {
     fprintf(stderr, "nest: %s\n", parse_get_error(ps));
     ret = -1;
     goto cleanup;
   }
 
   bool compress_memoize = !(arg_k && strcmp(arg_k, "false") == 0);
-  if (verbose >= 1) {
+  if (verbose) {
     fprintf(stderr, "[nest] peg_gen\n");
   }
   peg_gen(
@@ -283,10 +286,10 @@ static int32_t _cmd_compile(int32_t argc, char** argv) {
           .tokens = ps->tokens,
           .scope_names = ps->scope_names,
           .rule_names = ps->rule_names,
-          .verbose = (verbose >= 1),
+          .verbose = verbose,
       },
       hw, w, compress_memoize, prefix);
-  if (verbose >= 1) {
+  if (verbose) {
     fprintf(stderr, "[nest] vpa_gen\n");
   }
   vpa_gen(

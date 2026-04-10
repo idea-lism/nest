@@ -324,6 +324,96 @@ static void _breakdown_rules(PegGenInput* input, ScopeClosure* closures, int32_t
 }
 
 // ============================================================
+// Sort memoizables to front
+// ============================================================
+
+typedef struct {
+  int32_t old;
+  bool needs_memo;
+} _MemoSort;
+
+static int _memo_sort_cmp(const void* a, const void* b) {
+  const _MemoSort* ma = a;
+  const _MemoSort* mb = b;
+  int ka = ma->needs_memo ? -1 : 1;
+  int kb = mb->needs_memo ? -1 : 1;
+  if (ka != kb) {
+    return ka - kb;
+  }
+  return ma->old - mb->old;
+}
+
+static void _sort_memoizables(ScopeClosure* sc) {
+  int32_t n = (int32_t)darray_size(sc->rules);
+  if (n == 0) {
+    return;
+  }
+
+  // 1. create new_to_old with {old, needs_memo}
+  _MemoSort* new_to_old = malloc(n * sizeof(_MemoSort));
+  for (int32_t i = 0; i < n; i++) {
+    new_to_old[i].old = i;
+    new_to_old[i].needs_memo = sc->rules[i].needs_memo;
+  }
+
+  // 2. sort by needs_memo ? -1 : 1, tiebreak by old index
+  qsort(new_to_old, n, sizeof(_MemoSort), _memo_sort_cmp);
+
+  // 3. create reverse mapping old_to_new
+  int32_t* old_to_new = malloc(n * sizeof(int32_t));
+  for (int32_t i = 0; i < n; i++) {
+    old_to_new[new_to_old[i].old] = i;
+  }
+
+  // 4. create new_rules, rewrite call/join targets by old_to_new
+  ScopedRule* new_rules = darray_new(sizeof(ScopedRule), 0);
+  sc->memoizable_size = 0;
+  for (int32_t i = 0; i < n; i++) {
+    ScopedRule r = sc->rules[new_to_old[i].old];
+    r.scoped_rule_id = (uint32_t)i;
+    switch (r.kind) {
+    case SCOPED_RULE_KIND_CALL:
+      r.as.call = old_to_new[r.as.call];
+      break;
+    case SCOPED_RULE_KIND_JOIN:
+      r.as.join.lhs = old_to_new[r.as.join.lhs];
+      r.as.join.rhs = old_to_new[r.as.join.rhs];
+      break;
+    case SCOPED_RULE_KIND_SEQ:
+      for (int32_t j = 0; j < (int32_t)darray_size(r.as.seq); j++) {
+        r.as.seq[j] = old_to_new[r.as.seq[j]];
+      }
+      break;
+    case SCOPED_RULE_KIND_BRANCHES:
+      for (int32_t j = 0; j < (int32_t)darray_size(r.as.branches); j++) {
+        r.as.branches[j] = old_to_new[r.as.branches[j]];
+      }
+      break;
+    case SCOPED_RULE_KIND_TERM:
+      break;
+    }
+    if (r.needs_memo) {
+      sc->memoizable_size++;
+    }
+    darray_push(new_rules, r);
+  }
+
+  // remap root_ids
+  for (int32_t i = 0; i < (int32_t)darray_size(sc->root_ids); i++) {
+    if (sc->root_ids[i] >= 0) {
+      sc->root_ids[i] = old_to_new[sc->root_ids[i]];
+    }
+  }
+
+  // 5. replace rules with new_rules
+  darray_del(sc->rules);
+  sc->rules = new_rules;
+
+  free(new_to_old);
+  free(old_to_new);
+}
+
+// ============================================================
 // Nullable / first_set / last_set
 // ============================================================
 
@@ -477,7 +567,7 @@ static void _assign_naive(ScopeClosure* sc) {
   }
 }
 
-static void _assign_colored(ScopeClosure* sc) {
+static void _assign_colored(ScopeClosure* sc, int32_t verbose) {
   int32_t n = (int32_t)darray_size(sc->rules);
 
   int32_t n_memo = 0;
@@ -508,9 +598,20 @@ static void _assign_colored(ScopeClosure* sc) {
     }
   }
 
+  int32_t min_k = 1;
+  int32_t* clique = graph_find_max_clique(g);
+  if (clique) {
+    min_k = clique[0];
+    free(clique);
+  }
+
+  if (verbose) {
+    fprintf(stderr, "  [peg] %s: clique lower bound = %d\n", sc->scope_name, min_k);
+  }
+
   ColoringResult* cr = NULL;
   int32_t k;
-  for (k = 1; k <= n_memo; k++) {
+  for (k = min_k; k <= n_memo; k++) {
     cr = coloring_solve(n_memo, graph_edges(g), graph_n_edges(g), k, 50000, 42);
     if (cr) {
       break;
@@ -614,11 +715,10 @@ static void _gen_scope(PegGenInput* input, ScopeClosure* sc, IrWriter* w, bool c
   irwriter_rawf(w, "  %%r%d = getelementptr i8, ptr ", (int)cnt_pp);
   irwriter_emit_val(w, tokens);
   irwriter_rawf(w, ", i64 -4\n");
-  IrVal n_tokens = irwriter_load(w, "i32", cnt_pp);
+  IrVal n_tokens_i32 = irwriter_load(w, "i32", cnt_pp);
+  IrVal n_tokens = irwriter_sext(w, "i32", n_tokens_i32, "i64");
 
-  IrVal ntok64 = irwriter_sext(w, "i32", n_tokens, "i64");
-  IrVal csz64 = irwriter_sext(w, "i32", irwriter_imm_int(w, col_sizeof), "i64");
-  IrVal tbl_bytes = irwriter_binop(w, "mul", "i64", ntok64, csz64);
+  IrVal tbl_bytes = irwriter_binop(w, "mul", "i64", n_tokens, irwriter_imm_int(w, col_sizeof));
   IrVal tbl = irwriter_next_reg(w);
   irwriter_rawf(w, "  %%r%d = call ptr @malloc(i64 ", (int)tbl);
   irwriter_emit_val(w, tbl_bytes);
@@ -636,13 +736,14 @@ static void _gen_scope(PegGenInput* input, ScopeClosure* sc, IrWriter* w, bool c
   irwriter_rawf(w, ", i64 8\n");
   irwriter_store(w, "ptr", tbl, val_pp);
 
-  IrVal col_a = irwriter_alloca(w, "i32");
-  irwriter_store(w, "i32", irwriter_imm_int(w, 0), col_a);
+  IrVal col_a = irwriter_alloca(w, "i64");
+  irwriter_store(w, "i64", irwriter_imm_int(w, 0), col_a);
   IrVal sp_a = irwriter_alloca(w, "ptr");
   irwriter_store(w, "ptr", irwriter_imm(w, "%stack_mem"), sp_a);
   IrVal bp_a = irwriter_alloca(w, "ptr");
   irwriter_store(w, "ptr", irwriter_imm(w, "%stack_mem"), bp_a);
   IrVal ret_a = irwriter_alloca(w, "i32");
+  IrVal fast_ret_a = irwriter_alloca(w, "ptr");
 
   PegIrCtx ctx = {
       .w = w,
@@ -651,6 +752,7 @@ static void _gen_scope(PegGenInput* input, ScopeClosure* sc, IrWriter* w, bool c
       .stack = sp_a,
       .stack_bp = bp_a,
       .ret_val = ret_a,
+      .fast_ret = fast_ret_a,
       .table = tbl,
       .n_tokens = n_tokens,
       .scope_name = sc->scope_name,
@@ -673,32 +775,70 @@ static void _gen_scope(PegGenInput* input, ScopeClosure* sc, IrWriter* w, bool c
     }
   }
 
-  int32_t fail_bb = irwriter_label(w);
-  int32_t succ_bb = irwriter_label(w);
+  IrLabel fail_bb = irwriter_label(w);
+  IrLabel succ_bb = irwriter_label(w);
   ctx.fail_label = fail_bb;
 
   (void)peg_ir_call(&ctx, entry_id);
   irwriter_br(w, succ_bb);
 
-  // Emit per-rule labeled blocks for memoized parsing
+  // Emit per-rule labeled blocks
   for (int32_t i = 0; i < n_rules; i++) {
     ScopedRule* rule = &sc->rules[i];
-    if (!rule->needs_memo) {
+
+    irwriter_bb_at(w, irwriter_label_f(w, "%s$%s", sc->scope_name, rule->name));
+
+    if (rule->kind == SCOPED_RULE_KIND_CALL) {
+      irwriter_br(w, irwriter_label_f(w, "%s$%s", sc->scope_name, sc->rules[rule->as.call].name));
       continue;
     }
 
-    irwriter_rawf(w, "%s:\n", rule->name);
+    if (!rule->needs_memo) {
+      // Non-memoizable (TERM): compute and return via fast_ret
+      IrLabel parse_fail_bb = irwriter_label(w);
+      IrLabel ret_bb = irwriter_label(w);
+      ctx.fail_label = parse_fail_bb;
 
-    int32_t rule_done_bb = irwriter_label(w);
-    int32_t rule_compute_bb = irwriter_label(w);
-    int32_t rule_miss_bb = irwriter_label(w);
+      IrVal match_len;
+      switch (rule->kind) {
+      case SCOPED_RULE_KIND_TERM:
+        match_len = peg_ir_term(&ctx, rule->as.term);
+        break;
+      default:
+        match_len = irwriter_imm_int(w, 0);
+        break;
+      }
 
-    IrVal col = irwriter_load(w, "i32", col_a);
+      irwriter_store(w, "i32", match_len, ret_a);
+      irwriter_br(w, ret_bb);
+
+      // fail path
+      irwriter_bb_at(w, parse_fail_bb);
+      irwriter_store(w, "i32", irwriter_imm_int(w, -1), ret_a);
+      irwriter_br(w, ret_bb);
+
+      // return via fast_ret
+      irwriter_bb_at(w, ret_bb);
+      IrVal ret_ptr = irwriter_load(w, "ptr", fast_ret_a);
+      irwriter_rawf(w, "  indirectbr ptr ");
+      irwriter_emit_val(w, ret_ptr);
+      irwriter_rawf(w, ", []\n");
+
+      ctx.fail_label = fail_bb;
+      continue;
+    }
+
+    // Memoizable rule: memo check -> compute -> memo write -> return
+    IrLabel rule_done_bb = irwriter_label(w);
+    IrLabel rule_compute_bb = irwriter_label(w);
+    IrLabel rule_miss_bb = irwriter_label(w);
+
+    IrVal col = irwriter_load(w, "i64", col_a);
 
     if (compress && n_sg > 0) {
       // row_shared: bit test first
       IrVal bit_ok = peg_ir_bit_test(&ctx, col, rule->segment_index, rule->rule_bit_mask);
-      int32_t bit_pass_bb = irwriter_label(w);
+      IrLabel bit_pass_bb = irwriter_label(w);
       irwriter_br_cond(w, bit_ok, bit_pass_bb, rule_miss_bb);
       irwriter_bb_at(w, bit_pass_bb);
       // check slot
@@ -716,7 +856,7 @@ static void _gen_scope(PegGenInput* input, ScopeClosure* sc, IrWriter* w, bool c
 
     // compute: do the parse
     irwriter_bb_at(w, rule_compute_bb);
-    int32_t parse_fail_bb = irwriter_label(w);
+    IrLabel parse_fail_bb = irwriter_label(w);
     ctx.fail_label = parse_fail_bb;
 
     IrVal match_len;
@@ -1023,8 +1163,11 @@ void peg_gen(PegGenInput* input, HeaderWriter* hw, IrWriter* w, bool compress_me
     ScopeClosure* sc = &closures[ci];
     int32_t nr = (int32_t)darray_size(sc->rules);
     for (int32_t j = 0; j < nr; j++) {
-      sc->rules[j].needs_memo = (sc->rules[j].kind != SCOPED_RULE_KIND_TERM);
+      sc->rules[j].needs_memo =
+          (sc->rules[j].kind != SCOPED_RULE_KIND_TERM && sc->rules[j].kind != SCOPED_RULE_KIND_CALL);
     }
+    _sort_memoizables(sc);
+    nr = (int32_t)darray_size(sc->rules);
     if (input->verbose) {
       int32_t n_defined = symtab_count(&sc->defined_rules);
       int32_t n_memo = 0;
@@ -1035,13 +1178,56 @@ void peg_gen(PegGenInput* input, HeaderWriter* hw, IrWriter* w, bool compress_me
       }
       fprintf(stderr, "  [peg] %s: %d defined, %d broken-down (%d memo)\n", sc->scope_name, n_defined, nr, n_memo);
     }
+    if (input->verbose > 1) {
+      for (int32_t j = 0; j < nr; j++) {
+        ScopedRule* r = &sc->rules[j];
+        const char* mul = r->multiplier == '?' ? "?" : r->multiplier == '*' ? "*" : r->multiplier == '+' ? "+" : "";
+        switch (r->kind) {
+        case SCOPED_RULE_KIND_TERM: {
+          const char* tn = r->as.term >= input->tokens.start_num ? symtab_get(&input->tokens, r->as.term)
+                                                                 : symtab_get(&input->scope_names, r->as.term);
+          fprintf(stderr, "    [%d] %s = term(%s)%s\n", j, r->name, tn ? tn : "?", mul);
+          break;
+        }
+        case SCOPED_RULE_KIND_CALL:
+          fprintf(stderr, "    [%d] %s = call(%d:%s)%s\n", j, r->name, r->as.call,
+                  r->as.call >= 0 && r->as.call < nr ? sc->rules[r->as.call].name : "?", mul);
+          break;
+        case SCOPED_RULE_KIND_SEQ: {
+          fprintf(stderr, "    [%d] %s = seq(", j, r->name);
+          for (int32_t k = 0; k < (int32_t)darray_size(r->as.seq); k++) {
+            if (k) {
+              fprintf(stderr, ", ");
+            }
+            fprintf(stderr, "%d", r->as.seq[k]);
+          }
+          fprintf(stderr, ")%s\n", mul);
+          break;
+        }
+        case SCOPED_RULE_KIND_BRANCHES: {
+          fprintf(stderr, "    [%d] %s = branches(", j, r->name);
+          for (int32_t k = 0; k < (int32_t)darray_size(r->as.branches); k++) {
+            if (k) {
+              fprintf(stderr, ", ");
+            }
+            fprintf(stderr, "%d", r->as.branches[k]);
+          }
+          fprintf(stderr, ")%s\n", mul);
+          break;
+        }
+        case SCOPED_RULE_KIND_JOIN:
+          fprintf(stderr, "    [%d] %s = join(%d, %d)%s\n", j, r->name, r->as.join.lhs, r->as.join.rhs, mul);
+          break;
+        }
+      }
+    }
   }
 
   for (int32_t i = 0; i < n_closures; i++) {
     _compute_nullable(&closures[i]);
     _compute_first_last(&closures[i]);
     if (compress_memoize) {
-      _assign_colored(&closures[i]);
+      _assign_colored(&closures[i], input->verbose);
     } else {
       _assign_naive(&closures[i]);
     }

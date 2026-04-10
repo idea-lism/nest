@@ -516,8 +516,8 @@ void aut_gen_dfa(Aut* a, IrWriter* w, bool debug_mode) {
 
   // entry BB must be emitted first
   irwriter_bb(w);
-  int32_t dead_bb = irwriter_label(w);
-  int32_t* state_bbs = malloc((size_t)dfa_nstates * sizeof(int32_t));
+  IrLabel dead_bb = irwriter_label(w);
+  IrLabel* state_bbs = malloc((size_t)dfa_nstates * sizeof(IrLabel));
   for (int s = 0; s < dfa_nstates; s++) {
     state_bbs[s] = irwriter_label(w);
   }
@@ -554,10 +554,10 @@ void aut_gen_dfa(Aut* a, IrWriter* w, bool debug_mode) {
     }
 
     // Reserve per-state labels
-    int32_t nomatch_bb = irwriter_label(w);
-    int32_t ranges_bb = has_range > 0 ? irwriter_label(w) : -1;
+    IrLabel nomatch_bb = irwriter_label(w);
+    IrLabel ranges_bb = has_range > 0 ? irwriter_label(w) : -1;
 
-    int32_t* trans_bbs = malloc((size_t)dfa_ntrans * sizeof(int32_t));
+    IrLabel* trans_bbs = malloc((size_t)dfa_ntrans * sizeof(IrLabel));
     for (int t = 0; t < dfa_ntrans; t++) {
       if (a->dfa_trans[t].from == s) {
         trans_bbs[t] = irwriter_label(w);
@@ -572,9 +572,9 @@ void aut_gen_dfa(Aut* a, IrWriter* w, bool debug_mode) {
         nranges++;
       }
     }
-    int32_t* rck_bbs = NULL;
+    IrLabel* rck_bbs = NULL;
     if (nranges > 1) {
-      rck_bbs = malloc((size_t)nranges * sizeof(int32_t));
+      rck_bbs = malloc((size_t)nranges * sizeof(IrLabel));
       for (int i = 0; i < nranges; i++) {
         rck_bbs[i] = irwriter_label(w);
       }
@@ -602,7 +602,7 @@ void aut_gen_dfa(Aut* a, IrWriter* w, bool debug_mode) {
     }
 
     if (has_switch > 0) {
-      int32_t sw_default = has_range > 0 ? ranges_bb : nomatch_bb;
+      IrLabel sw_default = has_range > 0 ? ranges_bb : nomatch_bb;
       irwriter_switch_start(w, "i32", irwriter_imm(w, "%cp"), sw_default);
 
       for (int t = 0; t < dfa_ntrans; t++) {

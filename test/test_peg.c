@@ -455,30 +455,18 @@ TEST(test_call_targets_correct) {
   // and there must be a corresponding "value:" label.
 
   // First, check that we have a branch TO value
-  const char* br_to_value = strstr(g.ir_buf, "br label %value\n");
+  const char* br_to_value = strstr(g.ir_buf, "br label %main$value\n");
   assert(br_to_value != NULL && "main should branch to value, not an interior node");
 
   // Check that value label exists in the IR
-  assert(strstr(g.ir_buf, "value:") != NULL && "value: label must exist in IR");
+  assert(strstr(g.ir_buf, "main$value:") != NULL && "value: label must exist in IR");
 
   // For completeness, check array and value_list are also reachable
-  assert(strstr(g.ir_buf, "array:") != NULL && "array: label must exist");
-  assert(strstr(g.ir_buf, "value_list:") != NULL && "value_list: label must exist");
+  assert(strstr(g.ir_buf, "main$array:") != NULL && "array: label must exist");
+  assert(strstr(g.ir_buf, "main$value_list:") != NULL && "value_list: label must exist");
 
   _free_gen(&g);
 }
-
-// ============================================================
-// Finding 1: Generated IR must contain per-rule memoization —
-// slot reads before parsing, slot writes after parsing.
-//
-// The spec says each rule reads its memoize slot first:
-//   cached = table->col[col].slots[slot_index]
-//   if cached != -1: return cached
-//   else: parse, write slot, return
-//
-// Current code calls peg_ir_element once without any memo access.
-// ============================================================
 
 TEST(test_memoization_slots_used) {
   GenResult g = _gen_json(false);
