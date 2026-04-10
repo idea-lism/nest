@@ -314,7 +314,7 @@ When parse succeeds, VPA will return a PegRef.
   - there are 2 kinds of types: 
     - a universal reference `PegRef { TokenChunk* tc, int32_t col, int32_t next_col }`
       - `tc->value` is the memoize table
-    - rule-specific nodes `FooNode { struct { bool branch1: 1; bool branch2: 1; } is; PegRef child0; PegRef child1; ... }`.
+    - rule-specific nodes `Node_foo { struct { bool branch1: 1; bool branch2: 1; } is; PegRef child0; PegRef child1; ... }`.
   - fields are reference to a table position, with `is` field to tell the branch
   - by the `is` user can call a helper function defined in generated header, to extract child node from the memoize table
 
@@ -322,7 +322,7 @@ A typical using pattern is:
 
 ```c
 PegRef ref = ...;
-FooNode foo = {prefix}_load_foo(ref);
+Node_foo foo = {prefix}_load_foo(ref);
 // foo = [
 //   bar+ : tag1
 //   baz bar : tag2
@@ -339,6 +339,28 @@ if (foo.is.tag1) {
 ```
 
 Note that `{prefix}_load_{decl_rule_name}` works on defined rules, no need to generate loaders for broken-down rules.
+
+# Node field naming scheme
+
+For example, the rule
+
+```nest
+while_stmt = "while" @lparen expr @rparen block
+```
+
+will generate a node definition of:
+
+```c
+typedef struct {
+  PegRef _lit_while; // @lit.while
+  PegRef _lparen; // @lparen
+  PegRef expr;
+  PegRef _rparen; // @rparen
+  PegRef block;
+} Node_while_stmt;
+```
+
+just replace the `@` & `.` with `_` for tokens.
 
 # Error handling in generated code
 

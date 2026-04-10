@@ -430,7 +430,6 @@ TEST(test_vpa_gen_exec) {
               "int32_t vpa_rt_read_cp(void* src, int32_t cp_off) {\n"
               "  return ((const unsigned char*)src)[cp_off];\n"
               "}\n"
-              "void vpa_error_add(void* errors, int32_t type, int32_t off, int32_t sz) {}\n"
               "int32_t tt_depth(void* tt) { return 1; }\n"
               "\n"
               "int main(void) {\n"
@@ -741,8 +740,8 @@ TEST(test_vpa_gen_effect_dispatch) {
   char* ir_buf = _read_file(BUILD_DIR "/test_vpa_effect.ll");
   // The hook call must happen
   assert(strstr(ir_buf, "call i32 @vpa_hook_check") != NULL);
-  // The return value must be validated against effect_decls and invalid returns must call vpa_error_add
-  assert(strstr(ir_buf, "call void @vpa_error_add") != NULL);
+  // The return value must be validated via switch (effect dispatch)
+  assert(strstr(ir_buf, "switch") != NULL);
   free(ir_buf);
 
   _free_gen_input(&input);

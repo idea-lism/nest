@@ -652,8 +652,7 @@ static void _assign_colored(ScopeClosure* sc, int32_t verbose) {
 // Code generation: per-scope function with per-rule memoization
 // ============================================================
 
-static void _gen_scope(PegGenInput* input, ScopeClosure* sc, IrWriter* w, bool compress) {
-  (void)input;
+static void _gen_scope(ScopeClosure* sc, IrWriter* w, bool compress_memoize) {
   int32_t n_rules = (int32_t)darray_size(sc->rules);
   if (n_rules == 0) {
     return;
@@ -661,7 +660,7 @@ static void _gen_scope(PegGenInput* input, ScopeClosure* sc, IrWriter* w, bool c
 
   int32_t n_sg = 0;
   int32_t n_slots = 0;
-  if (compress) {
+  if (compress_memoize) {
     for (int32_t i = 0; i < n_rules; i++) {
       if (!sc->rules[i].needs_memo) {
         continue;
@@ -758,7 +757,7 @@ static void _gen_scope(PegGenInput* input, ScopeClosure* sc, IrWriter* w, bool c
       .scope_name = sc->scope_name,
       .scoped_rule_names = &sc->defined_rules,
       .rules = sc->rules,
-      .compress = compress,
+      .compress = compress_memoize,
       .col_sizeof = col_sizeof,
       .bits_offset = 0,
       .slots_offset = n_sg * 4,
@@ -835,7 +834,7 @@ static void _gen_scope(PegGenInput* input, ScopeClosure* sc, IrWriter* w, bool c
 
     IrVal col = irwriter_load(w, "i64", col_a);
 
-    if (compress && n_sg > 0) {
+    if (compress_memoize && n_sg > 0) {
       // row_shared: bit test first
       IrVal bit_ok = peg_ir_bit_test(&ctx, col, rule->segment_index, rule->rule_bit_mask);
       IrLabel bit_pass_bb = irwriter_label(w);
@@ -880,7 +879,7 @@ static void _gen_scope(PegGenInput* input, ScopeClosure* sc, IrWriter* w, bool c
 
     // write to memo table
     peg_ir_write_slot(&ctx, col, rule->slot_index, match_len);
-    if (compress && n_sg > 0) {
+    if (compress_memoize && n_sg > 0) {
       peg_ir_bit_exclude(&ctx, col, rule->segment_index, rule->rule_bit_mask);
     }
     irwriter_store(w, "i32", match_len, ret_a);
@@ -888,7 +887,7 @@ static void _gen_scope(PegGenInput* input, ScopeClosure* sc, IrWriter* w, bool c
 
     // parse fail
     irwriter_bb_at(w, parse_fail_bb);
-    if (compress && n_sg > 0) {
+    if (compress_memoize && n_sg > 0) {
       peg_ir_bit_deny(&ctx, col, rule->segment_index, rule->rule_bit_mask);
     }
     irwriter_br(w, rule_miss_bb);
@@ -947,9 +946,23 @@ static void _gen_scope(PegGenInput* input, ScopeClosure* sc, IrWriter* w, bool c
 // Header generation — real decode loaders
 // ============================================================
 
-static void _gen_header(PegGenInput* input, ScopeClosure* closures, int32_t n_closures, HeaderWriter* hw, bool compress,
-                        const char* prefix) {
-  (void)compress;
+// Convert token names like "@lparen" -> "_lparen", "@lit.while" -> "_lit_while".
+// Returns malloc'd string if name starts with '@', otherwise returns NULL (use original).
+static char* _sanitize_field_name(const char* name) {
+  if (!name || name[0] != '@') {
+    return NULL;
+  }
+  char* out = strdup(name);
+  for (char* p = out; *p; p++) {
+    if (*p == '@' || *p == '.') {
+      *p = '_';
+    }
+  }
+  return out;
+}
+
+static void _gen_header(PegGenInput* input, ScopeClosure* closures, int32_t n_closures, HeaderWriter* hw,
+                        bool compress_memoize, const char* prefix) {
   hw_pragma_once(hw);
   hw_blank(hw);
   hw_include_sys(hw, "stdint.h");
@@ -990,9 +1003,9 @@ static void _gen_header(PegGenInput* input, ScopeClosure* closures, int32_t n_cl
       }
     }
 
-    int nn_len = snprintf(NULL, 0, "%s_%s_Node", prefix, rn);
+    int nn_len = snprintf(NULL, 0, "Node_%s", rn);
     char* nn = malloc((size_t)nn_len + 1);
-    snprintf(nn, (size_t)nn_len + 1, "%s_%s_Node", prefix, rn);
+    snprintf(nn, (size_t)nn_len + 1, "Node_%s", rn);
 
     hw_fmt(hw, "typedef struct {\n");
 
@@ -1002,7 +1015,9 @@ static void _gen_header(PegGenInput* input, ScopeClosure* closures, int32_t n_cl
         for (int32_t j = 0; j < (int32_t)darray_size(body->children); j++) {
           const char* tag = body->children[j].tag;
           if (tag && tag[0]) {
-            hw_fmt(hw, "    bool %s : 1;\n", tag);
+            char* san = _sanitize_field_name(tag);
+            hw_fmt(hw, "    bool %s : 1;\n", san ? san : tag);
+            free(san);
           }
         }
       } else {
@@ -1014,7 +1029,9 @@ static void _gen_header(PegGenInput* input, ScopeClosure* closures, int32_t n_cl
           for (int32_t j = 0; j < (int32_t)darray_size(br->children); j++) {
             const char* tag = br->children[j].tag;
             if (tag && tag[0]) {
-              hw_fmt(hw, "    bool %s : 1;\n", tag);
+              char* san = _sanitize_field_name(tag);
+              hw_fmt(hw, "    bool %s : 1;\n", san ? san : tag);
+              free(san);
             }
           }
         }
@@ -1033,7 +1050,9 @@ static void _gen_header(PegGenInput* input, ScopeClosure* closures, int32_t n_cl
                                                       : symtab_get(&input->scope_names, body->id);
       }
       if (fn_name) {
-        hw_fmt(hw, "  PegRef %s;\n", fn_name);
+        char* san = _sanitize_field_name(fn_name);
+        hw_fmt(hw, "  PegRef %s;\n", san ? san : fn_name);
+        free(san);
       }
     } else {
       for (int32_t i = 0; i < nc; i++) {
@@ -1048,7 +1067,9 @@ static void _gen_header(PegGenInput* input, ScopeClosure* closures, int32_t n_cl
                                                          : symtab_get(&input->scope_names, child->id);
         }
         if (fn_name && child->kind != PEG_BRANCHES) {
-          hw_fmt(hw, "  PegRef %s;\n", fn_name);
+          char* san = _sanitize_field_name(fn_name);
+          hw_fmt(hw, "  PegRef %s;\n", san ? san : fn_name);
+          free(san);
         }
       }
     }
@@ -1068,14 +1089,25 @@ static void _gen_header(PegGenInput* input, ScopeClosure* closures, int32_t n_cl
         if (root >= 0 && root < (int32_t)darray_size(sc->rules)) {
           rule_slot = (int32_t)sc->rules[root].slot_index;
 
-          // compute col_sizeof for this scope
+          // compute col_sizeof for this scope, matching _gen_scope's layout
           int32_t nsg = 0, nsl = 0;
-          for (int32_t k = 0; k < (int32_t)darray_size(sc->rules); k++) {
-            if ((int32_t)sc->rules[k].segment_index + 1 > nsg) {
-              nsg = (int32_t)sc->rules[k].segment_index + 1;
+          if (compress_memoize) {
+            for (int32_t k = 0; k < (int32_t)darray_size(sc->rules); k++) {
+              if (!sc->rules[k].needs_memo) {
+                continue;
+              }
+              if ((int32_t)sc->rules[k].segment_index + 1 > nsg) {
+                nsg = (int32_t)sc->rules[k].segment_index + 1;
+              }
+              if ((int32_t)sc->rules[k].slot_index + 1 > nsl) {
+                nsl = (int32_t)sc->rules[k].slot_index + 1;
+              }
             }
-            if ((int32_t)sc->rules[k].slot_index + 1 > nsl) {
-              nsl = (int32_t)sc->rules[k].slot_index + 1;
+          } else {
+            for (int32_t k = 0; k < (int32_t)darray_size(sc->rules); k++) {
+              if (sc->rules[k].needs_memo) {
+                nsl++;
+              }
             }
           }
           scope_col_sizeof = nsg * 4 + nsl * 4;
@@ -1103,7 +1135,9 @@ static void _gen_header(PegGenInput* input, ScopeClosure* closures, int32_t n_cl
           for (int32_t j = 0; j < (int32_t)darray_size(body->children); j++) {
             const char* tag = body->children[j].tag;
             if (tag && tag[0]) {
-              hw_fmt(hw, "  node.is.%s = (val == %d);\n", tag, branch_idx);
+              char* san = _sanitize_field_name(tag);
+              hw_fmt(hw, "  node.is.%s = (val == %d);\n", san ? san : tag, branch_idx);
+              free(san);
             }
             branch_idx++;
           }
@@ -1116,7 +1150,9 @@ static void _gen_header(PegGenInput* input, ScopeClosure* closures, int32_t n_cl
             for (int32_t j = 0; j < (int32_t)darray_size(br->children); j++) {
               const char* tag = br->children[j].tag;
               if (tag && tag[0]) {
-                hw_fmt(hw, "  node.is.%s = (val == %d);\n", tag, branch_idx);
+                char* san = _sanitize_field_name(tag);
+                hw_fmt(hw, "  node.is.%s = (val == %d);\n", san ? san : tag, branch_idx);
+                free(san);
               }
               branch_idx++;
             }
@@ -1246,7 +1282,7 @@ void peg_gen(PegGenInput* input, HeaderWriter* hw, IrWriter* w, bool compress_me
   peg_ir_emit_helpers(w);
 
   for (int32_t i = 0; i < n_closures; i++) {
-    _gen_scope(input, &closures[i], w, compress_memoize);
+    _gen_scope(&closures[i], w, compress_memoize);
   }
 
   _gen_header(input, closures, n_closures, hw, compress_memoize, prefix);

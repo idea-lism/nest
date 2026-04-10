@@ -168,6 +168,66 @@ static int32_t _cmd_lex(int32_t argc, char** argv) {
   return 0;
 }
 
+static void _gen_example_c(FILE* f, const char* prefix, Symtab* tokens) {
+  fprintf(f, "#include <stdint.h>\n");
+  fprintf(f, "#include <stdio.h>\n");
+  fprintf(f, "#include <string.h>\n\n");
+  fprintf(f, "#define NEST_RT_IMPLEMENTATION\n");
+  fprintf(f, "#include \"%s.h\"\n\n", prefix);
+  fprintf(f, "int32_t %s_next_cp(void* src, int32_t cp_off) {\n", prefix);
+  fprintf(f, "  return ((const unsigned char*)src)[cp_off];\n");
+  fprintf(f, "}\n\n");
+
+  fprintf(f, "static const char* tok_name(int32_t id) {\n");
+  fprintf(f, "  switch (id) {\n");
+  int32_t n_tokens = symtab_count(tokens);
+  for (int32_t i = 0; i < n_tokens; i++) {
+    int32_t tok_id = i + tokens->start_num;
+    const char* name = symtab_get(tokens, tok_id);
+    if (strncmp(name, "@lit.", 5) == 0) {
+      continue;
+    }
+    fprintf(f, "  case TOK_");
+    for (const char* s = name + 1; *s; s++) {
+      char c = toupper((unsigned char)*s);
+      if (!isalnum((unsigned char)*s)) {
+        c = '_';
+      }
+      fputc(c, f);
+    }
+    fprintf(f, ": return \"%s\";\n", name);
+  }
+  fprintf(f, "  default: return \"?\";\n");
+  fprintf(f, "  }\n");
+  fprintf(f, "}\n\n");
+
+  fprintf(f, "int main(int argc, char** argv) {\n");
+  fprintf(f, "  if (argc < 2) {\n");
+  fprintf(f, "    fprintf(stderr, \"usage: %%s <input>\\n\", argv[0]);\n");
+  fprintf(f, "    return 1;\n");
+  fprintf(f, "  }\n\n");
+  fprintf(f, "  const char* input = argv[1];\n");
+  fprintf(f, "  int32_t len = (int32_t)strlen(input);\n");
+  fprintf(f, "  char* ustr = ustr_new(len, input);\n");
+  fprintf(f, "  TokenTree* tt = tt_tree_new(ustr);\n");
+  fprintf(f, "  vpa_lex(input, len, tt, NULL, NULL);\n\n");
+  fprintf(f, "  int32_t n_chunks = (int32_t)darray_size(tt->table);\n");
+  fprintf(f, "  for (int32_t c = 0; c < n_chunks; c++) {\n");
+  fprintf(f, "    TokenChunk* chunk = &tt->table[c];\n");
+  fprintf(f, "    int32_t n = (int32_t)darray_size(chunk->tokens);\n");
+  fprintf(f, "    for (int32_t i = 0; i < n; i++) {\n");
+  fprintf(f, "      Token* tok = &chunk->tokens[i];\n");
+  fprintf(f, "      printf(\"%%s (id=%%d) \\\"%%.*s\\\"\\n\",\n");
+  fprintf(f, "             tok_name(tok->tok_id), tok->tok_id,\n");
+  fprintf(f, "             tok->cp_size, input + tok->cp_start);\n");
+  fprintf(f, "    }\n");
+  fprintf(f, "  }\n\n");
+  fprintf(f, "  tt_tree_del(tt);\n");
+  fprintf(f, "  ustr_del(ustr);\n");
+  fprintf(f, "  return 0;\n");
+  fprintf(f, "}\n");
+}
+
 static int32_t _cmd_compile(int32_t argc, char** argv) {
 #define OPTION(s, l, n, d) const char* arg_##s = 0;
 #include "compile_opts.inc"
@@ -183,11 +243,10 @@ static int32_t _cmd_compile(int32_t argc, char** argv) {
     _usage();
   }
 
-  if (!input || !arg_o || !arg_p) {
+  if (!input || !arg_p) {
     _usage();
   }
 
-  const char* output = arg_o;
   const char* prefix = arg_p;
   const char* triple = (arg_t == cmdopt_set) ? _detect_triple() : arg_t;
 
@@ -222,29 +281,25 @@ static int32_t _cmd_compile(int32_t argc, char** argv) {
     return 1;
   }
 
-  size_t out_len = strlen(output);
-  char* header_path = malloc(out_len + 3);
-  memcpy(header_path, output, out_len);
-  if (out_len >= 3 && strcmp(output + out_len - 3, ".ll") == 0) {
-    strcpy(header_path + out_len - 3, ".h");
-  } else {
-    strcpy(header_path + out_len, ".h");
-  }
+  char ll_path[72];
+  char h_path[72];
+  char c_path[72];
+  snprintf(ll_path, sizeof(ll_path), "%s.ll", prefix);
+  snprintf(h_path, sizeof(h_path), "%s.h", prefix);
+  snprintf(c_path, sizeof(c_path), "%s.c", prefix);
 
-  FILE* fout = fopen(output, "w");
+  FILE* fout = fopen(ll_path, "w");
   if (!fout) {
-    perror(output);
+    perror(ll_path);
     ustr_del(src);
-    free(header_path);
     return 1;
   }
 
-  FILE* fhdr = fopen(header_path, "w");
+  FILE* fhdr = fopen(h_path, "w");
   if (!fhdr) {
-    perror(header_path);
+    perror(h_path);
     fclose(fout);
     ustr_del(src);
-    free(header_path);
     return 1;
   }
 
@@ -301,6 +356,17 @@ static int32_t _cmd_compile(int32_t argc, char** argv) {
       },
       hw, w, prefix);
 
+  {
+    FILE* fc = fopen(c_path, "w");
+    if (!fc) {
+      perror(c_path);
+      ret = -1;
+      goto cleanup;
+    }
+    _gen_example_c(fc, prefix, &ps->tokens);
+    fclose(fc);
+  }
+
 cleanup:
   irwriter_end(w);
   irwriter_del(w);
@@ -308,7 +374,6 @@ cleanup:
   fclose(fout);
   fclose(fhdr);
   ustr_del(src);
-  free(header_path);
   return ret;
 }
 

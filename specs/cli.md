@@ -23,7 +23,20 @@ Command line tool that generates
 
 ### parser
 
+- calling: `nest c <input.nest> -p <prefix> [-t <target_triple>] [-k false] [-v <level>]`
+- output files (all written to the current directory, named after `-p`):
+  - `<prefix>.ll` — LLVM IR for the lexer and parser
+  - `<prefix>.h` — C header with token enums, scope defines, hook defines, parse result types, and inline PEG accessors
+  - `<prefix>.c` — usage example (see below)
 - invokes parse API to process.
+
+#### generated `<prefix>.c`
+
+A self-contained usage example that:
+- `#define NEST_RT_IMPLEMENTATION` and `#include "<prefix>.h"`
+- implements `<prefix>_next_cp` for byte-mode reading
+- provides a `tok_name()` helper that maps every `TOK_*` id defined in the header to its lowercase name
+- `main(argc, argv)` reads `argv[1]` as input, runs `vpa_lex`, iterates the token tree, and prints one line per token: `<token_name> (id=<id>) "<matched_text>"`
 
 ### examples
 
@@ -38,6 +51,13 @@ add a script for each example, with cc / cflags definition. which compiles the e
 ```sh
 CC="${CC:-clang}"
 CFLAGS="${CFLAGS:--std=c23 -O0 -g}"
+```
+
+the simple_nest build script should use the generated files directly:
+
+```sh
+nest c grammar.nest -p calc
+cc calc.c calc.ll -o main
 ```
 
 ### examples gitingore

@@ -144,7 +144,6 @@ static void _gen_dispatch(VpaGenInput* input, IrWriter* w, Actions actions) {
   irwriter_declare(w, "void", "tt_add", "i8*, i32, i32, i32, i32");
   irwriter_declare(w, "i8*", "tt_push", "i8*, i32");
   irwriter_declare(w, "i8*", "tt_pop", "i8*");
-  irwriter_declare(w, "void", "vpa_error_add", "i8*, i32, i32, i32");
 
   // pre-declare user hooks
   for (int32_t i = 1; i < n_actions; i++) {
@@ -166,9 +165,9 @@ static void _gen_dispatch(VpaGenInput* input, IrWriter* w, Actions actions) {
     }
   }
 
-  const char* arg_types[] = {"i32", "i8*", "i32", "i32", "i8*", "i8*"};
-  const char* arg_names[] = {"action_id", "tt", "cp_start", "cp_size", "ctx", "errors"};
-  irwriter_define_start(w, "vpa_dispatch", "void", 6, arg_types, arg_names);
+  const char* arg_types[] = {"i32", "i8*", "i32", "i32", "i8*"};
+  const char* arg_names[] = {"action_id", "tt", "cp_start", "cp_size", "ctx"};
+  irwriter_define_start(w, "vpa_dispatch", "void", 5, arg_types, arg_names);
   irwriter_bb(w);
 
   if (n_actions <= 1) {
@@ -249,9 +248,8 @@ static void _gen_dispatch(VpaGenInput* input, IrWriter* w, Actions actions) {
               irwriter_br(w, ok_bb);
             }
 
-            // error: invalid return from hook
+            // error: invalid return from hook (TODO: error reporting)
             irwriter_bb_at(w, err_bb);
-            irwriter_call_void_fmtf(w, "vpa_error_add", "i8* %%errors, i32 0, i32 %%cp_start, i32 %%cp_size");
             irwriter_br(w, ok_bb);
 
             irwriter_bb_at(w, ok_bb);
@@ -272,11 +270,18 @@ static void _gen_dispatch(VpaGenInput* input, IrWriter* w, Actions actions) {
 
 // --- Main lex loop ---
 
-static void _gen_vpa_lex(VpaGenInput* input, IrWriter* w) {
+static void _gen_vpa_lex(VpaGenInput* input, IrWriter* w, const char* prefix) {
   int32_t n_scopes = (int32_t)darray_size(input->scopes);
 
-  irwriter_declare(w, "i32", "vpa_rt_read_cp", "i8*, i32");
-  irwriter_declare(w, "void", "vpa_error_add", "i8*, i32, i32, i32");
+  char* read_cp_name;
+  if (prefix) {
+    int read_cp_len = snprintf(NULL, 0, "%s_next_cp", prefix);
+    read_cp_name = malloc((size_t)read_cp_len + 1);
+    snprintf(read_cp_name, (size_t)read_cp_len + 1, "%s_next_cp", prefix);
+  } else {
+    read_cp_name = strdup("vpa_rt_read_cp");
+  }
+  irwriter_declare(w, "i32", read_cp_name, "i8*, i32");
   irwriter_declare(w, "i32", "tt_depth", "i8*");
   irwriter_declare(w, "void", "tt_add", "i8*, i32, i32, i32, i32");
 
@@ -315,7 +320,7 @@ static void _gen_vpa_lex(VpaGenInput* input, IrWriter* w) {
   // --- read cp and run DFA ---
   irwriter_bb_at(w, read_bb);
   IrVal cp_off2 = irwriter_load(w, "i32", cp_off_ptr);
-  IrVal cp = irwriter_call_retf(w, "i32", "vpa_rt_read_cp", "i8* %%src, i32 %%r%d", (int)cp_off2);
+  IrVal cp = irwriter_call_retf(w, "i32", read_cp_name, "i8* %%src, i32 %%r%d", (int)cp_off2);
   IrVal dfa_state = irwriter_load(w, "i32", dfa_state_ptr);
 
   if (n_scopes > 0) {
@@ -367,8 +372,8 @@ static void _gen_vpa_lex(VpaGenInput* input, IrWriter* w) {
   irwriter_br_cond(w, has_last, dispatch_action_bb, done_bb);
 
   irwriter_bb_at(w, dispatch_action_bb);
-  irwriter_call_void_fmtf(w, "vpa_dispatch", "i32 %%r%d, i8* %%tt, i32 %%r%d, i32 %%r%d, i8* %%ctx, i8* %%errors",
-                          (int)last_action, (int)tok_start, (int)tok_size);
+  irwriter_call_void_fmtf(w, "vpa_dispatch", "i32 %%r%d, i8* %%tt, i32 %%r%d, i32 %%r%d, i8* %%ctx", (int)last_action,
+                          (int)tok_start, (int)tok_size);
 
   irwriter_store(w, "i32", match_off, cp_off_ptr);
   irwriter_store(w, "i32", match_off, token_start_ptr);
@@ -384,6 +389,7 @@ static void _gen_vpa_lex(VpaGenInput* input, IrWriter* w) {
   irwriter_ret_void(w);
 
   irwriter_define_end(w);
+  free(read_cp_name);
 }
 
 // --- {prefix}_parse / {prefix}_cleanup ---
@@ -466,11 +472,11 @@ static void _gen_header(VpaGenInput* input, HeaderWriter* hw, int32_t n_actions,
   for (int32_t i = 0; i < n_tokens; i++) {
     int32_t tok_id = i + input->tokens.start_num;
     const char* name = symtab_get(&input->tokens, tok_id);
-    if (strncmp(name, "lit.", 4) == 0) {
+    if (strncmp(name, "@lit.", 5) == 0) {
       continue;
     }
     hw_raw(hw, "#define TOK_");
-    _hw_upper(hw, name);
+    _hw_upper(hw, name + 1);
     hw_fmt(hw, " %d\n", tok_id);
   }
   hw_blank(hw);
@@ -519,14 +525,6 @@ static void _gen_header(VpaGenInput* input, HeaderWriter* hw, int32_t n_actions,
   hw_raw(hw, "typedef ParseError* ParseErrors;\n");
   hw_blank(hw);
 
-  // PegRef
-  hw_raw(hw, "typedef struct {\n");
-  hw_raw(hw, "  TokenChunk* tc;\n");
-  hw_raw(hw, "  int32_t col;\n");
-  hw_raw(hw, "  int32_t next_col;\n");
-  hw_raw(hw, "} PegRef;\n");
-  hw_blank(hw);
-
   // ParseResult
   hw_raw(hw, "typedef struct {\n");
   hw_raw(hw, "  PegRef main;\n");
@@ -572,7 +570,7 @@ void vpa_gen(VpaGenInput* input, HeaderWriter* hw, IrWriter* w, const char* pref
   }
 
   _gen_dispatch(input, w, actions);
-  _gen_vpa_lex(input, w);
+  _gen_vpa_lex(input, w, prefix);
   _gen_parse_entry(w, prefix);
 
   int32_t n_actions = (int32_t)darray_size(actions);

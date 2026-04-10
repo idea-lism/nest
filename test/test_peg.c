@@ -165,7 +165,7 @@ TEST(test_closure_and_breakdown) {
   // should contain PegRef type
   assert(strstr(hdr_buf, "PegRef") != NULL);
   // should contain node types
-  assert(strstr(hdr_buf, "json_value_Node") != NULL);
+  assert(strstr(hdr_buf, "Node_json_value") != NULL);
   // should contain loader functions
   assert(strstr(hdr_buf, "json_load_value") != NULL);
   // should contain N_RULES define for main scope
@@ -749,6 +749,122 @@ TEST(test_branch_wrap_by_lowered_kind) {
   symtab_free(&input.rule_names);
 }
 
+// ============================================================
+// Test: node field naming scheme
+// Token names like @lparen -> _lparen, @lit.while -> _lit_while
+// ============================================================
+
+TEST(test_node_field_naming) {
+  PegGenInput input = {0};
+
+  // tokens (start_num=1): @lit.while=1, @lparen=2, @rparen=3
+  symtab_init(&input.tokens, 1);
+  symtab_intern(&input.tokens, "@lit.while"); // 1
+  symtab_intern(&input.tokens, "@lparen");    // 2
+  symtab_intern(&input.tokens, "@rparen");    // 3
+
+  // scope_names
+  symtab_init(&input.scope_names, 0);
+  symtab_intern(&input.scope_names, "main"); // 0
+
+  // rule_names
+  symtab_init(&input.rule_names, 0);
+  symtab_intern(&input.rule_names, "main");       // 0
+  symtab_intern(&input.rule_names, "while_stmt"); // 1
+  symtab_intern(&input.rule_names, "expr");       // 2
+  symtab_intern(&input.rule_names, "block");      // 3
+
+  input.rules = darray_new(sizeof(PegRule), 0);
+
+  // while_stmt = "while" @lparen expr @rparen block
+  PegUnit ws_seq = {.kind = PEG_SEQ};
+  ws_seq.children = darray_new(sizeof(PegUnit), 0);
+  PegUnit lit_while = {.kind = PEG_TERM, .id = 1}; // @lit.while
+  PegUnit lp = {.kind = PEG_TERM, .id = 2};        // @lparen
+  PegUnit ex = {.kind = PEG_CALL, .id = 2};        // expr
+  PegUnit rp = {.kind = PEG_TERM, .id = 3};        // @rparen
+  PegUnit bl = {.kind = PEG_CALL, .id = 3};        // block
+  darray_push(ws_seq.children, lit_while);
+  darray_push(ws_seq.children, lp);
+  darray_push(ws_seq.children, ex);
+  darray_push(ws_seq.children, rp);
+  darray_push(ws_seq.children, bl);
+  PegRule ws_rule = {.global_id = 1, .scope_id = -1, .body = ws_seq};
+  darray_push(input.rules, ws_rule);
+
+  // expr = @lit.while (dummy single-element body, exercises PEG_TERM path)
+  PegUnit expr_body = {.kind = PEG_TERM, .id = 1};
+  PegRule expr_rule = {.global_id = 2, .scope_id = -1, .body = expr_body};
+  darray_push(input.rules, expr_rule);
+
+  // block = @lparen (dummy)
+  PegUnit block_body = {.kind = PEG_TERM, .id = 2};
+  PegRule block_rule = {.global_id = 3, .scope_id = -1, .body = block_body};
+  darray_push(input.rules, block_rule);
+
+  // main = while_stmt (scope)
+  PegUnit main_seq = {.kind = PEG_SEQ};
+  main_seq.children = darray_new(sizeof(PegUnit), 0);
+  PegUnit main_call = {.kind = PEG_CALL, .id = 1};
+  darray_push(main_seq.children, main_call);
+  PegRule main_rule = {.global_id = 0, .scope_id = 0, .body = main_seq};
+  darray_push(input.rules, main_rule);
+
+  char* ir_buf = NULL;
+  size_t ir_len = 0;
+  FILE* ir_f = compat_open_memstream(&ir_buf, &ir_len);
+  IrWriter* w = irwriter_new(ir_f, NULL);
+  irwriter_start(w, "test.c", ".");
+
+  char* hdr_buf = NULL;
+  size_t hdr_len = 0;
+  FILE* hdr_f = compat_open_memstream(&hdr_buf, &hdr_len);
+  HeaderWriter* hw = hw_new(hdr_f);
+
+  peg_gen(&input, hw, w, false, "lang");
+
+  irwriter_end(w);
+  irwriter_del(w);
+  fclose(ir_f);
+  hw_del(hw);
+  fclose(hdr_f);
+
+  // Sequence fields: @lit.while -> _lit_while, @lparen -> _lparen, @rparen -> _rparen
+  assert(strstr(hdr_buf, "PegRef _lit_while;") != NULL);
+  assert(strstr(hdr_buf, "PegRef _lparen;") != NULL);
+  assert(strstr(hdr_buf, "PegRef _rparen;") != NULL);
+  // Rule references stay as-is
+  assert(strstr(hdr_buf, "PegRef expr;") != NULL);
+  assert(strstr(hdr_buf, "PegRef block;") != NULL);
+
+  // Single-element body: expr rule body is @lit.while -> _lit_while
+  // Node_expr struct should contain _lit_while field
+  assert(strstr(hdr_buf, "} Node_expr;") != NULL);
+  // Find the typedef for Node_expr and check it has the right field
+  const char* expr_td = strstr(hdr_buf, "} Node_expr;");
+  // Walk backwards to find the opening typedef struct {
+  const char* expr_open = expr_td;
+  while (expr_open > hdr_buf && strncmp(expr_open, "typedef struct", 14) != 0) {
+    expr_open--;
+  }
+  // Between expr_open and expr_td, we should find _lit_while
+  size_t expr_span = (size_t)(expr_td - expr_open);
+  char* expr_chunk = malloc(expr_span + 1);
+  memcpy(expr_chunk, expr_open, expr_span);
+  expr_chunk[expr_span] = '\0';
+  assert(strstr(expr_chunk, "PegRef _lit_while;") != NULL);
+  free(expr_chunk);
+
+  // Must NOT contain raw @ or . in field names
+  // Search for "PegRef @" which would indicate unsanitized names
+  assert(strstr(hdr_buf, "PegRef @") == NULL);
+  assert(strstr(hdr_buf, "bool @") == NULL);
+
+  free(ir_buf);
+  free(hdr_buf);
+  _free_input(&input);
+}
+
 int main(void) {
   printf("test_peg:\n");
   RUN(test_closure_and_breakdown);
@@ -763,6 +879,7 @@ int main(void) {
   RUN(test_branch_stores_child_id);
   RUN(test_row_shared_emits_bit_ops);
   RUN(test_branch_wrap_by_lowered_kind);
+  RUN(test_node_field_naming);
   printf("test_peg: OK\n");
   return 0;
 }

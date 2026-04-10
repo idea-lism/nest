@@ -48,13 +48,20 @@ Options:
 
 ### Parser generation
 
-Compile a `.nest` syntax file into LLVM IR and a C header:
+Compile a `.nest` syntax file into LLVM IR, a C header, and a usage example:
 
 ```
-nest c grammar.nest -o parser.ll
+nest c grammar.nest -p calc
 ```
 
-This produces `parser.ll` and `parser.h`.
+This produces `calc.ll`, `calc.h`, and `calc.c` in the current directory.
+
+Options:
+
+- `-p <prefix>` -- generated function prefix (required)
+- `-t <triple>` -- target triple (default: probe clang)
+- `-k false` -- disable memoize table compression
+- `-v <level>` -- verbosity level
 
 ## Examples
 

@@ -100,14 +100,6 @@ typedef struct {
   int32_t memoizable_size;
 } ScopeClosure;
 
-// --- User API: parse tree retrieval ---
-
-typedef struct {
-  TokenChunk* tc;
-  int32_t col;
-  int32_t next_col;
-} PegRef;
-
 // --- Public API ---
 
 void peg_gen(PegGenInput* input, HeaderWriter* hw, IrWriter* w, bool compress_memoize, const char* prefix);

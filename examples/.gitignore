@@ -1,4 +1,6 @@
 *.ll
 *.o
 *.h
+*.c
+!simple_lex/main.c
 main
