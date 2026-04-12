@@ -22,12 +22,18 @@ TokenTree* tt_tree_new(const char* ustr) {
   return tree;
 }
 
-void tt_tree_del(TokenTree* tree) {
+void tt_tree_del(TokenTree* tree, bool free_values) {
   if (!tree) {
     return;
   }
   size_t chunk_count = darray_size(tree->table);
   for (size_t i = 0; i < chunk_count; i++) {
+    if (free_values && tree->table[i].value) {
+      free(tree->table[i].value);
+    }
+    if (free_values && tree->table[i].aux_value) {
+      free(tree->table[i].aux_value);
+    }
     darray_del(tree->table[i].tokens);
   }
   darray_del(tree->table);
@@ -85,3 +91,11 @@ TokenChunk* tt_pop(TokenTree* tree) {
 int32_t tt_current_size(TokenTree* tree) { return darray_size(tree->current->tokens); }
 
 TokenChunk* tt_current(TokenTree* tree) { return tree->current; }
+
+void* tt_alloc_memoize_table(TokenChunk* chunk, int64_t sizeof_col) {
+   // alloc sizeof_col * col_token_size
+  size_t bytesize = darray_size(chunk->tokens) * sizeof_col;
+  void* v = malloc(bytesize);
+  memset(v, -1, bytesize);
+  return v;
+}

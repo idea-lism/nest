@@ -1,4 +1,4 @@
-// specs/nest.md
+// specs/cli.md
 #include "parse.h"
 #include "post_process.h"
 #include "re.h"

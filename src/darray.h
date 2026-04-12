@@ -5,7 +5,9 @@
 
 void* darray_new(uint32_t elem_size, size_t elem_count);
 void* darray_grow(void* a, size_t new_elem_count);
+// returns elem count (not bytesize)
 size_t darray_size(void* a);
+// free the heap, not the elem
 void darray_del(void* a);
 
 #define darray_push(arr, elem)                                                                                         \
