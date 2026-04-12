@@ -4,9 +4,9 @@ create src/coloring.c
 
 Formalism: simple coloring, with simple symmetry-breaking.
 
-After coloring there are groups of vertexes with the same color. If a group has more than 32 elements, break the group into segments (in a greedy way) such that each segment contains less or equal to 32 elements. Arrange the segments into seg_groups so that:
+After coloring there are groups of vertexes with the same color. If a group has more than 64 elements, break the group into segments (in a greedy way) such that each segment contains less or equal to 64 elements. Arrange the segments into seg_groups so that:
 - every segment belongs to a seg_group
-- each `seg_group.size <= 32`
+- each `seg_group.size <= 64`
 
 With this optimization - arangement, we can
 - assign each vertex a bit in a bitset (`int32_t seg_groups[sg_size]`)
