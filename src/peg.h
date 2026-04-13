@@ -56,50 +56,81 @@ typedef struct {
 // --- Internal types for code generation ---
 
 typedef enum {
-  SCOPED_RULE_KIND_BRANCHES,
-  SCOPED_RULE_KIND_SEQ,
-  SCOPED_RULE_KIND_CALL,
-  SCOPED_RULE_KIND_JOIN,
-  SCOPED_RULE_KIND_TERM,
-} ScopedRuleKind;
+  SCOPED_UNIT_CALL = 1,
+  SCOPED_UNIT_TERM,
+  SCOPED_UNIT_BRANCHES,
+  SCOPED_UNIT_SEQ,
+  SCOPED_UNIT_MAYBE,
+  SCOPED_UNIT_STAR,
+  SCOPED_UNIT_PLUS,
+} ScopedUnitKind;
+
+typedef struct ScopedUnit ScopedUnit;
+typedef ScopedUnit* ScopedUnits; // darray
 
 typedef struct {
-  const char* name;
-  ScopedRuleKind kind;
-  union {
-    int32_t* branches; // darray of scoped_rule_ids
-    int32_t* seq;      // darray of scoped_rule_ids
-    int32_t call;      // scoped_rule_id
-    struct {
-      int32_t lhs;
-      int32_t rhs;
-    } join;
-    int32_t term; // token id | scope id
-  } as;
-  char multiplier; // ?, *, +
+  ScopedUnit* lhs;
+  ScopedUnit* rhs;
+} ScopedInterlace;
 
+struct ScopedUnit {
+  ScopedUnitKind kind;
+
+  union {
+    const char* callee;        // scoped_rule_name from symtab, not owned
+    int32_t term_id;           // token id | scope id
+    ScopedUnits children;      // for branches & seq
+    ScopedUnit* base;          // maybe
+    ScopedInterlace interlace; // for star & plus
+  } as;
+
+  int32_t tag_bit_local_offset; // index in tags, or -1 for non-tagged
+
+  // if the unit is nullable, we need advancement check for multiplier rules
+  bool nullable;
+};
+
+typedef struct {
+  const char* scoped_rule_name; // not owned
+  ScopedUnit body;              // tree clone
+  Symtab tags;                  // total tags for this rule
+  int32_t original_global_id;   // -1 for generated sub-rules
+
+  // tag bit allocation
+  uint64_t tag_bit_index;
+  uint64_t tag_bit_mask;
+  uint64_t tag_bit_offset;
+
+  // analysis
   bool nullable;
   Bitset* first_set;
   Bitset* last_set;
+  uint32_t min_size;
+  uint32_t max_size; // UINT32_MAX = unlimited
 
-  bool needs_memo; // non-term rules
-
-  uint32_t scoped_rule_id;
-  uint32_t segment_index;
-  uint32_t segment_mask;
-  uint32_t rule_bit_mask;
-  uint32_t slot_index;
+  // shared-mode slot coloring
+  uint64_t segment_index;
+  uint64_t segment_mask;
+  uint64_t rule_bit_mask;
+  uint64_t slot_index;
 } ScopedRule;
+
+typedef ScopedRule* ScopedRules; // darray
 
 typedef struct {
   const char* scope_name;
   int32_t scope_id;
-  Symtab defined_rules;
-  ScopedRule* rules; // darray
-  int32_t* root_ids; // darray: root_ids[symtab_id] = ScopedRule index of that rule's root
-  int32_t memoizable_size;
+  Symtab scoped_rule_names;
+  ScopedRules scoped_rules;
+
+  int64_t bits_bucket_size;
+  int64_t slots_size;
 } ScopeClosure;
+
+// --- Memoize modes (from cli.md) ---
+
+typedef enum { MEMO_NONE = 0, MEMO_NAIVE = 1, MEMO_SHARED = 2 } MemoMode;
 
 // --- Public API ---
 
-void peg_gen(PegGenInput* input, HeaderWriter* hw, IrWriter* w, bool compress_memoize, const char* prefix);
+void peg_gen(PegGenInput* input, HeaderWriter* hw, IrWriter* w, int memoize_mode, const char* prefix);

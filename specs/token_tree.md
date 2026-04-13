@@ -59,6 +59,8 @@ void tt_tree_del(TokenTree*, bool free_values);
 struct {line, col} tt_locate(TokenTree* tree, int32_t cp_offset);
 tt_add(TokenTree* tree, int32_t tok_id, int32_t cp_start, int32_t cp_size, int32_t chunk_id);
 TokenChunk* tt_push(TokenTree* tree, int32_t scope_id);
+// generated parser only: also set the token_chunk.aux_value = token_tree
+TokenChunk* tt_push_assoc(TokenTree* tree, int32_t scope_id);
 TokenChunk* tt_pop(TokenTree* tree);
 
 // current chunk token count

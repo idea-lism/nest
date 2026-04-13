@@ -115,10 +115,10 @@ static void _gen_scope_dfa(VpaGenInput* input, IrWriter* w, VpaScope* scope, Act
   char* wrapper_name = malloc((size_t)wrapper_name_len + 1);
   snprintf(wrapper_name, (size_t)wrapper_name_len + 1, "lex_%s", scope->name);
 
-  const char* arg_types[] = {"i32", "i32"};
-  const char* arg_names[] = {"state", "cp"};
-  irwriter_define_start(w, wrapper_name, "{i64, i64}", 2, arg_types, arg_names);
+  irwriter_define_startf(w, wrapper_name, "{i64, i64} @%s(i64 %%state_i64, i64 %%cp_i64)", wrapper_name);
   irwriter_bb(w);
+  irwriter_rawf(w, "  %%state = trunc i64 %%state_i64 to i32\n");
+  irwriter_rawf(w, "  %%cp = trunc i64 %%cp_i64 to i32\n");
 
   IrVal result = irwriter_call_retf(w, "{i32, i32}", func_name, "i32 %%state, i32 %%cp");
   IrVal new_state = irwriter_extractvalue(w, "{i32, i32}", result, 0);
@@ -142,7 +142,7 @@ static void _gen_dispatch(VpaGenInput* input, IrWriter* w, Actions actions) {
   int32_t n_actions = (int32_t)darray_size(actions);
 
   irwriter_declare(w, "void", "tt_add", "i8*, i32, i32, i32, i32");
-  irwriter_declare(w, "i8*", "tt_push", "i8*, i32");
+  irwriter_declare(w, "i8*", "tt_push_assoc", "i8*, i32");
   irwriter_declare(w, "i8*", "tt_pop", "i8*");
 
   // pre-declare user hooks
@@ -165,10 +165,13 @@ static void _gen_dispatch(VpaGenInput* input, IrWriter* w, Actions actions) {
     }
   }
 
-  const char* arg_types[] = {"i32", "i8*", "i32", "i32", "i8*"};
-  const char* arg_names[] = {"action_id", "tt", "cp_start", "cp_size", "ctx"};
-  irwriter_define_start(w, "vpa_dispatch", "void", 5, arg_types, arg_names);
+  irwriter_define_startf(
+      w, "vpa_dispatch",
+      "void @vpa_dispatch(i64 %%action_id_i64, i8* %%tt, i64 %%cp_start_i64, i64 %%cp_size_i64, i8* %%ctx)");
   irwriter_bb(w);
+  irwriter_rawf(w, "  %%action_id = trunc i64 %%action_id_i64 to i32\n");
+  irwriter_rawf(w, "  %%cp_start = trunc i64 %%cp_start_i64 to i32\n");
+  irwriter_rawf(w, "  %%cp_size = trunc i64 %%cp_size_i64 to i32\n");
 
   if (n_actions <= 1) {
     irwriter_ret_void(w);
@@ -202,7 +205,7 @@ static void _gen_dispatch(VpaGenInput* input, IrWriter* w, Actions actions) {
         int32_t hook_id = -auid;
         if (hook_id == HOOK_ID_BEGIN) {
           // push scope onto VPA stack
-          irwriter_call_retf(w, "i8*", "tt_push", "i8* %%tt, i32 0");
+          irwriter_call_retf(w, "i8*", "tt_push_assoc", "i8* %%tt, i32 0");
         } else if (hook_id == HOOK_ID_END) {
           // pop scope from VPA stack
           irwriter_call_retf(w, "i8*", "tt_pop", "i8* %%tt");
@@ -285,11 +288,10 @@ static void _gen_vpa_lex(VpaGenInput* input, IrWriter* w, const char* prefix) {
   irwriter_declare(w, "i32", "tt_depth", "i8*");
   irwriter_declare(w, "void", "tt_add", "i8*, i32, i32, i32, i32");
 
-  const char* arg_types[] = {"i8*", "i32", "i8*", "i8*", "i8*"};
-  const char* arg_names[] = {"src", "len", "tt", "errors", "ctx"};
-  irwriter_define_start(w, "vpa_lex", "void", 5, arg_types, arg_names);
+  irwriter_define_startf(w, "vpa_lex", "void @vpa_lex(i8* %%src, i64 %%len_i64, i8* %%tt, i8* %%errors, i8* %%ctx)");
 
   irwriter_bb(w);
+  irwriter_rawf(w, "  %%len = trunc i64 %%len_i64 to i32\n");
 
   IrVal cp_off_ptr = irwriter_alloca(w, "i32");
   IrVal dfa_state_ptr = irwriter_alloca(w, "i32");
@@ -410,9 +412,7 @@ static void _gen_parse_entry(IrWriter* w, const char* prefix) {
   int parse_name_len = snprintf(NULL, 0, "%s_parse", prefix);
   char* parse_name = malloc((size_t)parse_name_len + 1);
   snprintf(parse_name, (size_t)parse_name_len + 1, "%s_parse", prefix);
-  const char* parse_arg_types[] = {"i8*", "i8*"};
-  const char* parse_arg_names[] = {"ctx", "src"};
-  irwriter_define_start(w, parse_name, PARSE_RESULT_TY, 2, parse_arg_types, parse_arg_names);
+  irwriter_define_startf(w, parse_name, PARSE_RESULT_TY " @%s(i8* %%ctx, i8* %%src)", parse_name);
   free(parse_name);
   irwriter_bb(w);
   IrVal len = irwriter_call_retf(w, "i32", "ustr_size", "i8* %%src");
@@ -431,9 +431,7 @@ static void _gen_parse_entry(IrWriter* w, const char* prefix) {
   int cleanup_name_len = snprintf(NULL, 0, "%s_cleanup", prefix);
   char* cleanup_name = malloc((size_t)cleanup_name_len + 1);
   snprintf(cleanup_name, (size_t)cleanup_name_len + 1, "%s_cleanup", prefix);
-  const char* cleanup_arg_types[] = {PARSE_RESULT_TY};
-  const char* cleanup_arg_names[] = {"res"};
-  irwriter_define_start(w, cleanup_name, "void", 1, cleanup_arg_types, cleanup_arg_names);
+  irwriter_define_startf(w, cleanup_name, "void @%s(" PARSE_RESULT_TY " %%res)", cleanup_name);
   free(cleanup_name);
   irwriter_bb(w);
   irwriter_ret_void(w);
@@ -450,6 +448,8 @@ static void _hw_upper(HeaderWriter* hw, const char* s) {
 
 static void _gen_header(VpaGenInput* input, HeaderWriter* hw, int32_t n_actions, const char* prefix) {
   hw_pragma_once(hw);
+  hw_blank(hw);
+  hw_include_sys(hw, "stdbool.h");
   hw_blank(hw);
 
   // inline amalgamated runtime
@@ -523,6 +523,10 @@ static void _gen_header(VpaGenInput* input, HeaderWriter* hw, int32_t n_actions,
   hw_raw(hw, "  int32_t cp_size;\n");
   hw_raw(hw, "} ParseError;\n");
   hw_raw(hw, "typedef ParseError* ParseErrors;\n");
+  hw_blank(hw);
+
+  // PegRef (shared type, also used by PEG header)
+  hw_raw(hw, "typedef struct {\n  void* tc;\n  int64_t col;\n  int64_t row;\n} PegRef;\n");
   hw_blank(hw);
 
   // ParseResult

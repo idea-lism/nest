@@ -75,3 +75,29 @@ Good code:
 ```c
 Symtab strings = ...
 ```
+
+### Idiomatic C: flatten branches
+
+Bad code (introduces unecessary nesting):
+```c
+if (mode != NONE) {
+  if (mode == NAIVE) {
+    ...
+  } else {
+    ...
+  }
+} else {
+  ...
+}
+```
+
+Good code (flattened, clean):
+```c
+if (mode == NONE) {
+  ...
+} else if (mode == NAIVE) {
+  ...
+} else {
+  ...
+}
+```

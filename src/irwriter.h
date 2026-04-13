@@ -14,8 +14,11 @@ void irwriter_del(IrWriter* w);
 void irwriter_start(IrWriter* w, const char* source_file, const char* directory);
 void irwriter_end(IrWriter* w);
 
-void irwriter_define_start(IrWriter* w, const char* name, const char* ret_type, int argc, const char** arg_types,
-                           const char** arg_names);
+// sig_fmt: everything after "define" and before "{"
+// e.g. "internal void @save(ptr %%stack_ptr, ptr %%col)"
+// name: function name for debug metadata (DISubprogram)
+void irwriter_define_startf(IrWriter* w, const char* name, const char* sig_fmt, ...);
+void irwriter_set_widen_ret(IrWriter* w);
 void irwriter_define_end(IrWriter* w);
 
 IrLabel irwriter_label(IrWriter* w);
@@ -57,6 +60,7 @@ IrVal irwriter_load(IrWriter* w, const char* ty, IrVal ptr);
 void irwriter_store(IrWriter* w, const char* ty, IrVal val, IrVal ptr);
 IrVal irwriter_next_reg(IrWriter* w);
 void irwriter_emit_val(IrWriter* w, IrVal val);
+void irwriter_emit_label(IrWriter* w, IrLabel label);
 
 IrVal irwriter_phi2(IrWriter* w, const char* ty, IrVal v1, IrLabel bb1, IrVal v2, IrLabel bb2);
 IrVal irwriter_sext(IrWriter* w, const char* from_ty, IrVal val, const char* to_ty);

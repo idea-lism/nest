@@ -146,8 +146,7 @@ static void _emit_dbg_suffix(IrWriter* w, int id) {
   }
 }
 
-void irwriter_define_start(IrWriter* w, const char* name, const char* ret_type, int argc, const char** arg_types,
-                           const char** arg_names) {
+void irwriter_define_startf(IrWriter* w, const char* name, const char* sig_fmt, ...) {
   _validate_name(name, "function_name");
   if (!w->dbg_flags_emitted) {
     w->dbg_flags_emitted = 1;
@@ -175,40 +174,19 @@ void irwriter_define_start(IrWriter* w, const char* name, const char* ret_type, 
   w->reg = 0;
   w->label = 0;
   w->labels = darray_grow(w->labels, 1);
-  w->widen_ret = strcmp(ret_type, "{i32, i32}") == 0;
+  w->widen_ret = 0;
   free(w->entry_prologue);
   w->entry_prologue = NULL;
 
-  const char* ext_ret = w->widen_ret ? "{i64, i64}" : ret_type;
-  fprintf(w->out, "define %s @%s(", ext_ret, name);
-  for (int i = 0; i < argc; i++) {
-    if (i) {
-      fprintf(w->out, ", ");
-    }
-    const char* ext_ty = strcmp(arg_types[i], "i32") == 0 ? "i64" : arg_types[i];
-    const char* suffix = strcmp(arg_types[i], "i32") == 0 ? "_i64" : "";
-    fprintf(w->out, "%s %%%s%s", ext_ty, arg_names[i], suffix);
-  }
-  fprintf(w->out, ") !dbg !%d {\n", w->dbg_sub_id);
-
-  int total_len = 0;
-  for (int i = 0; i < argc; i++) {
-    if (strcmp(arg_types[i], "i32") == 0) {
-      total_len += snprintf(NULL, 0, "  %%%s = trunc i64 %%%s_i64 to i32\n", arg_names[i], arg_names[i]);
-    }
-  }
-  if (total_len > 0) {
-    char* buf = malloc((size_t)total_len + 1);
-    int pos = 0;
-    for (int i = 0; i < argc; i++) {
-      if (strcmp(arg_types[i], "i32") == 0) {
-        pos += snprintf(buf + pos, (size_t)total_len + 1 - (size_t)pos, "  %%%s = trunc i64 %%%s_i64 to i32\n",
-                        arg_names[i], arg_names[i]);
-      }
-    }
-    w->entry_prologue = buf;
-  }
+  fprintf(w->out, "define ");
+  va_list ap;
+  va_start(ap, sig_fmt);
+  vfprintf(w->out, sig_fmt, ap);
+  va_end(ap);
+  fprintf(w->out, " !dbg !%d {\n", w->dbg_sub_id);
 }
+
+void irwriter_set_widen_ret(IrWriter* w) { w->widen_ret = 1; }
 
 void irwriter_define_end(IrWriter* w) {
   fprintf(w->out, "}\n\n");
@@ -470,6 +448,8 @@ void irwriter_store(IrWriter* w, const char* ty, IrVal val, IrVal ptr) {
 IrVal irwriter_next_reg(IrWriter* w) { return _next_reg(w); }
 
 void irwriter_emit_val(IrWriter* w, IrVal val) { _emit_val(w->out, w->imms, val); }
+
+void irwriter_emit_label(IrWriter* w, IrLabel label) { _emit_label(w->out, w->labels, label); }
 
 IrVal irwriter_phi2(IrWriter* w, const char* ty, IrVal v1, IrLabel bb1, IrVal v2, IrLabel bb2) {
   IrVal r = _next_reg(w);

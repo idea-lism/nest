@@ -205,6 +205,59 @@ TEST(test_auto_tag_branches) {
   parse_state_del(ps);
 }
 
+TEST(test_auto_tag_too_many_tags) {
+  ParseState* ps = parse_state_new();
+  _init_symtabs(ps);
+  ps->peg_rules = darray_new(sizeof(PegRule), 0);
+
+  PegRule rule = {.global_id = symtab_intern(&ps->rule_names, "big"), .scope_id = -1, .body = {.kind = PEG_SEQ}};
+  rule.body.children = darray_new(sizeof(PegUnit), 0);
+
+  PegUnit branches = {.kind = PEG_BRANCHES};
+  branches.children = darray_new(sizeof(PegUnit), 0);
+  for (int32_t i = 0; i < 65; i++) {
+    char name[16];
+    snprintf(name, sizeof(name), "t%d", i);
+    PegUnit b = {.kind = PEG_SEQ};
+    b.children = darray_new(sizeof(PegUnit), 0);
+    PegUnit t = {.kind = PEG_TERM, .id = symtab_intern(&ps->tokens, name)};
+    darray_push(b.children, t);
+    darray_push(branches.children, b);
+  }
+  darray_push(rule.body.children, branches);
+  darray_push(ps->peg_rules, rule);
+
+  bool ok = pp_auto_tag_branches(ps);
+  assert(!ok);
+  assert(parse_has_error(ps));
+  assert(strstr(parse_get_error(ps), "64") != NULL);
+
+  parse_state_del(ps);
+}
+
+TEST(test_auto_tag_rule_name_too_long) {
+  ParseState* ps = parse_state_new();
+  _init_symtabs(ps);
+  ps->peg_rules = darray_new(sizeof(PegRule), 0);
+
+  char long_name[256];
+  memset(long_name, 'a', 129);
+  long_name[129] = '\0';
+
+  PegRule rule = {.global_id = symtab_intern(&ps->rule_names, long_name), .scope_id = -1, .body = {.kind = PEG_SEQ}};
+  rule.body.children = darray_new(sizeof(PegUnit), 0);
+  PegUnit t = {.kind = PEG_TERM, .id = symtab_intern(&ps->tokens, "x")};
+  darray_push(rule.body.children, t);
+  darray_push(ps->peg_rules, rule);
+
+  bool ok = pp_auto_tag_branches(ps);
+  assert(!ok);
+  assert(parse_has_error(ps));
+  assert(strstr(parse_get_error(ps), "128") != NULL);
+
+  parse_state_del(ps);
+}
+
 // ============================================================================
 // pp_check_duplicate_tags
 // ============================================================================
@@ -431,6 +484,26 @@ TEST(test_interlace_indirect_nullable) {
   bool ok = pp_detect_left_recursions(ps);
   assert(!ok);
   assert(strstr(parse_get_error(ps), "interlace") != NULL);
+
+  parse_state_del(ps);
+}
+
+TEST(test_undefined_call) {
+  ParseState* ps = parse_state_new();
+  _init_symtabs(ps);
+  ps->peg_rules = darray_new(sizeof(PegRule), 0);
+
+  // main = missing_rule
+  PegRule main_rule = {.global_id = symtab_intern(&ps->rule_names, "main"), .scope_id = -1, .body = {.kind = PEG_SEQ}};
+  main_rule.body.children = darray_new(sizeof(PegUnit), 0);
+  PegUnit call = {.kind = PEG_CALL, .id = symtab_intern(&ps->rule_names, "missing_rule")};
+  darray_push(main_rule.body.children, call);
+  darray_push(ps->peg_rules, main_rule);
+
+  bool ok = pp_detect_left_recursions(ps);
+  assert(!ok);
+  assert(strstr(parse_get_error(ps), "not defined") != NULL);
+  assert(strstr(parse_get_error(ps), "missing_rule") != NULL);
 
   parse_state_del(ps);
 }
@@ -895,6 +968,8 @@ int main(void) {
   RUN(test_inline_macros_missing);
   RUN(test_inline_macros_literals);
   RUN(test_auto_tag_branches);
+  RUN(test_auto_tag_too_many_tags);
+  RUN(test_auto_tag_rule_name_too_long);
   RUN(test_duplicate_tag_error);
   RUN(test_no_duplicate_tags);
   RUN(test_detect_left_recursion);
@@ -902,6 +977,7 @@ int main(void) {
   RUN(test_interlace_both_nullable);
   RUN(test_interlace_rhs_not_nullable);
   RUN(test_interlace_indirect_nullable);
+  RUN(test_undefined_call);
   RUN(test_validate_vpa_missing_main);
   RUN(test_validate_vpa_duplicate_scope);
   RUN(test_validate_vpa_leading_re_empty);

@@ -84,6 +84,7 @@ Every scope, except the `main`, has a starting regex. After the starting regex i
 For all scopes, the built-in hook `.begin` / `.end` will push / pop the VPA stack.
 
 For scopes with `.has_parser`, the built-in hook `.begin` / `.end` also denotes when to push / pop a TokenChunk too.
+We push chunk with `tt_push_assoc()` instead, so the chunk will have the tree ref.
 When popping a chunk (scope), invoke the internal PEG parsing function `parse_{scope_name}` defined in [peg](peg.md) -- this is known in compile time, so generated code will hard-code the parsing funciton call for the `.end` action.
 
 Sub-scope calls inlines the leader regexp as matcher. Assume we have a scope like this:

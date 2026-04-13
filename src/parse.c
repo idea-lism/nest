@@ -1188,7 +1188,7 @@ static void _free_peg_unit(PegUnit* u) {
 static void _free_vpa_unit(VpaUnit* u);
 
 static void _free_state(ParseState* ps) {
-  tt_tree_del(ps->tree);
+  tt_tree_del(ps->tree, false);
   for (int32_t i = 0; i < (int32_t)darray_size(ps->vpa_scopes); i++) {
     free(ps->vpa_scopes[i].name);
     _free_vpa_unit(&ps->vpa_scopes[i].leader);

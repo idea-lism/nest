@@ -11,7 +11,7 @@ create `src/peg.c` (`void peg_gen(PegGenInput* input, HeaderWriter* hw, IrWriter
   2. node extraction functions
   3. memoize table construction helpers for LLVM IR to use
 
-It iterates parsed PEG structure, utilize src/re.h to generate code.
+It iterates parsed PEG structure, utilize [peg_ir](peg_ir.md) to generate code.
 
 It assigns rule ids for each scope.
 
@@ -62,6 +62,7 @@ typedef struct {
   Symtab tokens;      // owned by ParseState
   Symtab scope_names; // owned by ParseState
   Symtab rule_names;  // owned by ParseState
+  int verbose;        // verbose level, see also cli.md
 } PegGenInput;
 ```
 
@@ -123,12 +124,15 @@ struct ScopedUnit {
 
   // index in tags, or -1 for non-tagged unit
   // when there is tag_offset, parsing should set the tag_bit to 1
-  int32_t tag_offset;
+  int32_t tag_bit_local_offset;
+
+  // if the unit is nullable, we need advancement check for multiplier rules
+  bool nullable;
 } ScopedUnit;
 
 struct ScopedRule {
   const char* scoped_rule_name; // not owned, point to ScopeClosure.scoped_rule_names
-  ScopedUnits units; // tree clone of the original rule, but `id` and `interlace_rhs_id` are re-numbered as scoped_rule_ids
+  ScopedUnit body; // tree clone of the original rule, but `id` and `interlace_rhs_id` are re-numbered as scoped_rule_ids
   Symtab tags; // total tags
 
   // ... analysis|codegen props, see below
@@ -214,7 +218,9 @@ Create function `_alloc_slot_bits()`, to finish the following analysis.
 
 Compute `first_set(R)` and `last_set(R)` for each rule R, expanding references to leaf token id sets.
 
-Compute `max_size(R)` and `min_size(R)` for each rule R, use `-1` for unlimited size.
+Compute `max_size(R)` and `min_size(R)` for each rule R, use `UINT32_MAX` for unlimited size.
+
+Note that rules may recursively call each other, we need fix-point analysis.
 
 Two rules A, B are **exclusive** if one of following holds:
 
@@ -248,7 +254,7 @@ struct Col${scope_name} {
 ```
 
 Then we use negated-bitset representation to denote what each slot means:
-- the bit map co-lives with tag bits in `Col.bits`
+- the bit map also lives in `Col.bits` like tag bits, but they don't overlap.
 - init state: all bits & slots are set to 1 because `tt_alloc_memoize_table()` already did so.
 - for a rule, we know:
   - the segment it belongs to: `segment_bits = bits[segment_index] & segment_mask`
@@ -300,32 +306,46 @@ In the funciton, we allocate & init table for the scope, then lower to fine-gran
 %peg_table = tt_alloc_memoize_table(%tc, sizeof_col)
 %tc->value = %peg_table
 %tokens = tc->tokens
-br {scope_name}$foo
+{ peg_ir_emit_call(ctx, entrance_rule_name) } ; pushes stack with current col
 
 {scope_name}$foo:
-  { reads memoize table }
+  { reads memoize table, goto fail_bb / fast_ret / material_parse }
+
+fast_ret:
+  %parsed_tokens = { memoized size }
+  %col += %parsed_tokens
+  br done_bb
+
+material_parse:
   { if rule has tag bits }
     %tag_bits = 0;
   { end }
 
-  { peg_ir_emit_parse(ctx, scoped_rule.body, fail_bb) }
+  { peg_ir_emit_parse(ctx, scoped_rule.body, parse_fail) }
 
+  %start_col = @top()
   { if rule has tag bits }
-    %bits = gep(%peg_table[%col].bits);
+    %bits = gep(%peg_table[%start].bits);
     %bits[{tag_bit_index}] &= ~{tag_bit_mask}
     %bits[{tag_bit_index}] |= %tag_bits
   { end }
   { cache in memoize table }
+
+  %parsed_tokens = %col - %start_col
   br done_bb
 
-fail_bb:
+parse_fail:
+  %col = @top()
   { denies memoize table }
+  br fail_bb
+
+fail_bb:
   %parsed_tokens = -1
-
+  br done_bb
 done_bb:
-  { peg_ir_emit_ret(ctx) }
+  { peg_ir_emit_ret(ctx) } ; pops stack
 
-
+; next rule
 {scope_name}$foo$1:
   ...
 
@@ -346,11 +366,9 @@ When memoize_mode=`shared` mode, we also have:
 - `define internal @bit_test(ptr table, i64 col, i64 col_size, i64 seg_offset, i64 rule_bit)`: Test rule's bit in the segment. Returns `i1` (1 = may match, 0 = proven fail).
   - `seg_offset = seg_idx * sizeof(i64)`
 - `define internal @bit_deny(ptr table, i64 col, i64 col_size, i64 seg_offset, i64 rule_bit)`: Clear rule's bit (cache failure).
-- `define internal @bit_exclude(ptr table, i64 col, i64 col_size, i64 seg_offset, i64 rule_bit)`: Keep only this rule's bit, zero out others in segment (cache exclusive match).
+- `define internal @bit_exclude(ptr table, i64 col, i64 col_size, i64 seg_offset, i64 segment_mask, i64 rule_bit)`: Keep only this rule's bit, zero out others in segment (cache exclusive match).
 
 In the end the memoize table is associated to each `TokenChunk`.
-
-We also impl tail-call optimization for calling simple rules.
 
 # User API: parse tree retrieval
 
@@ -375,6 +393,9 @@ typedef Node_{rule_name} {
     bool {tag1}: 1;
     bool {tag2}: 1;
     ...
+    { if tags size < 64 # this enforces low bit layout in clang }
+    uint64_t _padding: {64 - used_bits};
+    { end }
   } is; // can tell the branch
   PegRef {child0};
   PegLink {multiplier_child1};
@@ -392,20 +413,23 @@ Tag bits can be assigned all at once, the loading function is like:
   Node_foo $1 = {0};
   in64_t* $table = ref.tc->value;
   switch (ref.tc->scope_id) {
-    case {scope_1}: {
+    case {rule_used_in_scopes[0]}: {
       ((uint64_t*)&$1.is)[0] = ($table[{tag_bit_index}] >> {tag_bit_offset}) & {tag_bit_mask};
       break;
     }
-    case {scope_2}: {
+    case {rule_used_in_scopes[1]}: {
       ... // we have different number allocations for different scopes
       break;
     }
+    ...
   }
   return $1;
 }
 ```
 
 Note if rule name is a scope, we have to expand the child token chunk first, and then the loading is like normal_rule_name.
+- Note that we need token_tree for the expansion, so the chunk was created by tt_push_assoc in [VPA](vpa.md)
+- With `aux_value` as token_tree we can expand
 
 Generic link iterating functions should be defined as:
 

@@ -5,7 +5,7 @@
 
 typedef struct {
   int32_t sg_id;
-  int32_t seg_mask;
+  int64_t seg_mask;
 } VertexInfo;
 
 struct ColoringResult {
@@ -185,7 +185,7 @@ static void _build_segments(ColoringResult* cr, int32_t* colors, int32_t k) {
   for (int32_t c = 0; c < k; c++) {
     color_sg_base[c] = sg_id;
     int32_t count = color_counts[c];
-    sg_id += (count + 31) / 32;
+    sg_id += (count + 63) / 64;
   }
   cr->sg_size = sg_id;
 
@@ -193,10 +193,10 @@ static void _build_segments(ColoringResult* cr, int32_t* colors, int32_t k) {
   for (int32_t v = 0; v < cr->n_vertices; v++) {
     int32_t c = colors[v];
     int32_t pos = color_pos[c]++;
-    int32_t seg_idx = pos / 32;
-    int32_t bit_idx = pos % 32;
+    int32_t seg_idx = pos / 64;
+    int32_t bit_idx = pos % 64;
     cr->vertex_info[v].sg_id = color_sg_base[c] + seg_idx;
-    cr->vertex_info[v].seg_mask = (int32_t)(1u << bit_idx);
+    cr->vertex_info[v].seg_mask = (int64_t)(1ULL << bit_idx);
   }
 
   free(color_counts);
@@ -238,7 +238,7 @@ void coloring_result_del(ColoringResult* cr) {
   free(cr);
 }
 
-void coloring_get_segment_info(ColoringResult* cr, int32_t vertex_id, int32_t* out_sg_id, int32_t* out_seg_mask) {
+void coloring_get_segment_info(ColoringResult* cr, int32_t vertex_id, int32_t* out_sg_id, int64_t* out_seg_mask) {
   *out_sg_id = cr->vertex_info[vertex_id].sg_id;
   *out_seg_mask = cr->vertex_info[vertex_id].seg_mask;
 }

@@ -510,12 +510,13 @@ void aut_gen_dfa(Aut* a, IrWriter* w, bool debug_mode) {
   }
 
   const char* ret_ty = "{i32, i32}";
-  const char* arg_types[] = {"i32", "i32"};
-  const char* arg_names[] = {"state", "cp"};
-  irwriter_define_start(w, a->function_name, ret_ty, 2, arg_types, arg_names);
+  irwriter_define_startf(w, a->function_name, "{i64, i64} @%s(i64 %%state_i64, i64 %%cp_i64)", a->function_name);
+  irwriter_set_widen_ret(w);
 
   // entry BB must be emitted first
   irwriter_bb(w);
+  irwriter_rawf(w, "  %%state = trunc i64 %%state_i64 to i32\n");
+  irwriter_rawf(w, "  %%cp = trunc i64 %%cp_i64 to i32\n");
   IrLabel dead_bb = irwriter_label(w);
   IrLabel* state_bbs = malloc((size_t)dfa_nstates * sizeof(IrLabel));
   for (int s = 0; s < dfa_nstates; s++) {

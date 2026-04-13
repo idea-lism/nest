@@ -31,6 +31,15 @@ int32_t symtab_find(const Symtab* st, const char* name) {
   return -1;
 }
 
+int32_t symtab_find_f(const Symtab* st, const char* fmt_str, ...) {
+  char buf[256];
+  va_list ap;
+  va_start(ap, fmt_str);
+  vsnprintf(buf, sizeof(buf), fmt_str, ap);
+  va_end(ap);
+  return symtab_find(st, buf);
+}
+
 int32_t symtab_intern(Symtab* st, const char* name) {
   int32_t id = symtab_find(st, name);
   if (id != -1) {

@@ -31,9 +31,6 @@ void tt_tree_del(TokenTree* tree, bool free_values) {
     if (free_values && tree->table[i].value) {
       free(tree->table[i].value);
     }
-    if (free_values && tree->table[i].aux_value) {
-      free(tree->table[i].aux_value);
-    }
     darray_del(tree->table[i].tokens);
   }
   darray_del(tree->table);
@@ -79,6 +76,12 @@ TokenChunk* tt_push(TokenTree* tree, int32_t scope_id) {
   return tree->current;
 }
 
+TokenChunk* tt_push_assoc(TokenTree* tree, int32_t scope_id) {
+  TokenChunk* chunk = tt_push(tree, scope_id);
+  chunk->aux_value = tree;
+  return chunk;
+}
+
 TokenChunk* tt_pop(TokenTree* tree) {
   if (tree->current->parent_id == -1) {
     fprintf(stderr, "Error: Attempting to pop root chunk, which is not allowed.\n");
@@ -97,5 +100,6 @@ void* tt_alloc_memoize_table(TokenChunk* chunk, int64_t sizeof_col) {
   size_t bytesize = darray_size(chunk->tokens) * sizeof_col;
   void* v = malloc(bytesize);
   memset(v, -1, bytesize);
+  chunk->value = v;
   return v;
 }

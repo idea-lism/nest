@@ -69,6 +69,15 @@ Bitset* bitset_or(Bitset* s1, Bitset* s2) {
   return result;
 }
 
+void bitset_or_into(Bitset* dest, Bitset* src) {
+  for (uint32_t i = 0; i < src->n_chunks; i++) {
+    if (src->chunks[i]) {
+      _ensure_capacity(dest, i);
+      dest->chunks[i] |= src->chunks[i];
+    }
+  }
+}
+
 Bitset* bitset_and(Bitset* s1, Bitset* s2) {
   uint32_t min_n = s1->n_chunks < s2->n_chunks ? s1->n_chunks : s2->n_chunks;
   Bitset* result = bitset_new();

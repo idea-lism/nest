@@ -39,11 +39,12 @@ TEST(test_module_prelude) {
 static void _emit_simple_function(IrWriter* w) {
   irwriter_start(w, "test.ll", ".");
 
-  const char* arg_types[] = {"i32", "i32"};
-  const char* arg_names[] = {"state", "cp"};
-  irwriter_define_start(w, "match", "{i32, i32}", 2, arg_types, arg_names);
+  irwriter_define_startf(w, "match", "{i64, i64} @match(i64 %%state_i64, i64 %%cp_i64)");
+  irwriter_set_widen_ret(w);
 
   irwriter_bb(w); // L0
+  irwriter_rawf(w, "  %%state = trunc i64 %%state_i64 to i32\n");
+  irwriter_rawf(w, "  %%cp = trunc i64 %%cp_i64 to i32\n");
   IrVal zero = irwriter_imm(w, "0");
   IrVal undef_r = irwriter_insertvalue(w, "{i32, i32}", -1, "i32", zero, 0);
   irwriter_ret(w, "{i32, i32}", undef_r);
@@ -66,10 +67,9 @@ TEST(test_simple_function) {
 
 static void _emit_binop(IrWriter* w) {
   irwriter_start(w, "test.ll", ".");
-  const char* arg_types[] = {"i32"};
-  const char* arg_names[] = {"x"};
-  irwriter_define_start(w, "f", "i32", 1, arg_types, arg_names);
+  irwriter_define_startf(w, "f", "i64 @f(i64 %%x_i64)");
   irwriter_bb(w); // L0
+  irwriter_rawf(w, "  %%x = trunc i64 %%x_i64 to i32\n");
 
   IrVal x = irwriter_imm(w, "%x");
   IrVal one = irwriter_imm(w, "1");
@@ -94,14 +94,13 @@ TEST(test_binop) {
 
 static void _emit_icmp_branch(IrWriter* w) {
   irwriter_start(w, "test.ll", ".");
-  const char* arg_types[] = {"i32"};
-  const char* arg_names[] = {"x"};
-  irwriter_define_start(w, "f", "i32", 1, arg_types, arg_names);
+  irwriter_define_startf(w, "f", "i64 @f(i64 %%x_i64)");
 
   IrLabel positive = irwriter_label(w); // L0
   IrLabel negative = irwriter_label(w); // L1
 
-  irwriter_bb(w); // entry, emits prologue
+  irwriter_bb(w); // entry
+  irwriter_rawf(w, "  %%x = trunc i64 %%x_i64 to i32\n");
   IrVal x = irwriter_imm(w, "%x");
   IrVal cmp = irwriter_icmp(w, "sge", "i32", x, irwriter_imm(w, "0"));
   irwriter_br_cond(w, cmp, positive, negative);
@@ -129,9 +128,7 @@ TEST(test_icmp_branch) {
 
 static void _emit_switch(IrWriter* w) {
   irwriter_start(w, "test.ll", ".");
-  const char* arg_types[] = {"i32"};
-  const char* arg_names[] = {"s"};
-  irwriter_define_start(w, "dispatch", "void", 1, arg_types, arg_names);
+  irwriter_define_startf(w, "dispatch", "void @dispatch(i64 %%s_i64)");
 
   IrLabel dead = irwriter_label(w);   // L0
   IrLabel state0 = irwriter_label(w); // L1
@@ -139,6 +136,7 @@ static void _emit_switch(IrWriter* w) {
   IrLabel done = irwriter_label(w);   // L3
 
   irwriter_bb(w); // entry
+  irwriter_rawf(w, "  %%s = trunc i64 %%s_i64 to i32\n");
   irwriter_switch_start(w, "i32", irwriter_imm(w, "%s"), dead);
   irwriter_switch_case(w, "i32", 0, state0);
   irwriter_switch_case(w, "i32", 1, state1);
@@ -171,11 +169,12 @@ TEST(test_switch) {
 
 static void _emit_insertvalue(IrWriter* w) {
   irwriter_start(w, "test.ll", ".");
-  const char* arg_types[] = {"i32", "i32"};
-  const char* arg_names[] = {"state", "cp"};
-  irwriter_define_start(w, "match", "{i32, i32}", 2, arg_types, arg_names);
+  irwriter_define_startf(w, "match", "{i64, i64} @match(i64 %%state_i64, i64 %%cp_i64)");
+  irwriter_set_widen_ret(w);
 
   irwriter_bb(w); // L0
+  irwriter_rawf(w, "  %%state = trunc i64 %%state_i64 to i32\n");
+  irwriter_rawf(w, "  %%cp = trunc i64 %%cp_i64 to i32\n");
   IrVal r0 = irwriter_insertvalue(w, "{i32, i32}", -1, "i32", irwriter_imm(w, "1"), 0);
   IrVal r1 = irwriter_insertvalue(w, "{i32, i32}", r0, "i32", irwriter_imm(w, "0"), 1);
   irwriter_ret(w, "{i32, i32}", r1);
@@ -194,11 +193,10 @@ TEST(test_insertvalue) {
 
 static void _emit_debug_locations(IrWriter* w) {
   irwriter_start(w, "test.ll", ".");
-  const char* arg_types[] = {"i32"};
-  const char* arg_names[] = {"x"};
-  irwriter_define_start(w, "f", "i32", 1, arg_types, arg_names);
+  irwriter_define_startf(w, "f", "i64 @f(i64 %%x_i64)");
 
   irwriter_bb(w); // L0
+  irwriter_rawf(w, "  %%x = trunc i64 %%x_i64 to i32\n");
   irwriter_dbg(w, 10, 5);
   IrVal x = irwriter_imm(w, "%x");
   IrVal one = irwriter_imm(w, "1");
@@ -225,9 +223,8 @@ TEST(test_debug_locations) {
 static void _emit_dfa_function(IrWriter* w) {
   irwriter_start(w, "dfa.rules", ".");
 
-  const char* arg_types[] = {"i32", "i32"};
-  const char* arg_names[] = {"state", "cp"};
-  irwriter_define_start(w, "match", "{i32, i32}", 2, arg_types, arg_names);
+  irwriter_define_startf(w, "match", "{i64, i64} @match(i64 %%state_i64, i64 %%cp_i64)");
+  irwriter_set_widen_ret(w);
 
   IrLabel dead = irwriter_label(w);     // L0
   IrLabel state0 = irwriter_label(w);   // L1
@@ -236,6 +233,8 @@ static void _emit_dfa_function(IrWriter* w) {
 
   // entry: switch on state
   irwriter_bb(w);
+  irwriter_rawf(w, "  %%state = trunc i64 %%state_i64 to i32\n");
+  irwriter_rawf(w, "  %%cp = trunc i64 %%cp_i64 to i32\n");
   irwriter_dbg(w, 1, 1);
   irwriter_switch_start(w, "i32", irwriter_imm(w, "%state"), dead);
   irwriter_switch_case(w, "i32", 0, state0);
@@ -293,12 +292,11 @@ TEST(test_dfa_function) {
 
 static void _emit_label_f(IrWriter* w) {
   irwriter_start(w, "test.ll", ".");
-  const char* arg_types[] = {"i32"};
-  const char* arg_names[] = {"x"};
-  irwriter_define_start(w, "f", "i32", 1, arg_types, arg_names);
+  irwriter_define_startf(w, "f", "i64 @f(i64 %%x_i64)");
 
   IrLabel entry_bb = irwriter_bb(w);
   (void)entry_bb;
+  irwriter_rawf(w, "  %%x = trunc i64 %%x_i64 to i32\n");
   IrLabel yes = irwriter_label_f(w, "yes");
   IrLabel no = irwriter_label_f(w, "no");
 
@@ -331,10 +329,9 @@ TEST(test_lifecycle) {
   assert(w);
 
   irwriter_start(w, "test.ll", ".");
-  const char* arg_types[] = {"i32"};
-  const char* arg_names[] = {"x"};
-  irwriter_define_start(w, "f", "i32", 1, arg_types, arg_names);
+  irwriter_define_startf(w, "f", "i64 @f(i64 %%x_i64)");
   irwriter_bb(w);
+  irwriter_rawf(w, "  %%x = trunc i64 %%x_i64 to i32\n");
   irwriter_ret(w, "i32", irwriter_imm(w, "%x"));
   irwriter_define_end(w);
   irwriter_end(w);
@@ -353,17 +350,18 @@ TEST(test_clang_compile) {
 
   irwriter_start(w, "dfa.rules", ".");
 
-  const char* arg_types[] = {"i32", "i32"};
-  const char* arg_names[] = {"state", "cp"};
-  irwriter_define_start(w, "match", "{i32, i32}", 2, arg_types, arg_names);
+  irwriter_define_startf(w, "match", "{i64, i64} @match(i64 %%state_i64, i64 %%cp_i64)");
+  irwriter_set_widen_ret(w);
 
   IrLabel state0 = irwriter_label(w);   // L0
   IrLabel dead = irwriter_label(w);     // L1
   IrLabel s0_match = irwriter_label(w); // L2
   IrLabel s0_fail = irwriter_label(w);  // L3
 
-  // entry BB (emits prologue)
+  // entry BB
   irwriter_bb(w); // L4
+  irwriter_rawf(w, "  %%state = trunc i64 %%state_i64 to i32\n");
+  irwriter_rawf(w, "  %%cp = trunc i64 %%cp_i64 to i32\n");
   irwriter_dbg(w, 1, 1);
   irwriter_switch_start(w, "i32", irwriter_imm(w, "%state"), dead);
   irwriter_switch_case(w, "i32", 0, state0);

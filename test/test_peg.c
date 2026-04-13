@@ -145,7 +145,7 @@ TEST(test_closure_and_breakdown) {
   FILE* hdr_f = compat_open_memstream(&hdr_buf, &hdr_len);
   HeaderWriter* hw = hw_new(hdr_f);
 
-  peg_gen(&input, hw, w, false, "json");
+  peg_gen(&input, hw, w, MEMO_NAIVE, "json");
 
   irwriter_end(w);
   irwriter_del(w);
@@ -165,11 +165,9 @@ TEST(test_closure_and_breakdown) {
   // should contain PegRef type
   assert(strstr(hdr_buf, "PegRef") != NULL);
   // should contain node types
-  assert(strstr(hdr_buf, "Node_json_value") != NULL);
+  assert(strstr(hdr_buf, "Node_value") != NULL);
   // should contain loader functions
   assert(strstr(hdr_buf, "json_load_value") != NULL);
-  // should contain N_RULES define for main scope
-  assert(strstr(hdr_buf, "N_RULES") != NULL);
 
   free(ir_buf);
   free(hdr_buf);
@@ -195,7 +193,7 @@ TEST(test_compressed_mode) {
   FILE* hdr_f = compat_open_memstream(&hdr_buf, &hdr_len);
   HeaderWriter* hw = hw_new(hdr_f);
 
-  peg_gen(&input, hw, w, true, "json");
+  peg_gen(&input, hw, w, MEMO_SHARED, "json");
 
   irwriter_end(w);
   irwriter_del(w);
@@ -207,58 +205,6 @@ TEST(test_compressed_mode) {
   assert(strstr(ir_buf, "parse_main") != NULL);
   assert(hdr_buf != NULL);
   assert(strstr(hdr_buf, "PegRef") != NULL);
-
-  free(ir_buf);
-  free(hdr_buf);
-  _free_input(&input);
-}
-
-// ============================================================
-// Test: scope-local table sizes are per-scope, not global
-// (acceptance criterion: 5 rules in scope A → 5 slots, not full)
-// ============================================================
-
-TEST(test_scope_local_table_size) {
-  PegGenInput input = {0};
-  _build_json_input(&input);
-
-  char* hdr_buf = NULL;
-  size_t hdr_len = 0;
-  FILE* hdr_f = compat_open_memstream(&hdr_buf, &hdr_len);
-  HeaderWriter* hw = hw_new(hdr_f);
-
-  char* ir_buf = NULL;
-  size_t ir_len = 0;
-  FILE* ir_f = compat_open_memstream(&ir_buf, &ir_len);
-  IrWriter* w = irwriter_new(ir_f, NULL);
-  irwriter_start(w, "test.c", ".");
-
-  peg_gen(&input, hw, w, false, "json");
-
-  irwriter_end(w);
-  irwriter_del(w);
-  fclose(ir_f);
-  hw_del(hw);
-  fclose(hdr_f);
-
-  // The N_RULES define should reflect only the rules in the main scope's closure,
-  // not ALL rules across all scopes
-  assert(strstr(hdr_buf, "JSON_MAIN_N_RULES") != NULL);
-
-  // find the value after the define
-  const char* p = strstr(hdr_buf, "JSON_MAIN_N_RULES");
-  assert(p != NULL);
-  // skip to the number
-  p += strlen("JSON_MAIN_N_RULES");
-  while (*p == ' ') {
-    p++;
-  }
-  int n_rules = atoi(p);
-  // main scope includes: main, value, array, value_list and their broken-down children
-  // but NOT rules from other scopes (there's only one scope here)
-  assert(n_rules > 0);
-  // The total should be reasonable (not some huge number)
-  assert(n_rules < 50);
 
   free(ir_buf);
   free(hdr_buf);
@@ -285,7 +231,7 @@ TEST(test_loaders_decode_only) {
   IrWriter* w = irwriter_new(ir_f, NULL);
   irwriter_start(w, "test.c", ".");
 
-  peg_gen(&input, hw, w, false, "json");
+  peg_gen(&input, hw, w, MEMO_NAIVE, "json");
 
   irwriter_end(w);
   irwriter_del(w);
@@ -338,7 +284,7 @@ TEST(test_iteration_helpers) {
   IrWriter* w = irwriter_new(ir_f, NULL);
   irwriter_start(w, "test.c", ".");
 
-  peg_gen(&input, hw, w, false, "json");
+  peg_gen(&input, hw, w, MEMO_NAIVE, "json");
 
   irwriter_end(w);
   irwriter_del(w);
@@ -348,6 +294,9 @@ TEST(test_iteration_helpers) {
 
   assert(strstr(hdr_buf, "json_has_next") != NULL);
   assert(strstr(hdr_buf, "json_get_next") != NULL);
+
+  // has_next and get_next must use tc->value, not tc directly
+  assert(strstr(hdr_buf, "l.elem.tc->value") != NULL);
 
   free(ir_buf);
   free(hdr_buf);
@@ -373,7 +322,7 @@ TEST(test_branch_tags) {
   IrWriter* w = irwriter_new(ir_f, NULL);
   irwriter_start(w, "test.c", ".");
 
-  peg_gen(&input, hw, w, false, "json");
+  peg_gen(&input, hw, w, MEMO_NAIVE, "json");
 
   irwriter_end(w);
   irwriter_del(w);
@@ -385,6 +334,11 @@ TEST(test_branch_tags) {
   assert(strstr(hdr_buf, "bool number : 1") != NULL);
   assert(strstr(hdr_buf, "bool string : 1") != NULL);
   assert(strstr(hdr_buf, "bool array : 1") != NULL);
+
+  // branch children must appear as fields in Node_value
+  assert(strstr(hdr_buf, "PegRef number;") != NULL);
+  assert(strstr(hdr_buf, "PegRef string;") != NULL);
+  assert(strstr(hdr_buf, "PegRef array;") != NULL);
 
   free(ir_buf);
   free(hdr_buf);
@@ -402,7 +356,7 @@ typedef struct {
   size_t hdr_len;
 } GenResult;
 
-static GenResult _gen_json(bool compress) {
+static GenResult _gen_json(int memoize_mode) {
   GenResult r = {0};
   PegGenInput input = {0};
   _build_json_input(&input);
@@ -414,7 +368,7 @@ static GenResult _gen_json(bool compress) {
   FILE* hdr_f = compat_open_memstream(&r.hdr_buf, &r.hdr_len);
   HeaderWriter* hw = hw_new(hdr_f);
 
-  peg_gen(&input, hw, w, compress, "json");
+  peg_gen(&input, hw, w, memoize_mode, "json");
 
   irwriter_end(w);
   irwriter_del(w);
@@ -442,7 +396,7 @@ static void _free_gen(GenResult* r) {
 // ============================================================
 
 TEST(test_call_targets_correct) {
-  GenResult g = _gen_json(false);
+  GenResult g = _gen_json(MEMO_NAIVE);
 
   // The IR should contain a branch to the rule for "value".
   // peg_ir_call emits: br label %<name>
@@ -469,7 +423,7 @@ TEST(test_call_targets_correct) {
 }
 
 TEST(test_memoization_slots_used) {
-  GenResult g = _gen_json(false);
+  GenResult g = _gen_json(MEMO_NAIVE);
 
   // The generated IR for parse_main should contain at least one
   // peg_ir_write_slot pattern: a store of an i32 value into a
@@ -489,16 +443,16 @@ TEST(test_memoization_slots_used) {
   const char* fn_body = strstr(fn_start, "{\n");
   assert(fn_body != NULL);
 
-  // After the memset call, count "store i32" instructions.
-  // The memset line is: call void @llvm.memset.p0.i64(...)
-  const char* after_memset = strstr(fn_body, "llvm.memset");
-  assert(after_memset != NULL);
-  after_memset = strchr(after_memset, '\n');
-  assert(after_memset != NULL);
+  // After the table allocation call, count "store i32" instructions.
+  // The alloc line is: call ... @tt_alloc_memoize_table(...)
+  const char* after_alloc = strstr(fn_body, "tt_alloc_memoize_table");
+  assert(after_alloc != NULL);
+  after_alloc = strchr(after_alloc, '\n');
+  assert(after_alloc != NULL);
 
-  // Count store i32 instructions after the memset
+  // Count store i32 instructions after the table allocation
   int store_count = 0;
-  const char* p = after_memset;
+  const char* p = after_alloc;
   while ((p = strstr(p, "store i32")) != NULL) {
     store_count++;
     p += 9;
@@ -507,7 +461,7 @@ TEST(test_memoization_slots_used) {
 
   // With proper memoization, each rule match writes its result to
   // a table slot. For the JSON grammar, there should be multiple
-  // slot writes. Without memoization, the only stores after memset
+  // slot writes. Without memoization, the only stores after alloc
   // are to local allocas (col_index, stack, ret_val, etc.), not to
   // table-derived pointers — but counting is imprecise. So let's
   // be more specific: look for the read-slot pattern.
@@ -515,12 +469,12 @@ TEST(test_memoization_slots_used) {
   // peg_ir_read_slot emits a load from a table GEP, then compares
   // with -1. Look for "icmp ne i32 %rN, -1" — the cache-hit check.
   int cache_check = 0;
-  p = after_memset;
+  p = after_alloc;
   while ((p = strstr(p, ", -1")) != NULL) {
     // Check this is an icmp, not just any -1
     // Look backwards for "icmp"
     const char* line_start = p;
-    while (line_start > after_memset && *line_start != '\n') {
+    while (line_start > after_alloc && *line_start != '\n') {
       line_start--;
     }
     if (strstr(line_start, "icmp") != NULL && strstr(line_start, "icmp") < p) {
@@ -545,7 +499,7 @@ TEST(test_memoization_slots_used) {
 // ============================================================
 
 TEST(test_loader_decodes_from_table) {
-  GenResult g = _gen_json(false);
+  GenResult g = _gen_json(MEMO_NAIVE);
 
   // Find the json_load_value function body
   const char* loader = strstr(g.hdr_buf, "json_load_value(PegRef ref)");
@@ -564,10 +518,9 @@ TEST(test_loader_decodes_from_table) {
   memcpy(body, body_start, body_len);
   body[body_len] = '\0';
 
-  // A real decoder must access ref.col or ref.tc
-  bool accesses_ref =
-      (strstr(body, "ref.col") != NULL || strstr(body, "ref.tc") != NULL || strstr(body, "read_slot(ref") != NULL);
-  assert(accesses_ref && "loader must decode from memoize table via ref, not return {0}");
+  // A real decoder must access ref.tc->value to read from the memo table
+  bool accesses_table = (strstr(body, "ref.tc->value") != NULL);
+  assert(accesses_table && "loader must decode from memo table via ref.tc->value");
 
   free(body);
   _free_gen(&g);
@@ -589,7 +542,7 @@ TEST(test_loader_decodes_from_table) {
 // ============================================================
 
 TEST(test_branch_stores_child_id) {
-  GenResult g = _gen_json(false);
+  GenResult g = _gen_json(MEMO_NAIVE);
 
   // In a correct implementation, after peg_ir_choice succeeds for
   // a branch, the code should call peg_ir_write_slot with the
@@ -630,7 +583,7 @@ TEST(test_branch_stores_child_id) {
 // ============================================================
 
 TEST(test_row_shared_emits_bit_ops) {
-  GenResult g = _gen_json(true);
+  GenResult g = _gen_json(MEMO_SHARED);
 
   // With compress_memoize=true, the generated IR should contain
   // the bit_test pattern: "and i32" + "icmp ne" — the sequence
@@ -724,7 +677,7 @@ TEST(test_branch_wrap_by_lowered_kind) {
   FILE* hdr_f = compat_open_memstream(&hdr_buf, &hdr_len);
   HeaderWriter* hw = hw_new(hdr_f);
 
-  peg_gen(&input, hw, w, false, "wrap");
+  peg_gen(&input, hw, w, MEMO_NAIVE, "wrap");
 
   irwriter_end(w);
   irwriter_del(w);
@@ -733,9 +686,8 @@ TEST(test_branch_wrap_by_lowered_kind) {
   fclose(hdr_f);
 
   // The nested PEG_BRANCHES should produce a wrapper SEQ rule
-  // with a $1000-suffixed name
-  bool has_wrapper = (strstr(ir_buf, "$1001") != NULL);
-  assert(has_wrapper && "nested PEG_BRANCHES must be wrapped in SEQ (found $1001 label)");
+  bool has_wrapper = (strstr(ir_buf, "main$foo$1:") != NULL);
+  assert(has_wrapper && "nested PEG_BRANCHES must be wrapped in SEQ");
 
   free(ir_buf);
   free(hdr_buf);
@@ -821,7 +773,7 @@ TEST(test_node_field_naming) {
   FILE* hdr_f = compat_open_memstream(&hdr_buf, &hdr_len);
   HeaderWriter* hw = hw_new(hdr_f);
 
-  peg_gen(&input, hw, w, false, "lang");
+  peg_gen(&input, hw, w, MEMO_NAIVE, "lang");
 
   irwriter_end(w);
   irwriter_del(w);
@@ -865,11 +817,111 @@ TEST(test_node_field_naming) {
   _free_input(&input);
 }
 
+// ============================================================
+// Test: multi-scope loader uses per-scope slot numbering
+// ============================================================
+
+TEST(test_multi_scope_loader) {
+  PegGenInput input = {0};
+
+  // tokens
+  symtab_init(&input.tokens, 1);
+  symtab_intern(&input.tokens, "a"); // 1
+  symtab_intern(&input.tokens, "b"); // 2
+
+  // scopes: s1(0), s2(1)
+  symtab_init(&input.scope_names, 0);
+  symtab_intern(&input.scope_names, "s1"); // 0
+  symtab_intern(&input.scope_names, "s2"); // 1
+
+  // rules: shared(0), extra(1), s1(2), s2(3)
+  symtab_init(&input.rule_names, 0);
+  symtab_intern(&input.rule_names, "shared"); // 0
+  symtab_intern(&input.rule_names, "extra");  // 1
+  symtab_intern(&input.rule_names, "s1");     // 2
+  symtab_intern(&input.rule_names, "s2");     // 3
+
+  input.rules = darray_new(sizeof(PegRule), 0);
+
+  // shared = a b
+  PegUnit sh_seq = {.kind = PEG_SEQ};
+  sh_seq.children = darray_new(sizeof(PegUnit), 0);
+  PegUnit sh_a = {.kind = PEG_TERM, .id = 1};
+  PegUnit sh_b = {.kind = PEG_TERM, .id = 2};
+  darray_push(sh_seq.children, sh_a);
+  darray_push(sh_seq.children, sh_b);
+  PegRule shared_rule = {.global_id = 0, .scope_id = -1, .body = sh_seq};
+  darray_push(input.rules, shared_rule);
+
+  // extra = a (only used in s1)
+  PegUnit ex_body = {.kind = PEG_TERM, .id = 1};
+  PegRule extra_rule = {.global_id = 1, .scope_id = -1, .body = ex_body};
+  darray_push(input.rules, extra_rule);
+
+  // s1 = shared extra (scope_id=0)
+  PegUnit s1_seq = {.kind = PEG_SEQ};
+  s1_seq.children = darray_new(sizeof(PegUnit), 0);
+  PegUnit s1_c1 = {.kind = PEG_CALL, .id = 0};
+  PegUnit s1_c2 = {.kind = PEG_CALL, .id = 1};
+  darray_push(s1_seq.children, s1_c1);
+  darray_push(s1_seq.children, s1_c2);
+  PegRule s1_rule = {.global_id = 2, .scope_id = 0, .body = s1_seq};
+  darray_push(input.rules, s1_rule);
+
+  // s2 = shared (scope_id=1)
+  PegUnit s2_seq = {.kind = PEG_SEQ};
+  s2_seq.children = darray_new(sizeof(PegUnit), 0);
+  PegUnit s2_c1 = {.kind = PEG_CALL, .id = 0};
+  darray_push(s2_seq.children, s2_c1);
+  PegRule s2_rule = {.global_id = 3, .scope_id = 1, .body = s2_seq};
+  darray_push(input.rules, s2_rule);
+
+  char* ir_buf = NULL;
+  size_t ir_len = 0;
+  FILE* ir_f = compat_open_memstream(&ir_buf, &ir_len);
+  IrWriter* w = irwriter_new(ir_f, NULL);
+  irwriter_start(w, "test.c", ".");
+  char* hdr_buf = NULL;
+  size_t hdr_len = 0;
+  FILE* hdr_f = compat_open_memstream(&hdr_buf, &hdr_len);
+  HeaderWriter* hw = hw_new(hdr_f);
+
+  peg_gen(&input, hw, w, MEMO_NAIVE, "ms");
+
+  irwriter_end(w);
+  irwriter_del(w);
+  fclose(ir_f);
+  hw_del(hw);
+  fclose(hdr_f);
+
+  // The loader for "shared" must switch on scope_id since it appears in both s1 and s2
+  const char* loader = strstr(hdr_buf, "ms_load_shared");
+  assert(loader != NULL);
+  // Find the body
+  const char* body_start = strchr(loader, '{');
+  assert(body_start != NULL);
+
+  // Must contain switch on scope_id with both case 0 and case 1
+  assert(strstr(body_start, "switch (ref.tc->scope_id)") != NULL);
+  assert(strstr(body_start, "case 0:") != NULL);
+  assert(strstr(body_start, "case 1:") != NULL);
+
+  free(ir_buf);
+  free(hdr_buf);
+
+  for (int32_t i = 0; i < (int32_t)darray_size(input.rules); i++) {
+    _free_unit(&input.rules[i].body);
+  }
+  darray_del(input.rules);
+  symtab_free(&input.tokens);
+  symtab_free(&input.scope_names);
+  symtab_free(&input.rule_names);
+}
+
 int main(void) {
   printf("test_peg:\n");
   RUN(test_closure_and_breakdown);
   RUN(test_compressed_mode);
-  RUN(test_scope_local_table_size);
   RUN(test_loaders_decode_only);
   RUN(test_iteration_helpers);
   RUN(test_branch_tags);
@@ -880,6 +932,7 @@ int main(void) {
   RUN(test_row_shared_emits_bit_ops);
   RUN(test_branch_wrap_by_lowered_kind);
   RUN(test_node_field_naming);
+  RUN(test_multi_scope_loader);
   printf("test_peg: OK\n");
   return 0;
 }

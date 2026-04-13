@@ -30,7 +30,7 @@ TEST(test_tree_new_del) {
   assert(tree->src == ustr);
   assert(tree->root != NULL);
   assert(tree->current == tree->root);
-  tt_tree_del(tree);
+  tt_tree_del(tree, false);
   ustr_del(ustr);
 }
 
@@ -46,7 +46,7 @@ TEST(test_tree_add_token) {
   assert(tree->current->tokens[0].cp_start == 0);
   assert(tree->current->tokens[1].cp_start == 1);
 
-  tt_tree_del(tree);
+  tt_tree_del(tree, false);
   ustr_del(ustr);
 }
 
@@ -69,7 +69,7 @@ TEST(test_tree_push_pop) {
   assert(popped != NULL);
   assert(tree->current == root);
 
-  tt_tree_del(tree);
+  tt_tree_del(tree, false);
   ustr_del(ustr);
 }
 
@@ -91,7 +91,7 @@ TEST(test_tree_nested_push_pop) {
   tt_pop(tree);
   assert(tree->current == root);
 
-  tt_tree_del(tree);
+  tt_tree_del(tree, false);
   ustr_del(ustr);
 }
 
@@ -107,7 +107,7 @@ TEST(test_tree_locate_single_line) {
   assert(loc.line == 0);
   assert(loc.col == 3);
 
-  tt_tree_del(tree);
+  tt_tree_del(tree, false);
   ustr_del(ustr);
 }
 
@@ -134,7 +134,7 @@ TEST(test_tree_locate_multiline) {
   loc = tt_locate(tree, 6);
   assert(loc.line == 2 && loc.col == 0);
 
-  tt_tree_del(tree);
+  tt_tree_del(tree, false);
   ustr_del(ustr);
 }
 
@@ -202,7 +202,7 @@ TEST(test_chunk_scope_ids) {
   tt_pop(tree);
   assert(tree->current->scope_id == SCOPE_MAIN);
 
-  tt_tree_del(tree);
+  tt_tree_del(tree, false);
   ustr_del(ustr);
 }
 
@@ -225,7 +225,7 @@ TEST(test_token_scope_reference) {
 
   assert(tree->table[stored.chunk_id].scope_id == SCOPE_VPA);
 
-  tt_tree_del(tree);
+  tt_tree_del(tree, false);
   ustr_del(ustr);
 }
 
@@ -332,8 +332,8 @@ TEST(test_vpa_gen_empty_rules) {
 TEST(test_vpa_gen_single_scope) {
   VpaGenInput input = _empty_input();
 
-  int32_t tok_a_id = symtab_intern(&input.tokens, "tok_a");
-  int32_t tok_b_id = symtab_intern(&input.tokens, "tok_b");
+  int32_t tok_a_id = symtab_intern(&input.tokens, "@tok_a");
+  int32_t tok_b_id = symtab_intern(&input.tokens, "@tok_b");
 
   VpaScope main_scope = {.scope_id = 0, .name = strdup("main"), .leader = {0}};
   main_scope.children = darray_new(sizeof(VpaUnit), 0);
@@ -370,8 +370,8 @@ TEST(test_vpa_gen_single_scope) {
 TEST(test_vpa_gen_multi_scope) {
   VpaGenInput input = _empty_input();
 
-  int32_t tok_x_id = symtab_intern(&input.tokens, "tok_x");
-  int32_t tok_y_id = symtab_intern(&input.tokens, "tok_y");
+  int32_t tok_x_id = symtab_intern(&input.tokens, "@tok_x");
+  int32_t tok_y_id = symtab_intern(&input.tokens, "@tok_y");
 
   // main scope
   VpaScope main_scope = {.scope_id = 0, .name = strdup("main"), .leader = {0}};
@@ -447,7 +447,7 @@ TEST(test_vpa_gen_exec) {
               "  assert(tt->root->tokens[0].cp_start == 0);\n"
               "  assert(tt->root->tokens[0].cp_size == 1);\n"
               "  assert(tt->root->tokens[3].cp_start == 3);\n"
-              "  tt_tree_del(tt);\n"
+              "  tt_tree_del(tt, false);\n"
               "  ustr_del(us);\n"
               "  return 0;\n"
               "}\n");
@@ -469,7 +469,7 @@ TEST(test_vpa_gen_exec) {
 TEST(test_vpa_gen_user_hook) {
   VpaGenInput input = _empty_input();
 
-  int32_t tok_x_id = symtab_intern(&input.tokens, "tok_x");
+  int32_t tok_x_id = symtab_intern(&input.tokens, "@tok_x");
   int32_t hook_on_x = symtab_intern(&input.hooks, ".on_x");
 
   VpaScope main_scope = {.scope_id = 0, .name = strdup("main"), .leader = {0}};
@@ -510,8 +510,8 @@ TEST(test_vpa_gen_token_dedup) {
   VpaGenInput input = _empty_input();
 
   // Two units with same token name -> same tok_id
-  int32_t ws_id = symtab_intern(&input.tokens, "ws");
-  int32_t other_id = symtab_intern(&input.tokens, "other");
+  int32_t ws_id = symtab_intern(&input.tokens, "@ws");
+  int32_t other_id = symtab_intern(&input.tokens, "@other");
 
   VpaScope main_scope = {.scope_id = 0, .name = strdup("main"), .leader = {0}};
   main_scope.children = darray_new(sizeof(VpaUnit), 0);
@@ -549,7 +549,7 @@ TEST(test_vpa_gen_token_dedup) {
 TEST(test_vpa_gen_empty_scope_body) {
   VpaGenInput input = _empty_input();
 
-  int32_t tok_a_id = symtab_intern(&input.tokens, "tok_a");
+  int32_t tok_a_id = symtab_intern(&input.tokens, "@tok_a");
 
   VpaScope main_scope = {.scope_id = 0, .name = strdup("main"), .leader = {0}};
   main_scope.children = darray_new(sizeof(VpaUnit), 0);
@@ -582,10 +582,11 @@ TEST(test_vpa_gen_long_names) {
   VpaGenInput input = _empty_input();
 
   // 200-char token name — exceeds the old 128-char buffer
-  char long_name[201];
-  memset(long_name, 'a', 200);
-  long_name[200] = '\0';
-  long_name[0] = 't';
+  char long_name[202];
+  long_name[0] = '@';
+  long_name[1] = 't';
+  memset(long_name + 2, 'a', 199);
+  long_name[201] = '\0';
 
   int32_t tok_id = symtab_intern(&input.tokens, long_name);
 
@@ -636,7 +637,7 @@ static void _run_vpa_gen_prefixed(VpaGenInput* input, const char* h_path, const 
 TEST(test_vpa_gen_prefix_parse_defined_in_ir) {
   VpaGenInput input = _empty_input();
 
-  int32_t tok_a_id = symtab_intern(&input.tokens, "tok_a");
+  int32_t tok_a_id = symtab_intern(&input.tokens, "@tok_a");
   VpaScope main_scope = {.scope_id = 0, .name = strdup("main"), .leader = {0}};
   main_scope.children = darray_new(sizeof(VpaUnit), 0);
   VpaUnit u = {.kind = VPA_RE, .re = re_ir_new(), .action_units = _make_au_tok(tok_a_id)};
@@ -661,7 +662,7 @@ TEST(test_vpa_gen_prefix_parse_defined_in_ir) {
 TEST(test_vpa_gen_begin_end_push_pop) {
   VpaGenInput input = _empty_input();
 
-  int32_t tok_x_id = symtab_intern(&input.tokens, "tok_x");
+  int32_t tok_x_id = symtab_intern(&input.tokens, "@tok_x");
 
   VpaScope main_scope = {.scope_id = 0, .name = strdup("main"), .leader = {0}};
   main_scope.children = darray_new(sizeof(VpaUnit), 0);
@@ -712,7 +713,7 @@ TEST(test_vpa_gen_begin_end_push_pop) {
 TEST(test_vpa_gen_effect_dispatch) {
   VpaGenInput input = _empty_input();
 
-  int32_t tok_a_id = symtab_intern(&input.tokens, "tok_a");
+  int32_t tok_a_id = symtab_intern(&input.tokens, "@tok_a");
   int32_t hook_check = symtab_intern(&input.hooks, ".check");
 
   // add effect declaration: .check can return tok_a or .fail
@@ -752,7 +753,7 @@ TEST(test_vpa_gen_effect_dispatch) {
 TEST(test_vpa_gen_header_types) {
   VpaGenInput input = _empty_input();
 
-  int32_t tok_a_id = symtab_intern(&input.tokens, "tok_a");
+  int32_t tok_a_id = symtab_intern(&input.tokens, "@tok_a");
   VpaScope main_scope = {.scope_id = 0, .name = strdup("main"), .leader = {0}};
   main_scope.children = darray_new(sizeof(VpaUnit), 0);
   VpaUnit u = {.kind = VPA_RE, .re = re_ir_new(), .action_units = _make_au_tok(tok_a_id)};
@@ -783,7 +784,7 @@ TEST(test_vpa_gen_header_types) {
 TEST(test_vpa_gen_parse_returns_parse_result) {
   VpaGenInput input = _empty_input();
 
-  int32_t tok_a_id = symtab_intern(&input.tokens, "tok_a");
+  int32_t tok_a_id = symtab_intern(&input.tokens, "@tok_a");
   VpaScope main_scope = {.scope_id = 0, .name = strdup("main"), .leader = {0}};
   main_scope.children = darray_new(sizeof(VpaUnit), 0);
   VpaUnit u = {.kind = VPA_RE, .re = re_ir_new(), .action_units = _make_au_tok(tok_a_id)};
@@ -810,10 +811,10 @@ TEST(test_vpa_gen_literal_tokens_excluded) {
   VpaGenInput input = _empty_input();
 
   // normal token
-  int32_t tok_id_id = symtab_intern(&input.tokens, "ident");
-  // keyword literal token — the parser interns these as "lit.xxx"
-  symtab_intern(&input.tokens, "lit.if");
-  symtab_intern(&input.tokens, "lit.else");
+  int32_t tok_id_id = symtab_intern(&input.tokens, "@ident");
+  // keyword literal token — the parser interns these as "@lit.xxx"
+  symtab_intern(&input.tokens, "@lit.if");
+  symtab_intern(&input.tokens, "@lit.else");
 
   VpaScope main_scope = {.scope_id = 0, .name = strdup("main"), .leader = {0}};
   main_scope.children = darray_new(sizeof(VpaUnit), 0);
@@ -839,7 +840,7 @@ TEST(test_vpa_gen_literal_tokens_excluded) {
 TEST(test_vpa_gen_builtin_hook_defines) {
   VpaGenInput input = _empty_input();
 
-  int32_t tok_a_id = symtab_intern(&input.tokens, "tok_a");
+  int32_t tok_a_id = symtab_intern(&input.tokens, "@tok_a");
   VpaScope main_scope = {.scope_id = 0, .name = strdup("main"), .leader = {0}};
   main_scope.children = darray_new(sizeof(VpaUnit), 0);
   VpaUnit u = {.kind = VPA_RE, .re = re_ir_new(), .action_units = _make_au_tok(tok_a_id)};

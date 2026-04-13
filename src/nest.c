@@ -120,7 +120,7 @@ static int32_t _cmd_lex(int32_t argc, char** argv) {
   const char* output = arg_o;
   const char* func_name = arg_f ? arg_f : "lex";
   const char* mode = arg_m ? arg_m : "";
-  const char* triple = (arg_t == cmdopt_set) ? _detect_triple() : arg_t;
+  const char* triple = (arg_t && arg_t != cmdopt_set) ? arg_t : _detect_triple();
   FILE* fin = fopen(input, "r");
   if (!fin) {
     perror(input);
@@ -222,7 +222,7 @@ static void _gen_example_c(FILE* f, const char* prefix, Symtab* tokens) {
   fprintf(f, "             tok->cp_size, input + tok->cp_start);\n");
   fprintf(f, "    }\n");
   fprintf(f, "  }\n\n");
-  fprintf(f, "  tt_tree_del(tt);\n");
+  fprintf(f, "  tt_tree_del(tt, false);\n");
   fprintf(f, "  ustr_del(ustr);\n");
   fprintf(f, "  return 0;\n");
   fprintf(f, "}\n");
@@ -248,7 +248,7 @@ static int32_t _cmd_compile(int32_t argc, char** argv) {
   }
 
   const char* prefix = arg_p;
-  const char* triple = (arg_t == cmdopt_set) ? _detect_triple() : arg_t;
+  const char* triple = (arg_t && arg_t != cmdopt_set) ? arg_t : _detect_triple();
 
   size_t prefix_len = strlen(prefix);
   if (prefix_len == 0 || prefix_len > 64) {
@@ -331,7 +331,20 @@ static int32_t _cmd_compile(int32_t argc, char** argv) {
     goto cleanup;
   }
 
-  bool compress_memoize = !(arg_k && strcmp(arg_k, "false") == 0);
+  int memoize_mode = MEMO_SHARED;
+  if (arg_m) {
+    if (strcmp(arg_m, "none") == 0) {
+      memoize_mode = MEMO_NONE;
+    } else if (strcmp(arg_m, "naive") == 0) {
+      memoize_mode = MEMO_NAIVE;
+    } else if (strcmp(arg_m, "shared") == 0) {
+      memoize_mode = MEMO_SHARED;
+    } else {
+      fprintf(stderr, "nest: unknown memoize mode: %s\n", arg_m);
+      ret = -1;
+      goto cleanup;
+    }
+  }
   if (verbose) {
     fprintf(stderr, "[nest] peg_gen\n");
   }
@@ -343,7 +356,7 @@ static int32_t _cmd_compile(int32_t argc, char** argv) {
           .rule_names = ps->rule_names,
           .verbose = verbose,
       },
-      hw, w, compress_memoize, prefix);
+      hw, w, memoize_mode, prefix);
   if (verbose) {
     fprintf(stderr, "[nest] vpa_gen\n");
   }

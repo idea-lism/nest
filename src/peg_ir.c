@@ -1,589 +1,498 @@
-// specs/peg_ir.md — PEG IR helpers
-//
-// Col ownership: only peg_ir_seq advances ctx->col_index after each child.
-// All other helpers (term, call, choice, maybe, plus, star) read col_index
-// but do NOT permanently advance it. They return consumed length.
-// On failure they branch to ctx->fail_label; col_index may be dirty and
-// the caller is responsible for save/restore via the stack.
-
+// specs/peg_ir.md
 #include "peg_ir.h"
 #include "darray.h"
 
 #include <stdio.h>
 #include <stdlib.h>
-#include <string.h>
 
-// ============================================================
-// Shared LLVM helper definitions (emitted once per module)
-// ============================================================
+// --- Stack helpers ---
 
-void peg_ir_emit_helpers(IrWriter* w) {
-  irwriter_rawf(w, "\ndefine internal ptr @table_gep(ptr %%table, i64 %%col, i64 %%col_sizeof, i64 %%off) {\n");
-  irwriter_rawf(w, "entry:\n");
-  irwriter_rawf(w, "  %%c = mul i64 %%col, %%col_sizeof\n");
-  irwriter_rawf(w, "  %%e = add i64 %%c, %%off\n");
-  irwriter_rawf(w, "  %%p = getelementptr i8, ptr %%table, i64 %%e\n");
-  irwriter_rawf(w, "  ret ptr %%p\n");
-  irwriter_rawf(w, "}\n");
-
-  irwriter_rawf(w, "\ndefine internal void @save(ptr %%sp_a, ptr %%col_a) {\n");
-  irwriter_rawf(w, "entry:\n");
-  irwriter_rawf(w, "  %%sp = load ptr, ptr %%sp_a\n");
-  irwriter_rawf(w, "  %%nsp = getelementptr i64, ptr %%sp, i64 1\n");
-  irwriter_rawf(w, "  store ptr %%nsp, ptr %%sp_a\n");
-  irwriter_rawf(w, "  %%col = load i64, ptr %%col_a\n");
-  irwriter_rawf(w, "  store i64 %%col, ptr %%nsp\n");
-  irwriter_rawf(w, "  ret void\n");
-  irwriter_rawf(w, "}\n");
-
-  irwriter_rawf(w, "\ndefine internal void @restore(ptr %%sp_a, ptr %%col_a) {\n");
-  irwriter_rawf(w, "entry:\n");
-  irwriter_rawf(w, "  %%sp = load ptr, ptr %%sp_a\n");
-  irwriter_rawf(w, "  %%v = load i64, ptr %%sp\n");
-  irwriter_rawf(w, "  store i64 %%v, ptr %%col_a\n");
-  irwriter_rawf(w, "  ret void\n");
-  irwriter_rawf(w, "}\n");
-
-  irwriter_rawf(w, "\ndefine internal i1 @bit_test(ptr %%tbl, i64 %%col, i64 %%col_size, i64 %%seg_offset, i32 %%bit) {\n");
-  irwriter_rawf(w, "entry:\n");
-  irwriter_rawf(w, "  %%p = call ptr @table_gep(ptr %%tbl, i64 %%col, i64 %%col_size, i64 %%seg_offset)\n");
-  irwriter_rawf(w, "  %%v = load i32, ptr %%p\n");
-  irwriter_rawf(w, "  %%a = and i32 %%v, %%bit\n");
-  irwriter_rawf(w, "  %%r = icmp ne i32 %%a, 0\n");
-  irwriter_rawf(w, "  ret i1 %%r\n");
-  irwriter_rawf(w, "}\n");
-
-  irwriter_rawf(w, "\ndefine internal void @bit_deny(ptr %%tbl, i64 %%col, i64 %%col_size, i64 %%seg_offset, i32 %%bit) {\n");
-  irwriter_rawf(w, "entry:\n");
-  irwriter_rawf(w, "  %%p = call ptr @table_gep(ptr %%tbl, i64 %%col, i64 %%col_size, i64 %%seg_offset)\n");
-  irwriter_rawf(w, "  %%v = load i32, ptr %%p\n");
-  irwriter_rawf(w, "  %%m = xor i32 %%bit, -1\n");
-  irwriter_rawf(w, "  %%c = and i32 %%v, %%m\n");
-  irwriter_rawf(w, "  store i32 %%c, ptr %%p\n");
-  irwriter_rawf(w, "  ret void\n");
-  irwriter_rawf(w, "}\n");
-
-  irwriter_rawf(w, "\ndefine internal void @bit_exclude(ptr %%tbl, i64 %%col, i64 %%col_size, i64 %%seg_offset, i32 %%bit) {\n");
-  irwriter_rawf(w, "entry:\n");
-  irwriter_rawf(w, "  %%p = call ptr @table_gep(ptr %%tbl, i64 %%col, i64 %%col_size, i64 %%seg_offset)\n");
-  irwriter_rawf(w, "  %%v = load i32, ptr %%p\n");
-  irwriter_rawf(w, "  %%k = and i32 %%v, %%bit\n");
-  irwriter_rawf(w, "  store i32 %%k, ptr %%p\n");
-  irwriter_rawf(w, "  ret void\n");
-  irwriter_rawf(w, "}\n");
+static void _emit_call_save(PegIrCtx* ctx) {
+  IrWriter* w = ctx->ir_writer;
+  irwriter_call_void_fmtf(w, "save", "ptr %%r%d, ptr %%r%d", (int)ctx->stack_ptr, (int)ctx->col);
 }
 
-// ============================================================
-// Table GEP: table_base + col * col_sizeof + byte_offset
-// ============================================================
-
-static IrVal _table_gep(PegIrCtx* ctx, IrVal col, int32_t byte_offset) {
-  IrWriter* w = ctx->w;
-  IrVal r = irwriter_next_reg(w);
-  irwriter_rawf(w, "  %%r%d = call ptr @table_gep(ptr ", (int)r);
-  irwriter_emit_val(w, ctx->table);
-  irwriter_rawf(w, ", i64 ");
-  irwriter_emit_val(w, col);
-  irwriter_rawf(w, ", i32 %d, i32 %d)\n", ctx->col_sizeof, byte_offset);
-  return r;
+static void _emit_call_restore(PegIrCtx* ctx) {
+  IrWriter* w = ctx->ir_writer;
+  irwriter_call_void_fmtf(w, "restore", "ptr %%r%d, ptr %%r%d", (int)ctx->stack_ptr, (int)ctx->col);
 }
 
-// ============================================================
-// Slot read / write
-// ============================================================
-
-IrVal peg_ir_read_slot(PegIrCtx* ctx, IrVal col, uint32_t slot_index) {
-  IrVal ptr = _table_gep(ctx, col, ctx->slots_offset + (int32_t)slot_index * 4);
-  return irwriter_load(ctx->w, "i32", ptr);
+// discard: stack-- without restoring col
+static void _emit_discard(PegIrCtx* ctx) {
+  IrWriter* w = ctx->ir_writer;
+  IrVal sp = irwriter_load(w, "ptr", ctx->stack_ptr);
+  irwriter_rawf(w, "  %%r%d = getelementptr i64, ptr %%r%d, i64 -1\n", irwriter_next_reg(w), (int)sp);
+  IrVal new_sp = (IrVal)(irwriter_next_reg(w) - 1);
+  irwriter_store(w, "ptr", new_sp, ctx->stack_ptr);
 }
 
-void peg_ir_write_slot(PegIrCtx* ctx, IrVal col, uint32_t slot_index, IrVal val) {
-  IrVal ptr = _table_gep(ctx, col, ctx->slots_offset + (int32_t)slot_index * 4);
-  irwriter_store(ctx->w, "i32", val, ptr);
-}
+// --- Forward declaration ---
 
-// ============================================================
-// Bit operations (row_shared) — emit calls to @bit_test/deny/exclude
-// ============================================================
+static void _emit_term(PegIrCtx* ctx, ScopedUnit* unit, IrLabel fail_label);
+static void _emit_call(PegIrCtx* ctx, ScopedUnit* unit, IrLabel fail_label);
+static void _emit_seq(PegIrCtx* ctx, ScopedUnit* unit, IrLabel fail_label);
+static void _emit_branches(PegIrCtx* ctx, ScopedUnit* unit, IrLabel fail_label);
+static void _emit_maybe(PegIrCtx* ctx, ScopedUnit* unit, IrLabel fail_label);
+static void _emit_star(PegIrCtx* ctx, ScopedUnit* unit, IrLabel fail_label);
+static void _emit_plus(PegIrCtx* ctx, ScopedUnit* unit, IrLabel fail_label);
 
-IrVal peg_ir_bit_test(PegIrCtx* ctx, IrVal col, uint32_t seg_idx, uint32_t rule_bit) {
-  IrWriter* w = ctx->w;
-  int32_t byte_off = ctx->bits_offset + (int32_t)seg_idx * 4;
-  IrVal r = irwriter_next_reg(w);
-  irwriter_rawf(w, "  %%r%d = call i1 @bit_test(ptr ", (int)r);
-  irwriter_emit_val(w, ctx->table);
-  irwriter_rawf(w, ", i64 ");
-  irwriter_emit_val(w, col);
-  irwriter_rawf(w, ", i32 %d, i32 %d, i32 %u)\n", ctx->col_sizeof, byte_off, rule_bit);
-  return r;
-}
+// --- Core dispatch ---
 
-void peg_ir_bit_deny(PegIrCtx* ctx, IrVal col, uint32_t seg_idx, uint32_t rule_bit) {
-  IrWriter* w = ctx->w;
-  int32_t byte_off = ctx->bits_offset + (int32_t)seg_idx * 4;
-  irwriter_rawf(w, "  call void @bit_deny(ptr ");
-  irwriter_emit_val(w, ctx->table);
-  irwriter_rawf(w, ", i64 ");
-  irwriter_emit_val(w, col);
-  irwriter_rawf(w, ", i32 %d, i32 %d, i32 %u)\n", ctx->col_sizeof, byte_off, rule_bit);
-}
-
-void peg_ir_bit_exclude(PegIrCtx* ctx, IrVal col, uint32_t seg_idx, uint32_t rule_bit) {
-  IrWriter* w = ctx->w;
-  int32_t byte_off = ctx->bits_offset + (int32_t)seg_idx * 4;
-  irwriter_rawf(w, "  call void @bit_exclude(ptr ");
-  irwriter_emit_val(w, ctx->table);
-  irwriter_rawf(w, ", i64 ");
-  irwriter_emit_val(w, col);
-  irwriter_rawf(w, ", i32 %d, i32 %d, i32 %u)\n", ctx->col_sizeof, byte_off, rule_bit);
-}
-
-// ============================================================
-// Stack operations (i64 slots)
-// ============================================================
-
-static IrVal _load_sp(PegIrCtx* ctx) { return irwriter_load(ctx->w, "ptr", ctx->stack); }
-
-static void _store_sp(PegIrCtx* ctx, IrVal sp) { irwriter_store(ctx->w, "ptr", sp, ctx->stack); }
-
-static IrVal _sp_inc(PegIrCtx* ctx) {
-  IrWriter* w = ctx->w;
-  IrVal sp = _load_sp(ctx);
-  IrVal r = irwriter_next_reg(w);
-  irwriter_rawf(w, "  %%r%d = getelementptr i64, ptr ", (int)r);
-  irwriter_emit_val(w, sp);
-  irwriter_rawf(w, ", i64 1\n");
-  _store_sp(ctx, r);
-  return r;
-}
-
-static void _sp_dec(PegIrCtx* ctx) {
-  IrWriter* w = ctx->w;
-  IrVal sp = _load_sp(ctx);
-  IrVal r = irwriter_next_reg(w);
-  irwriter_rawf(w, "  %%r%d = getelementptr i64, ptr ", (int)r);
-  irwriter_emit_val(w, sp);
-  irwriter_rawf(w, ", i64 -1\n");
-  _store_sp(ctx, r);
-}
-
-static void _stack_save(PegIrCtx* ctx) {
-  IrWriter* w = ctx->w;
-  irwriter_rawf(w, "  call void @save(ptr ");
-  irwriter_emit_val(w, ctx->stack);
-  irwriter_rawf(w, ", ptr ");
-  irwriter_emit_val(w, ctx->col_index);
-  irwriter_rawf(w, ")\n");
-}
-
-static void _stack_restore(PegIrCtx* ctx) {
-  IrWriter* w = ctx->w;
-  irwriter_rawf(w, "  call void @restore(ptr ");
-  irwriter_emit_val(w, ctx->stack);
-  irwriter_rawf(w, ", ptr ");
-  irwriter_emit_val(w, ctx->col_index);
-  irwriter_rawf(w, ")\n");
-}
-
-static void _stack_discard(PegIrCtx* ctx) { _sp_dec(ctx); }
-
-// ============================================================
-// Col helpers
-// ============================================================
-
-static IrVal _load_col(PegIrCtx* ctx) { return irwriter_load(ctx->w, "i64", ctx->col_index); }
-
-static void _store_col(PegIrCtx* ctx, IrVal v) { irwriter_store(ctx->w, "i64", v, ctx->col_index); }
-
-static void _advance_col(PegIrCtx* ctx, IrVal n) {
-  IrVal c = _load_col(ctx);
-  IrVal n64 = irwriter_sext(ctx->w, "i32", n, "i64");
-  _store_col(ctx, irwriter_binop(ctx->w, "add", "i64", c, n64));
-}
-
-// ============================================================
-// Token access: tokens[col].term_id (Token = 16 bytes, offset 0)
-// ============================================================
-
-static IrVal _read_term_id(PegIrCtx* ctx, IrVal col) {
-  IrWriter* w = ctx->w;
-  IrVal byte_off = irwriter_binop(w, "mul", "i64", col, irwriter_imm(w, "16"));
-  IrVal ptr = irwriter_next_reg(w);
-  irwriter_rawf(w, "  %%r%d = getelementptr i8, ptr ", (int)ptr);
-  irwriter_emit_val(w, ctx->tokens);
-  irwriter_rawf(w, ", i64 ");
-  irwriter_emit_val(w, byte_off);
-  irwriter_rawf(w, "\n");
-  return irwriter_load(w, "i32", ptr);
-}
-
-// ============================================================
-// Forward decl
-// ============================================================
-
-static IrVal _gen_scoped_rule(PegIrCtx* ctx, int32_t scoped_rule_id);
-static IrVal _gen_base_unit(PegIrCtx* ctx, int32_t scoped_rule_id);
-
-// ============================================================
-// Terminal — does NOT advance col
-// ============================================================
-
-IrVal peg_ir_term(PegIrCtx* ctx, int32_t term_id) {
-  IrWriter* w = ctx->w;
-  IrVal col = _load_col(ctx);
-  IrVal ok = irwriter_icmp(w, "slt", "i64", col, ctx->n_tokens);
-  IrLabel chk = irwriter_label(w);
-  irwriter_br_cond(w, ok, chk, ctx->fail_label);
-  irwriter_bb_at(w, chk);
-
-  IrVal tid = _read_term_id(ctx, col);
-  IrVal match = irwriter_icmp(w, "eq", "i32", tid, irwriter_imm_int(w, term_id));
-  IrLabel succ = irwriter_label(w);
-  irwriter_br_cond(w, match, succ, ctx->fail_label);
-  irwriter_bb_at(w, succ);
-
-  return irwriter_imm_int(w, 1);
-}
-
-// ============================================================
-// Sub-rule call — does NOT advance col (callee does via its own seq)
-// ============================================================
-
-IrVal peg_ir_call(PegIrCtx* ctx, int32_t scoped_rule_id) {
-  IrWriter* w = ctx->w;
-
-  IrVal new_sp = _sp_inc(ctx);
-  IrLabel ret_lbl = irwriter_label(w);
-  IrVal addr = irwriter_next_reg(w);
-  irwriter_rawf(w, "  %%r%d = blockaddress(@parse_%s, %%L%d)\n", (int)addr, ctx->scope_name, ret_lbl);
-  irwriter_store(w, "ptr", addr, new_sp);
-
-  IrVal bp = _load_sp(ctx);
-  irwriter_store(w, "ptr", bp, ctx->stack_bp);
-
-  irwriter_rawf(w, "  br label %%%s$%s\n", ctx->scope_name, ctx->rules[scoped_rule_id].name);
-
-  irwriter_bb_at(w, ret_lbl);
-  IrVal ret = irwriter_load(w, "i32", ctx->ret_val);
-  IrVal ok = irwriter_icmp(w, "sge", "i32", ret, irwriter_imm_int(w, 0));
-  IrLabel cont_bb = irwriter_label(w);
-  irwriter_br_cond(w, ok, cont_bb, ctx->fail_label);
-  irwriter_bb_at(w, cont_bb);
-  return ret;
-}
-
-// ============================================================
-// Sequence — the ONLY helper that advances col_index
-//
-// Spec: gen(a b, col, fail):
-//   r1 = gen(a, col, fail)
-//   r2 = gen(b, col + r1, fail)
-//   ret = r1 + r2
-// ============================================================
-
-IrVal peg_ir_seq(PegIrCtx* ctx, int32_t* seq) {
-  IrWriter* w = ctx->w;
-  int32_t n = (int32_t)darray_size(seq);
-  IrVal acc = irwriter_alloca(w, "i32");
-  irwriter_store(w, "i32", irwriter_imm_int(w, 0), acc);
-
-  for (int32_t i = 0; i < n; i++) {
-    IrVal r = _gen_scoped_rule(ctx, seq[i]);
-    _advance_col(ctx, r);
-    IrVal prev = irwriter_load(w, "i32", acc);
-    irwriter_store(w, "i32", irwriter_binop(w, "add", "i32", prev, r), acc);
+void peg_ir_emit_parse(PegIrCtx* ctx, ScopedUnit* unit, IrLabel fail_label) {
+  switch (unit->kind) {
+  case SCOPED_UNIT_TERM:
+    _emit_term(ctx, unit, fail_label);
+    break;
+  case SCOPED_UNIT_CALL:
+    _emit_call(ctx, unit, fail_label);
+    break;
+  case SCOPED_UNIT_SEQ:
+    _emit_seq(ctx, unit, fail_label);
+    break;
+  case SCOPED_UNIT_BRANCHES:
+    _emit_branches(ctx, unit, fail_label);
+    break;
+  case SCOPED_UNIT_MAYBE:
+    _emit_maybe(ctx, unit, fail_label);
+    break;
+  case SCOPED_UNIT_STAR:
+    _emit_star(ctx, unit, fail_label);
+    break;
+  case SCOPED_UNIT_PLUS:
+    _emit_plus(ctx, unit, fail_label);
+    break;
   }
-  return irwriter_load(w, "i32", acc);
+
+  // if unit has tag, set the tag bit
+  if (unit->tag_bit_local_offset >= 0) {
+    IrWriter* w = ctx->ir_writer;
+    IrVal tb = irwriter_load(w, "i64", ctx->tag_bits);
+    uint64_t bit = 1ULL << (uint64_t)(unit->tag_bit_local_offset + ctx->tag_bit_offset);
+    irwriter_rawf(w, "  %%r%d = or i64 %%r%d, %llu\n", irwriter_next_reg(w), (int)tb, (unsigned long long)bit);
+    IrVal new_tb = (IrVal)(irwriter_next_reg(w) - 1);
+    irwriter_store(w, "i64", new_tb, ctx->tag_bits);
+  }
 }
 
-// ============================================================
-// Ordered choice — does NOT advance col
-// ============================================================
+// --- Term: match a single token at current position ---
 
-IrVal peg_ir_choice(PegIrCtx* ctx, int32_t* branches) {
-  IrWriter* w = ctx->w;
-  int32_t n = (int32_t)darray_size(branches);
+static void _emit_term(PegIrCtx* ctx, ScopedUnit* unit, IrLabel fail_label) {
+  IrWriter* w = ctx->ir_writer;
+  IrVal col_val = irwriter_load(w, "i64", ctx->col);
+
+  IrVal n_tok = irwriter_sext(w, "i32", ctx->n_tokens, "i64");
+  IrVal in_bounds = irwriter_icmp(w, "slt", "i64", col_val, n_tok);
+  IrLabel bounds_ok = irwriter_label(w);
+  irwriter_br_cond(w, in_bounds, bounds_ok, fail_label);
+  irwriter_bb_at(w, bounds_ok);
+
+  // tokens[col_val].term_id (field 0)
+  irwriter_rawf(w, "  %%r%d = getelementptr %%Token, ptr %%r%d, i64 %%r%d, i32 0\n", irwriter_next_reg(w),
+                (int)ctx->tokens, (int)col_val);
+  IrVal tid_ptr = (IrVal)(irwriter_next_reg(w) - 1);
+  IrVal term_id = irwriter_load(w, "i32", tid_ptr);
+
+  IrVal cmp = irwriter_icmp(w, "eq", "i32", term_id, irwriter_imm_int(w, unit->as.term_id));
+  IrLabel ok_bb = irwriter_label(w);
+  irwriter_br_cond(w, cmp, ok_bb, fail_label);
+
+  irwriter_bb_at(w, ok_bb);
+  IrVal new_col = irwriter_binop(w, "add", "i64", col_val, irwriter_imm_int(w, 1));
+  irwriter_store(w, "i64", new_col, ctx->col);
+}
+
+// --- Call: pseudo-call to a sub-rule via stack ---
+
+IrLabel peg_ir_emit_call(PegIrCtx* ctx, const char* callee_name) {
+  IrWriter* w = ctx->ir_writer;
+  IrLabel ret_label = irwriter_label_f(w, "ret_%s", callee_name);
+
+  darray_push(ctx->ret_labels, ret_label);
+
+  // stack++; stack->ret_site = &&ret_label
+  IrVal sp = irwriter_load(w, "ptr", ctx->stack_ptr);
+  irwriter_rawf(w, "  %%r%d = getelementptr i64, ptr %%r%d, i64 1\n", irwriter_next_reg(w), (int)sp);
+  IrVal sp1 = (IrVal)(irwriter_next_reg(w) - 1);
+  irwriter_rawf(w, "  store ptr blockaddress(@%s, %%", ctx->fn_name);
+  irwriter_emit_label(w, ret_label);
+  irwriter_rawf(w, "), ptr %%r%d, align 8\n", (int)sp1);
+
+  // stack++; stack->col = col
+  irwriter_rawf(w, "  %%r%d = getelementptr i64, ptr %%r%d, i64 1\n", irwriter_next_reg(w), (int)sp1);
+  IrVal sp2 = (IrVal)(irwriter_next_reg(w) - 1);
+  irwriter_store(w, "ptr", sp2, ctx->stack_ptr);
+  IrVal col_val = irwriter_load(w, "i64", ctx->col);
+  irwriter_store(w, "i64", col_val, sp2);
+
+  // branch to callee
+  irwriter_rawf(w, "  br label %%%s\n", callee_name);
+
+  return ret_label;
+}
+
+static void _emit_call(PegIrCtx* ctx, ScopedUnit* unit, IrLabel fail_label) {
+  IrWriter* w = ctx->ir_writer;
+  IrLabel ret_label = peg_ir_emit_call(ctx, unit->as.callee);
+
+  // ret_label: resume after call
+  irwriter_bb_at(w, ret_label);
+  IrVal parsed = irwriter_load(w, "i64", ctx->parse_result);
+  IrVal failed = irwriter_icmp(w, "slt", "i64", parsed, irwriter_imm_int(w, 0));
+  IrLabel call_ok_bb = irwriter_label(w);
+  irwriter_br_cond(w, failed, fail_label, call_ok_bb);
+  irwriter_bb_at(w, call_ok_bb);
+}
+
+// --- Sequence ---
+
+static void _emit_seq(PegIrCtx* ctx, ScopedUnit* unit, IrLabel fail_label) {
+  IrWriter* w = ctx->ir_writer;
+  int32_t n = (int32_t)darray_size(unit->as.children);
   if (n == 0) {
-    return irwriter_imm_int(w, 0);
-  }
-  if (n == 1) {
-    return _gen_scoped_rule(ctx, branches[0]);
+    return;
   }
 
-  IrLabel outer_fail = ctx->fail_label;
+  _emit_call_save(ctx);
+
+  IrLabel fail_bb = irwriter_label(w);
   IrLabel done_bb = irwriter_label(w);
-  IrVal res = irwriter_alloca(w, "i32");
-
-  _stack_save(ctx);
 
   for (int32_t i = 0; i < n; i++) {
-    bool last = (i == n - 1);
-    IrLabel alt = last ? outer_fail : irwriter_label(w);
-    ctx->fail_label = alt;
-
-    IrVal r = _gen_scoped_rule(ctx, branches[i]);
-
-    _stack_discard(ctx);
-    irwriter_store(w, "i32", r, res);
-    irwriter_br(w, done_bb);
-
-    if (!last) {
-      irwriter_bb_at(w, alt);
-      _stack_restore(ctx);
-      if (i < n - 2) {
-        _stack_save(ctx);
-      }
-    }
+    peg_ir_emit_parse(ctx, &unit->as.children[i], fail_bb);
   }
 
-  ctx->fail_label = outer_fail;
+  _emit_discard(ctx);
+  irwriter_br(w, done_bb);
+
+  irwriter_bb_at(w, fail_bb);
+  _emit_call_restore(ctx);
+  _emit_discard(ctx);
+  irwriter_br(w, fail_label);
+
   irwriter_bb_at(w, done_bb);
-  return irwriter_load(w, "i32", res);
 }
 
-// ============================================================
-// Optional (?) — does NOT advance col. Always succeeds.
-// ============================================================
+// --- Ordered choice (branches) ---
 
-IrVal peg_ir_maybe(PegIrCtx* ctx, int32_t scoped_rule_id) {
-  IrWriter* w = ctx->w;
-  IrLabel outer_fail = ctx->fail_label;
+static void _emit_branches(PegIrCtx* ctx, ScopedUnit* unit, IrLabel fail_label) {
+  IrWriter* w = ctx->ir_writer;
+  int32_t n = (int32_t)darray_size(unit->as.children);
+  if (n == 0) {
+    return;
+  }
 
-  IrLabel miss_bb = irwriter_label(w);
   IrLabel done_bb = irwriter_label(w);
-  IrVal res = irwriter_alloca(w, "i32");
-  IrVal col_before = _load_col(ctx);
 
-  ctx->fail_label = miss_bb;
-  IrVal r = _gen_base_unit(ctx, scoped_rule_id);
-  irwriter_store(w, "i32", r, res);
-  irwriter_br(w, done_bb);
+  // save(col) once before all alternatives
+  _emit_call_save(ctx);
 
-  irwriter_bb_at(w, miss_bb);
-  _store_col(ctx, col_before);
-  irwriter_store(w, "i32", irwriter_imm_int(w, 0), res);
-  irwriter_br(w, done_bb);
+  IrLabel* alt_bbs = malloc((size_t)(n + 1) * sizeof(IrLabel));
+  for (int32_t i = 1; i < n; i++) {
+    alt_bbs[i] = irwriter_label(w);
+  }
+  IrLabel last_fail_bb = irwriter_label(w);
 
-  irwriter_bb_at(w, done_bb);
-  ctx->fail_label = outer_fail;
-  return irwriter_load(w, "i32", res);
-}
+  for (int32_t i = 0; i < n; i++) {
+    IrLabel this_fail = (i < n - 1) ? alt_bbs[i + 1] : last_fail_bb;
 
-// ============================================================
-// One-or-more (+) — does NOT permanently advance col.
-// Returns total consumed. Caller advances col.
-//
-// Spec: gen(e+, col, fail):
-//   first = gen(e, col, fail)
-//   loop: acc = phi(first, next)
-//     r = gen(e, col+acc, end)
-//     next = acc + r
-//     br loop
-//   end: ret = acc
-//
-// We use col_index as a scratch that we restore on exit.
-// ============================================================
+    if (i > 0) {
+      irwriter_bb_at(w, alt_bbs[i]);
+      _emit_call_restore(ctx);
+    }
 
-IrVal peg_ir_plus(PegIrCtx* ctx, int32_t scoped_rule_id, int32_t rhs_scoped_rule_id) {
-  IrWriter* w = ctx->w;
-  bool interlace = (rhs_scoped_rule_id > 0);
-  IrVal acc = irwriter_alloca(w, "i32");
-  IrVal col_save = irwriter_alloca(w, "i64");
-  IrVal col_origin = _load_col(ctx);
-
-  // save original col so we can restore on exit
-  irwriter_store(w, "i64", col_origin, col_save);
-
-  // first must succeed
-  IrVal first = _gen_base_unit(ctx, scoped_rule_id);
-  _advance_col(ctx, first);
-  irwriter_store(w, "i32", first, acc);
-
-  IrLabel loop_bb = irwriter_label(w);
-  IrLabel end_bb = irwriter_label(w);
-  irwriter_br(w, loop_bb);
-  irwriter_bb_at(w, loop_bb);
-
-  IrLabel outer_fail = ctx->fail_label;
-  ctx->fail_label = end_bb;
-
-  // save col before loop body (for rollback on failure)
-  IrVal col_before_iter = _load_col(ctx);
-  irwriter_store(w, "i64", col_before_iter, col_save);
-
-  IrVal iter;
-  if (interlace) {
-    IrVal sr = _gen_base_unit(ctx, rhs_scoped_rule_id);
-    _advance_col(ctx, sr);
-    IrVal er = _gen_base_unit(ctx, scoped_rule_id);
-    _advance_col(ctx, er);
-    iter = irwriter_binop(w, "add", "i32", sr, er);
-  } else {
-    iter = _gen_base_unit(ctx, scoped_rule_id);
-    _advance_col(ctx, iter);
+    peg_ir_emit_parse(ctx, &unit->as.children[i], this_fail);
+    _emit_discard(ctx);
+    irwriter_br(w, done_bb);
   }
 
-  IrVal prev = irwriter_load(w, "i32", acc);
-  irwriter_store(w, "i32", irwriter_binop(w, "add", "i32", prev, iter), acc);
-  irwriter_br(w, loop_bb);
+  // all alternatives failed: restore col then discard
+  irwriter_bb_at(w, last_fail_bb);
+  _emit_call_restore(ctx);
+  _emit_discard(ctx);
+  irwriter_br(w, fail_label);
 
-  irwriter_bb_at(w, end_bb);
-  // restore col to before failed iteration
-  _store_col(ctx, irwriter_load(w, "i64", col_save));
-  // then restore to origin — caller will advance by returned acc
-  _store_col(ctx, col_origin);
-  ctx->fail_label = outer_fail;
+  irwriter_bb_at(w, done_bb);
 
-  return irwriter_load(w, "i32", acc);
+  free(alt_bbs);
 }
 
-// ============================================================
-// Zero-or-more (*) — does NOT permanently advance col.
-// Returns total consumed. Always succeeds.
-// ============================================================
+// --- Maybe (?) ---
 
-IrVal peg_ir_star(PegIrCtx* ctx, int32_t scoped_rule_id, int32_t rhs_scoped_rule_id) {
-  IrWriter* w = ctx->w;
-  bool interlace = (rhs_scoped_rule_id >= 0);
-  IrVal acc = irwriter_alloca(w, "i32");
-  IrVal col_save = irwriter_alloca(w, "i64");
-  IrVal col_origin = _load_col(ctx);
-  irwriter_store(w, "i32", irwriter_imm_int(w, 0), acc);
+static void _emit_maybe(PegIrCtx* ctx, ScopedUnit* unit, IrLabel fail_label) {
+  (void)fail_label;
+  IrLabel done_bb = irwriter_label(ctx->ir_writer);
 
-  if (interlace) {
-    // e*<sep> = (e (sep e)*)?
-    IrLabel first_bb = irwriter_label(w);
-    IrLabel empty_bb = irwriter_label(w);
-    IrLabel loop_bb = irwriter_label(w);
-    IrLabel loop_exit_bb = irwriter_label(w);
-    IrLabel final_bb = irwriter_label(w);
+  peg_ir_emit_parse(ctx, unit->as.base, done_bb);
+  irwriter_br(ctx->ir_writer, done_bb);
 
-    IrLabel outer_fail = ctx->fail_label;
+  irwriter_bb_at(ctx->ir_writer, done_bb);
+}
 
-    irwriter_br(w, first_bb);
-    irwriter_bb_at(w, first_bb);
-    ctx->fail_label = empty_bb;
+// --- Star (*) ---
 
-    IrVal first = _gen_base_unit(ctx, scoped_rule_id);
-    _advance_col(ctx, first);
-    irwriter_store(w, "i32", first, acc);
-    irwriter_br(w, loop_bb);
+static void _emit_star(PegIrCtx* ctx, ScopedUnit* unit, IrLabel fail_label) {
+  (void)fail_label;
+  IrWriter* w = ctx->ir_writer;
 
-    irwriter_bb_at(w, loop_bb);
-    ctx->fail_label = loop_exit_bb;
-    irwriter_store(w, "i64", _load_col(ctx), col_save);
+  bool has_interlace = (unit->as.interlace.rhs != NULL);
+  bool body_nullable = unit->as.interlace.lhs->nullable;
 
-    IrVal sr = _gen_base_unit(ctx, rhs_scoped_rule_id);
-    _advance_col(ctx, sr);
-    IrVal er = _gen_base_unit(ctx, scoped_rule_id);
-    _advance_col(ctx, er);
-    IrVal iter = irwriter_binop(w, "add", "i32", sr, er);
-    IrVal prev = irwriter_load(w, "i32", acc);
-    irwriter_store(w, "i32", irwriter_binop(w, "add", "i32", prev, iter), acc);
-    irwriter_br(w, loop_bb);
-
-    irwriter_bb_at(w, loop_exit_bb);
-    _store_col(ctx, irwriter_load(w, "i64", col_save));
-    irwriter_br(w, final_bb);
-
-    irwriter_bb_at(w, empty_bb);
-    irwriter_br(w, final_bb);
-
-    irwriter_bb_at(w, final_bb);
-    // restore col to origin; caller advances by returned acc
-    _store_col(ctx, col_origin);
-    ctx->fail_label = outer_fail;
-  } else {
+  if (!has_interlace) {
     IrLabel loop_bb = irwriter_label(w);
     IrLabel end_bb = irwriter_label(w);
+
     irwriter_br(w, loop_bb);
     irwriter_bb_at(w, loop_bb);
 
-    IrLabel outer_fail = ctx->fail_label;
-    ctx->fail_label = end_bb;
-    irwriter_store(w, "i64", _load_col(ctx), col_save);
+    IrVal col_before = body_nullable ? irwriter_load(w, "i64", ctx->col) : (IrVal)0;
 
-    IrVal r = _gen_base_unit(ctx, scoped_rule_id);
-    _advance_col(ctx, r);
-    IrVal prev = irwriter_load(w, "i32", acc);
-    irwriter_store(w, "i32", irwriter_binop(w, "add", "i32", prev, r), acc);
-    irwriter_br(w, loop_bb);
+    peg_ir_emit_parse(ctx, unit->as.interlace.lhs, end_bb);
+
+    // if e is nullable, check advancement to prevent infinite loop
+    if (body_nullable) {
+      IrVal col_after = irwriter_load(w, "i64", ctx->col);
+      IrVal advanced = irwriter_icmp(w, "ne", "i64", col_after, col_before);
+      irwriter_br_cond(w, advanced, loop_bb, end_bb);
+    } else {
+      irwriter_br(w, loop_bb);
+    }
 
     irwriter_bb_at(w, end_bb);
-    _store_col(ctx, irwriter_load(w, "i64", col_save));
-    // restore col to origin; caller advances by returned acc
-    _store_col(ctx, col_origin);
-    ctx->fail_label = outer_fail;
-  }
+  } else {
+    IrLabel loop_bb = irwriter_label(w);
+    IrLabel sep_fail_bb = irwriter_label(w);
+    IrLabel empty_bb = irwriter_label(w);
+    IrLabel end_bb = irwriter_label(w);
 
-  return irwriter_load(w, "i32", acc);
-}
+    // first element
+    peg_ir_emit_parse(ctx, unit->as.interlace.lhs, empty_bb);
+    irwriter_br(w, loop_bb);
 
-IrVal peg_ir_fast_call(PegIrCtx* ctx, int32_t scoped_rule_id) {
-  IrWriter* w = ctx->w;
-  IrLabel ret_lbl = irwriter_label(w);
-  IrVal addr = irwriter_next_reg(w);
-  irwriter_rawf(w, "  %%r%d = blockaddress(@parse_%s, %%L%d)\n", (int)addr, ctx->scope_name, ret_lbl);
-  irwriter_store(w, "ptr", addr, ctx->fast_ret);
-  irwriter_rawf(w, "  br label %%%s$%s\n", ctx->scope_name, ctx->rules[scoped_rule_id].name);
-  irwriter_bb_at(w, ret_lbl);
-  IrVal ret = irwriter_load(w, "i32", ctx->ret_val);
-  IrVal ok = irwriter_icmp(w, "sge", "i32", ret, irwriter_imm_int(w, 0));
-  IrLabel cont_bb = irwriter_label(w);
-  irwriter_br_cond(w, ok, cont_bb, ctx->fail_label);
-  irwriter_bb_at(w, cont_bb);
-  return ret;
-}
+    // loop
+    irwriter_bb_at(w, loop_bb);
 
-// ============================================================
-// _gen_bare: match by kind only, ignoring multiplier
-// ============================================================
+    IrVal col_before = body_nullable ? irwriter_load(w, "i64", ctx->col) : (IrVal)0;
 
-static IrVal _gen_base_unit(PegIrCtx* ctx, int32_t scoped_rule_id) {
-  ScopedRule* r = &ctx->rules[scoped_rule_id];
-  switch (r->kind) {
-  case SCOPED_RULE_KIND_TERM:
-    return peg_ir_fast_call(ctx, scoped_rule_id);
-  case SCOPED_RULE_KIND_CALL:
-    return peg_ir_call(ctx, scoped_rule_id);
-  case SCOPED_RULE_KIND_JOIN:
-    return irwriter_imm_int(ctx->w, 0);
-  default:
-    return peg_ir_call(ctx, scoped_rule_id);
-  }
-}
+    _emit_call_save(ctx);
+    peg_ir_emit_parse(ctx, unit->as.interlace.rhs, sep_fail_bb);
+    peg_ir_emit_parse(ctx, unit->as.interlace.lhs, sep_fail_bb);
+    _emit_discard(ctx);
 
-// ============================================================
-// _gen_scoped: dispatch on ScopedRule kind/multiplier
-// ============================================================
-
-static IrVal _gen_scoped_rule(PegIrCtx* ctx, int32_t scoped_rule_id) {
-  ScopedRule* r = &ctx->rules[scoped_rule_id];
-
-  if (r->multiplier == '?') {
-    return peg_ir_maybe(ctx, scoped_rule_id);
-  }
-  if (r->multiplier == '+') {
-    if (r->kind == SCOPED_RULE_KIND_JOIN) {
-      return peg_ir_plus(ctx, r->as.join.lhs, r->as.join.rhs);
+    // if e is nullable, check advancement to prevent infinite loop
+    if (body_nullable) {
+      IrVal col_after = irwriter_load(w, "i64", ctx->col);
+      IrVal advanced = irwriter_icmp(w, "ne", "i64", col_after, col_before);
+      irwriter_br_cond(w, advanced, loop_bb, end_bb);
+    } else {
+      irwriter_br(w, loop_bb);
     }
-    return peg_ir_plus(ctx, scoped_rule_id, -1);
+
+    // sep_fail: restore col, discard
+    irwriter_bb_at(w, sep_fail_bb);
+    _emit_call_restore(ctx);
+    _emit_discard(ctx);
+    irwriter_br(w, end_bb);
+
+    // empty: 0 matches
+    irwriter_bb_at(w, empty_bb);
+    irwriter_br(w, end_bb);
+
+    irwriter_bb_at(w, end_bb);
   }
-  if (r->multiplier == '*') {
-    if (r->kind == SCOPED_RULE_KIND_JOIN) {
-      return peg_ir_star(ctx, r->as.join.lhs, r->as.join.rhs);
+}
+
+// --- Plus (+) ---
+
+static void _emit_plus(PegIrCtx* ctx, ScopedUnit* unit, IrLabel fail_label) {
+  IrWriter* w = ctx->ir_writer;
+
+  bool has_interlace = (unit->as.interlace.rhs != NULL);
+  bool body_nullable = unit->as.interlace.lhs->nullable;
+
+  // first element must succeed
+  peg_ir_emit_parse(ctx, unit->as.interlace.lhs, fail_label);
+
+  if (!has_interlace) {
+    IrLabel loop_bb = irwriter_label(w);
+    IrLabel end_bb = irwriter_label(w);
+
+    irwriter_br(w, loop_bb);
+    irwriter_bb_at(w, loop_bb);
+
+    IrVal col_before = body_nullable ? irwriter_load(w, "i64", ctx->col) : (IrVal)0;
+
+    peg_ir_emit_parse(ctx, unit->as.interlace.lhs, end_bb);
+
+    // if e is nullable, check advancement to prevent infinite loop
+    if (body_nullable) {
+      IrVal col_after = irwriter_load(w, "i64", ctx->col);
+      IrVal advanced = irwriter_icmp(w, "ne", "i64", col_after, col_before);
+      irwriter_br_cond(w, advanced, loop_bb, end_bb);
+    } else {
+      irwriter_br(w, loop_bb);
     }
-    return peg_ir_star(ctx, scoped_rule_id, -1);
+
+    irwriter_bb_at(w, end_bb);
+  } else {
+    IrLabel loop_bb = irwriter_label(w);
+    IrLabel sep_fail_bb = irwriter_label(w);
+    IrLabel end_bb = irwriter_label(w);
+
+    irwriter_br(w, loop_bb);
+    irwriter_bb_at(w, loop_bb);
+
+    IrVal col_before = body_nullable ? irwriter_load(w, "i64", ctx->col) : (IrVal)0;
+
+    _emit_call_save(ctx);
+    peg_ir_emit_parse(ctx, unit->as.interlace.rhs, sep_fail_bb);
+    peg_ir_emit_parse(ctx, unit->as.interlace.lhs, sep_fail_bb);
+    _emit_discard(ctx);
+
+    // if e is nullable, check advancement to prevent infinite loop
+    if (body_nullable) {
+      IrVal col_after = irwriter_load(w, "i64", ctx->col);
+      IrVal advanced = irwriter_icmp(w, "ne", "i64", col_after, col_before);
+      irwriter_br_cond(w, advanced, loop_bb, end_bb);
+    } else {
+      irwriter_br(w, loop_bb);
+    }
+
+    irwriter_bb_at(w, sep_fail_bb);
+    _emit_call_restore(ctx);
+    _emit_discard(ctx);
+    irwriter_br(w, end_bb);
+
+    irwriter_bb_at(w, end_bb);
+  }
+}
+
+// --- Return epilogue ---
+
+void peg_ir_emit_ret(PegIrCtx* ctx) {
+  IrWriter* w = ctx->ir_writer;
+  // spec: stack-- (pop col pushed by call)
+  IrVal sp = irwriter_load(w, "ptr", ctx->stack_ptr);
+  irwriter_rawf(w, "  %%r%d = getelementptr i64, ptr %%r%d, i64 -1\n", irwriter_next_reg(w), (int)sp);
+  IrVal sp_after_col = (IrVal)(irwriter_next_reg(w) - 1);
+  // spec: %ret_addr = stack->ret_site
+  IrVal ret_addr = irwriter_load(w, "ptr", sp_after_col);
+  // spec: stack--
+  irwriter_rawf(w, "  %%r%d = getelementptr i64, ptr %%r%d, i64 -1\n", irwriter_next_reg(w), (int)sp_after_col);
+  IrVal sp_after_ret = (IrVal)(irwriter_next_reg(w) - 1);
+  // spec: bp = stack
+  IrVal bp = sp_after_ret;
+  // spec: ret = parsed_tokens
+  IrVal result = irwriter_load(w, "i64", ctx->parsed_tokens);
+  irwriter_store(w, "i64", result, ctx->parse_result);
+  // spec: stack = bp
+  irwriter_store(w, "ptr", bp, ctx->stack_ptr);
+  // spec: indirectbr ret_addr
+  irwriter_rawf(w, "  indirectbr ptr %%r%d, [", (int)ret_addr);
+  int32_t n = (int32_t)darray_size(ctx->ret_labels);
+  for (int32_t i = 0; i < n; i++) {
+    if (i > 0) {
+      irwriter_rawf(w, ", ");
+    }
+    irwriter_rawf(w, "label %%");
+    irwriter_emit_label(w, ctx->ret_labels[i]);
+  }
+  irwriter_rawf(w, "]\n");
+}
+
+// --- Helper function definitions ---
+
+void peg_ir_emit_helpers(IrWriter* w) {
+  // @save(ptr %stack_ptr_alloca, ptr %col_alloca)
+  {
+    irwriter_define_startf(w, "save", "internal void @save(ptr %%stack_ptr, ptr %%col)");
+    irwriter_bb(w);
+    IrVal sp = irwriter_load(w, "ptr", irwriter_imm(w, "%stack_ptr"));
+    irwriter_rawf(w, "  %%r%d = getelementptr i64, ptr %%r%d, i64 1\n", irwriter_next_reg(w), (int)sp);
+    IrVal sp1 = (IrVal)(irwriter_next_reg(w) - 1);
+    irwriter_store(w, "ptr", sp1, irwriter_imm(w, "%stack_ptr"));
+    IrVal col_val = irwriter_load(w, "i64", irwriter_imm(w, "%col"));
+    irwriter_store(w, "i64", col_val, sp1);
+    irwriter_ret_void(w);
+    irwriter_define_end(w);
   }
 
-  switch (r->kind) {
-  case SCOPED_RULE_KIND_TERM:
-    return peg_ir_fast_call(ctx, scoped_rule_id);
-  case SCOPED_RULE_KIND_CALL:
-    return peg_ir_call(ctx, scoped_rule_id);
-  case SCOPED_RULE_KIND_JOIN:
-    return irwriter_imm_int(ctx->w, 0);
-  default:
-    return peg_ir_call(ctx, scoped_rule_id);
+  // @restore(ptr %stack_ptr_alloca, ptr %col_alloca)
+  {
+    irwriter_define_startf(w, "restore", "internal void @restore(ptr %%stack_ptr, ptr %%col)");
+    irwriter_bb(w);
+    IrVal sp = irwriter_load(w, "ptr", irwriter_imm(w, "%stack_ptr"));
+    IrVal col_val = irwriter_load(w, "i64", sp);
+    irwriter_store(w, "i64", col_val, irwriter_imm(w, "%col"));
+    irwriter_ret_void(w);
+    irwriter_define_end(w);
+  }
+
+  // @top(ptr %stack_ptr_alloca) -> i64: get the top stored col (but not update %col)
+  {
+    irwriter_define_startf(w, "top", "internal i64 @top(ptr %%stack_ptr)");
+    irwriter_bb(w);
+    IrVal sp = irwriter_load(w, "ptr", irwriter_imm(w, "%stack_ptr"));
+    IrVal val = irwriter_load(w, "i64", sp);
+    irwriter_ret(w, "i64", val);
+    irwriter_define_end(w);
+  }
+}
+
+void peg_ir_emit_bit_helpers(IrWriter* w) {
+  // @bit_test(ptr %table, i64 %col, i64 %col_size, i64 %seg_offset, i64 %rule_bit) -> i1
+  {
+    irwriter_define_startf(
+        w, "bit_test",
+        "internal i1 @bit_test(ptr %%table, i64 %%col, i64 %%col_size, i64 %%seg_offset, i64 %%rule_bit)");
+    irwriter_bb(w);
+    IrVal off = irwriter_binop(w, "mul", "i64", irwriter_imm(w, "%col"), irwriter_imm(w, "%col_size"));
+    IrVal off2 = irwriter_binop(w, "add", "i64", off, irwriter_imm(w, "%seg_offset"));
+    irwriter_rawf(w, "  %%r%d = getelementptr i8, ptr %%table, i64 %%r%d\n", irwriter_next_reg(w), (int)off2);
+    IrVal ptr = (IrVal)(irwriter_next_reg(w) - 1);
+    IrVal seg = irwriter_load(w, "i64", ptr);
+    IrVal masked = irwriter_binop(w, "and", "i64", seg, irwriter_imm(w, "%rule_bit"));
+    IrVal result = irwriter_icmp(w, "ne", "i64", masked, irwriter_imm_int(w, 0));
+    irwriter_ret(w, "i1", result);
+    irwriter_define_end(w);
+  }
+
+  // @bit_deny(ptr %table, i64 %col, i64 %col_size, i64 %seg_offset, i64 %rule_bit)
+  {
+    irwriter_define_startf(
+        w, "bit_deny",
+        "internal void @bit_deny(ptr %%table, i64 %%col, i64 %%col_size, i64 %%seg_offset, i64 %%rule_bit)");
+    irwriter_bb(w);
+    IrVal off = irwriter_binop(w, "mul", "i64", irwriter_imm(w, "%col"), irwriter_imm(w, "%col_size"));
+    IrVal off2 = irwriter_binop(w, "add", "i64", off, irwriter_imm(w, "%seg_offset"));
+    irwriter_rawf(w, "  %%r%d = getelementptr i8, ptr %%table, i64 %%r%d\n", irwriter_next_reg(w), (int)off2);
+    IrVal ptr = (IrVal)(irwriter_next_reg(w) - 1);
+    IrVal seg = irwriter_load(w, "i64", ptr);
+    irwriter_rawf(w, "  %%r%d = xor i64 %%rule_bit, -1\n", irwriter_next_reg(w));
+    IrVal neg_reg = (IrVal)(irwriter_next_reg(w) - 1);
+    IrVal cleared = irwriter_binop(w, "and", "i64", seg, neg_reg);
+    irwriter_store(w, "i64", cleared, ptr);
+    irwriter_ret_void(w);
+    irwriter_define_end(w);
+  }
+
+  // @bit_exclude(ptr %table, i64 %col, i64 %col_size, i64 %seg_offset, i64 %segment_mask, i64 %rule_bit)
+  {
+    irwriter_define_startf(w, "bit_exclude",
+                           "internal void @bit_exclude(ptr %%table, i64 %%col, i64 %%col_size, i64 %%seg_offset, i64 "
+                           "%%segment_mask, i64 %%rule_bit)");
+    irwriter_bb(w);
+    IrVal off = irwriter_binop(w, "mul", "i64", irwriter_imm(w, "%col"), irwriter_imm(w, "%col_size"));
+    IrVal off2 = irwriter_binop(w, "add", "i64", off, irwriter_imm(w, "%seg_offset"));
+    irwriter_rawf(w, "  %%r%d = getelementptr i8, ptr %%table, i64 %%r%d\n", irwriter_next_reg(w), (int)off2);
+    IrVal ptr = (IrVal)(irwriter_next_reg(w) - 1);
+    IrVal old = irwriter_load(w, "i64", ptr);
+    // clear segment bits, preserve tag bits
+    irwriter_rawf(w, "  %%r%d = xor i64 %%segment_mask, -1\n", irwriter_next_reg(w));
+    IrVal neg_seg = (IrVal)(irwriter_next_reg(w) - 1);
+    IrVal cleared = irwriter_binop(w, "and", "i64", old, neg_seg);
+    IrVal result = irwriter_binop(w, "or", "i64", cleared, irwriter_imm(w, "%rule_bit"));
+    irwriter_store(w, "i64", result, ptr);
+    irwriter_ret_void(w);
+    irwriter_define_end(w);
   }
 }

@@ -23,7 +23,6 @@ typedef struct {
   IrVal parse_result; // PegRef %parse_result
   IrVal fast_ret_addr; // a shared register for fast-return
   IrVal tag_bits; // %tag_bits for successful match to set
-  IrVal parsed_tokens; // %parsed_tokens
   // and other context vars if needed in implementation
 
 } PegIrCtx;
@@ -31,14 +30,15 @@ typedef struct {
 
 - `peg_ir_emit_parse(ctx, ScopedUnit* unit, IrVal fail_label)`: emit IR for ScopedUnit tree (see definition in [PEG spec](peg.md#scope-closures)).
   - by unit's kind, dispatch to different `gen` parts as described below
-  - at the success end, set `parsed_tokens` register
-  - at the success end, update col register with `col += parsed_tokens`
-  - if unit.tag_offset >= 0, also `%tag_bits |= {1 << (unit.tag_offset + unit.tag_bit_offset)}`
-- `peg_ir_emit_ret(ctx)`
+  - if unit.tag_offset >= 0, also `%tag_bits |= {1 << (unit.tag_bit_local_offset + ctx.tag_bit_offset)}`
+- `peg_ir_emit_call(ctx, name)` pushes ret_site, then col (details see below)
+- `peg_ir_emit_ret(ctx)` pops col, back to ret_site
   - at the end, impl call return, which updates stack (see below)
-- `peg_ir_emit_helpers(irwriter)`: define internal functions `@save`, `@restore`, and `@bit_test`, `@bit_deny`, `@bit_exclude` as defined in [PEG](peg.md)
+- `peg_ir_emit_helpers(irwriter)`: define internal functions `@save`, `@restore`
   - `void @save(ptr %stack_ptr, ptr %col)`
   - `void @restore(ptr %stack_ptr, ptr %col)`
+  - `i64 @top(ptr %stack_ptr)`: get the top stored col (but not update `%col`)
+- `peg_ir_emit_bit_helpers(irwriter)`: emit shared-mode bit helper definitions: `@bit_test`, `@bit_deny`, `@bit_exclude` as defined in [PEG](peg.md)
 
 # Stack data layout and pseudo sub-rule calling
 
@@ -69,12 +69,15 @@ Operations
 // call sub-rule
   stack++;
   stack->ret_site = &&ret_label;
+  stack++;
+  stack->col = col
   br {scoped_rule_name};
 ret_label:
   parsed = %ret;
 
 // call return (generated at the end of peg_ir_emit_ret)
 {scoped_rule_name}:
+  stack--;
   %ret_addr = stack->ret_site;
   stack--;
   %bp = stack
@@ -87,7 +90,9 @@ ret_label:
 
 `fail` means passing the on-failure label.
 
-`gen(unit, fail_label)` means `peg_ir_emit_parse(ctx, unit, fail_label)`
+`gen(unit, fail_label)` means `peg_ir_emit_parse(ctx, unit, fail_label)`.
+
+Term increments `col` by 1.
 
 Call & term are trivial so we don't specify here.
 
@@ -96,15 +101,15 @@ Call & term are trivial so we don't specify here.
 ```c
 gen(seq(a, b), fail):
   save(col)
-  r1 = gen(a, fail_bb)
-  r2 = gen(b, fail_bb)
-  %ret = r1 + r2
+  gen(a, fail_bb)
+  gen(b, fail_bb)
   br(done_bb)
 fail_bb:
   restore()
   discard()
   br(fail)
 done_bb:
+  discard()
 ```
 
 ### Ordered choice
@@ -115,22 +120,21 @@ Refer to the branches syntax in [parse.md](parse.md).
 gen(branches(a, b, ...), fail):
 alt1:
   save(col)
-  r1 = gen(a, alt2)
+  gen(a, alt2)
   discard()
   br(done_bb)
 alt2:
   col = restore()
-  r2 = gen(b, alt2)
+  gen(b, alt2)
   discard()
   br(done_bb)
 ...
 altn:
   col = restore()
   discard()
-  rn = gen(b, fail)
+  gen(b, fail)
   br(done_bb)
 done_bb:
-  %ret = phi(r1 from alt1, r2 from alt2, ... rn from altn)
 ```
 
 ### Optional (?)
@@ -139,12 +143,9 @@ Always succeeds, never branches to fail. No need backtracking.
 
 ```c
 gen(e?, fail):
-  r = gen(e, miss_bb)
-  br(done_bb)
-miss_bb:
+  gen(e, done_bb)
   br(done_bb)
 done_bb:
-  %ret = phi(r from try_bb, 0 from miss_bb)
 ```
 
 ### One-or-more (+), possessive
@@ -153,15 +154,13 @@ First match must succeed. Then loop greedily, no need backtracking.
 
 ```c
 gen(e+, fail):
-  first = gen(e, fail)
+  gen(e, fail)
   br(loop_bb)
 loop_bb:
-  acc = phi(first from entry_bb, next from body_bb)
-  r = gen(e, end_bb)
-  next = acc + r
+  gen(e, end_bb)
+  // if e is nullable, check advancement to prevent infinite loop
   br(loop_bb)
 end_bb:
-  %ret = acc
 ```
 
 ### Zero-or-more (*), possessive
@@ -170,14 +169,11 @@ Same loop as `+`, but starts with zero matches (always succeeds). no need backtr
 
 ```c
 gen(e*, fail):
-  br(loop_bb)
 loop_bb:
-  acc = phi(0 from entry_bb, next from body_bb)
-  r = gen(e, end_bb)
-  next = acc + r
+  gen(e, end_bb)
+  // if e is nullable, check advancement to prevent infinite loop
   br(loop_bb)
 end_bb:
-  %ret = acc
 ```
 
 ### One-or-more with interlace (+\<sep\>)
@@ -186,22 +182,20 @@ Matches `e (sep e)*`. First element required, then alternating separator and ele
 
 ```c
 gen(e+<sep>, fail):
-  first = gen(e, fail)
+  gen(e, fail)
   br(loop_bb)
 loop_bb:
-  acc = phi(first from entry_bb, next from body_bb)
   save(col)
   sr = gen(sep, sep_fail)
   er = gen(e, sep_fail)
   discard()
-  next = acc + sr + er
+  // if e is nullable, check advancement to prevent infinite loop
   br(loop_bb)
 sep_fail:
   restore()
   discard()
   br(end_bb)
 end_bb:
-  %ret = acc
 ```
 
 ### Zero-or-more with interlace (*\<sep\>)
@@ -210,25 +204,20 @@ Matches `(e (sep e)*)?`. Zero matches is OK.
 
 ```c
 gen(e*<sep>, fail):
-  first = gen(e, empty_bb)
+  gen(e, end_bb)
   br(loop_bb)
 loop_bb:
-  acc = phi(first from entry_bb, next from body_bb)
   save(col)
-  sr = gen(sep, sep_fail)
-  er = gen(e, sep_fail)
+  gen(sep, sep_fail)
+  gen(e, sep_fail)
   discard()
-  next = acc + sr + er
+  // if e is nullable, check advancement to prevent infinite loop
   br(loop_bb)
 sep_fail:
   restore()
   discard()
   br(end_bb)
-empty_bb:
-  br(end_bb)
 end_bb:
-  result = phi(acc from loop_bb, 0 from empty_bb)
-  %ret = result
 ```
 
 # Notes

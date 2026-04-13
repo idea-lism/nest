@@ -479,7 +479,49 @@ static bool _check_left_rec(ParseState* ps, PegUnit* unit, int32_t target_id, in
   return false;
 }
 
+static bool _check_undefined_calls(ParseState* ps, PegUnit* unit, const char* rule_name) {
+  if (unit->kind == PEG_CALL) {
+    const char* rn = _rule_name(ps, unit->id);
+    if (!rn) {
+      parse_error(ps, "rule '%s': call to unknown id %d", rule_name, unit->id);
+      return false;
+    }
+    if (!_find_peg_rule(ps, rn) && !_find_scope(ps, rn)) {
+      parse_error(ps, "rule '%s': called rule '%s' is not defined", rule_name, rn);
+      return false;
+    }
+  }
+  if (unit->interlace_rhs_kind == PEG_CALL) {
+    const char* rn = _rule_name(ps, unit->interlace_rhs_id);
+    if (!rn) {
+      parse_error(ps, "rule '%s': interlace call to unknown id %d", rule_name, unit->interlace_rhs_id);
+      return false;
+    }
+    if (!_find_peg_rule(ps, rn) && !_find_scope(ps, rn)) {
+      parse_error(ps, "rule '%s': interlace called rule '%s' is not defined", rule_name, rn);
+      return false;
+    }
+  }
+  for (int32_t i = 0; i < (int32_t)darray_size(unit->children); i++) {
+    if (!_check_undefined_calls(ps, &unit->children[i], rule_name)) {
+      return false;
+    }
+  }
+  return true;
+}
+
 bool pp_detect_left_recursions(ParseState* ps) {
+  for (int32_t r = 0; r < (int32_t)darray_size(ps->peg_rules); r++) {
+    PegRule* rule = &ps->peg_rules[r];
+    const char* rn = _rule_name(ps, rule->global_id);
+    if (!rn) {
+      continue;
+    }
+    if (!_check_undefined_calls(ps, &rule->body, rn)) {
+      return false;
+    }
+  }
+
   for (int32_t r = 0; r < (int32_t)darray_size(ps->peg_rules); r++) {
     PegRule* rule = &ps->peg_rules[r];
     const char* rn = _rule_name(ps, rule->global_id);
@@ -526,6 +568,17 @@ static const char* _unit_display_name(ParseState* ps, PegUnit* unit) {
   return NULL;
 }
 
+static int32_t _count_tags(PegUnit* unit) {
+  int32_t n = 0;
+  if (unit->kind == PEG_BRANCHES) {
+    n += (int32_t)darray_size(unit->children);
+  }
+  for (int32_t i = 0; i < (int32_t)darray_size(unit->children); i++) {
+    n += _count_tags(&unit->children[i]);
+  }
+  return n;
+}
+
 static bool _auto_tag_unit(ParseState* ps, PegRule* rule, PegUnit* unit) {
   if (unit->kind == PEG_BRANCHES) {
     for (int32_t i = 0; i < (int32_t)darray_size(unit->children); i++) {
@@ -559,7 +612,17 @@ static bool _auto_tag_unit(ParseState* ps, PegRule* rule, PegUnit* unit) {
 
 bool pp_auto_tag_branches(ParseState* ps) {
   for (int32_t r = 0; r < (int32_t)darray_size(ps->peg_rules); r++) {
+    const char* rn = _rule_name(ps, ps->peg_rules[r].global_id);
+    if (rn && strlen(rn) > 128) {
+      parse_error(ps, "rule name '%s' exceeds 128 bytes", rn);
+      return false;
+    }
     if (!_auto_tag_unit(ps, &ps->peg_rules[r], &ps->peg_rules[r].body)) {
+      return false;
+    }
+    int32_t n_tags = _count_tags(&ps->peg_rules[r].body);
+    if (n_tags > 64) {
+      parse_error(ps, "rule '%s' has %d tags, exceeding the limit of 64", rn, n_tags);
       return false;
     }
   }

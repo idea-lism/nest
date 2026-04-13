@@ -26,7 +26,7 @@ TEST(test_tree_new) {
   assert(tree->root->scope_id == 0);
   assert(darray_size(tree->root->tokens) == 0);
   assert(darray_size(tree->table) == 1);
-  tt_tree_del(tree);
+  tt_tree_del(tree, false);
   ustr_del(s);
 }
 
@@ -41,7 +41,7 @@ TEST(test_add_single) {
   assert(tree->root->tokens[0].cp_start == 0);
   assert(tree->root->tokens[0].cp_size == 3);
   assert(tree->root->tokens[0].chunk_id == -1);
-  tt_tree_del(tree);
+  tt_tree_del(tree, false);
   ustr_del(s);
 }
 
@@ -56,7 +56,7 @@ TEST(test_add_multiple) {
     assert(tree->root->tokens[i].term_id == i);
     assert(tree->root->tokens[i].cp_start == i);
   }
-  tt_tree_del(tree);
+  tt_tree_del(tree, false);
   ustr_del(s);
 }
 
@@ -71,7 +71,7 @@ TEST(test_push) {
   assert(tree->current != tree->root);
   assert(child->parent_id == 0);
   assert(darray_size(tree->table) == 2);
-  tt_tree_del(tree);
+  tt_tree_del(tree, false);
   ustr_del(s);
 }
 
@@ -88,7 +88,7 @@ TEST(test_push_nested) {
   int32_t c_parent = tree->table[gc_parent].parent_id;
   assert(c_parent == 0);
   assert(tree->table[c_parent].parent_id == -1);
-  tt_tree_del(tree);
+  tt_tree_del(tree, false);
   ustr_del(s);
 }
 
@@ -101,7 +101,7 @@ TEST(test_pop) {
   assert(popped == tree->current);
   assert(tree->current == &tree->table[0]);
   assert(tree->current->parent_id == -1);
-  tt_tree_del(tree);
+  tt_tree_del(tree, false);
   ustr_del(s);
 }
 
@@ -129,7 +129,7 @@ TEST(test_push_pop_sequence) {
   assert(darray_size(tree->table[1].tokens) == 1);
   assert(tree->table[1].tokens[0].term_id == 20);
 
-  tt_tree_del(tree);
+  tt_tree_del(tree, false);
   ustr_del(s);
 }
 
@@ -143,7 +143,7 @@ TEST(test_locate_no_newlines) {
   assert(loc0.line == 0 && loc0.col == 0);
   Location loc3 = tt_locate(tree, 3);
   assert(loc3.line == 0 && loc3.col == 3);
-  tt_tree_del(tree);
+  tt_tree_del(tree, false);
   ustr_del(s);
 }
 
@@ -183,7 +183,7 @@ TEST(test_locate_with_newlines) {
   loc = tt_locate(tree, 6);
   assert(loc.line == 2 && loc.col == 0);
 
-  tt_tree_del(tree);
+  tt_tree_del(tree, false);
   ustr_del(s);
 }
 
@@ -197,7 +197,7 @@ TEST(test_locate_at_start_of_line) {
   Location loc = tt_locate(tree, 2);
   assert(loc.line == 1 && loc.col == 0);
 
-  tt_tree_del(tree);
+  tt_tree_del(tree, false);
   ustr_del(s);
 }
 
@@ -237,7 +237,7 @@ TEST(test_tree_structure) {
   assert(tree->table[2].tokens[0].term_id == 3);
   assert(tree->table[2].parent_id == 0);
 
-  tt_tree_del(tree);
+  tt_tree_del(tree, false);
   ustr_del(s);
 }
 

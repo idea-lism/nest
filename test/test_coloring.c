@@ -12,7 +12,8 @@ static bool _verify_coloring(Graph* g, ColoringResult* cr) {
 
   int32_t* colors = malloc(n * sizeof(int32_t));
   for (int32_t v = 0; v < n; v++) {
-    int32_t sg_id, seg_mask;
+    int32_t sg_id;
+    int64_t seg_mask;
     coloring_get_segment_info(cr, v, &sg_id, &seg_mask);
     colors[v] = sg_id;
   }
@@ -70,9 +71,10 @@ static void _test_segmenting(void) {
   assert(cr != NULL);
 
   int32_t sg_size = coloring_get_sg_size(cr);
-  assert(sg_size >= 4);
+  assert(sg_size >= 2);
 
-  int32_t sg0, mask0, sg49, mask49;
+  int32_t sg0, sg49;
+  int64_t mask0, mask49;
   coloring_get_segment_info(cr, 0, &sg0, &mask0);
   coloring_get_segment_info(cr, 49, &sg49, &mask49);
 

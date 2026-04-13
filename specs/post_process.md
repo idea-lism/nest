@@ -51,6 +51,7 @@ foo = a [
 - walk down peg rules to detect left recursions -- we don't allow this infinite loop.
   - when analyzing, be ware of the scope boundary: if there is a scope, we don't expand it. for example str is defined `str = str_char*`, but it always takes a slot in token stream so parsing the scope won't result in infinite loop.
 - for interlace rule `lhs*<rhs>` / `lhs+<rhs>`, if both `lhs` and `rhs` are nullable, report error.
+- if a rule being called is not defined, report error
 
 ### vpa scope validity
 
