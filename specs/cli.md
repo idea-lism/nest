@@ -10,7 +10,10 @@ Command line tool that generates
   - `-t <target_triple>` specify target triple, if none given, probe clang's default triple
   - `-v 1`, or `--verbose=1`. verbose output (prints each step)
 - parser generator options
-  - `-k false`, or `--compress-memoize=false`. default true, set false to disable compress memoize table (row_shared mode in PEG)
+  - `-m <memoize_mode>`, or `--memoize=<memoize_mode>`
+    - `none`: parse not using memoize table, this mode is only for testing parser correctness, no memoize output.
+    - `naive`: direct memoize table
+    - `shared`: using row-shared memoize table, this is the default value.
   - `-p <prefix>`, or `--prefix=<prefix>`. generated functions should have `<prefix>_`
     - prefix must match `[a-zA-Z]\w*`, with a limit of 64 chars.
     - to prevent conflicts: if prefix be any of `parse`, `ustr`, `load`, `lex`, report "prefix name preserved" and exit instantly.

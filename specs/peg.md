@@ -2,7 +2,7 @@
 
 src/peg.c is a packrat parsing generator.
 
-create `src/peg.c` (`void peg_gen(PegGenInput* input, HeaderWriter* hw, IrWriter* w, bool compress_memoize, const char* prefix)`):
+create `src/peg.c` (`void peg_gen(PegGenInput* input, HeaderWriter* hw, IrWriter* w, int memoize_mode, const char* prefix)`):
 - `prefix` comes from `nest` command arg `-p`.
 - gather scope closures (see below)
 - define generation logic for different PEG constructs, and generate LLVM IR, using Parser's processed-data
@@ -15,7 +15,7 @@ It iterates parsed PEG structure, utilize src/re.h to generate code.
 
 It assigns rule ids for each scope.
 
-It provides 2 generating options: naive & row_shared (--compress-memoize option in nest), so we can benchmark.
+It provides 3 memoize_mode options: none, naive & shared (from [cli](cli.md)), so we can benchmark to compare the 3 modes.
 
 ### Input format
 
@@ -31,6 +31,7 @@ typedef struct PegUnit PegUnit;
 
 typedef PegUnit* PegUnits; // darray
 
+// NOTE: as result of closure analysis id/interlace_rhs_id becomes scoped_rule_id
 struct PegUnit {
   PegUnitKind kind;
 
@@ -43,7 +44,7 @@ struct PegUnit {
   int32_t interlace_rhs_id; // calee rule's global_id | token id | scope id
 
   char* tag;         // (owned, may be NULL)
-  PegUnits children;
+  PegUnits children; // seq members or branch members
 };
 
 typedef struct {
@@ -67,129 +68,147 @@ typedef struct {
 ### Scope closures
 
 Create function `_gather_scope_closures()`, which gather rules for each scope:
-
 - same rule within different scopes will have their independent numbering
-  - for example, scope `s1 = r1` and scope `s2 = r2`, r1 & r2 may have different numbering in this 2 scopes because we are parsing in a divide-and-conqur manner. Scope is the division unit
+  - for example, scope `s1 = r1` and scope `s2 = r2`, r1 & r2 may have different numbering in this 2 scopes so we can minimize rows for each scope.
 - to gather rules for each scope, we recursively walk down the scope's definition, expanding sub rules and sub-sub rules and go on.
 - the purpose of this closure-finding is to make each scope's parsing table minimum.
+
+It also transforms `PegUnit` into `ScopedUnit`
+- makes multipliers explicit types.
+- expand the expression tree of user-defined rule
+- when a seq has only 1 member, inline the member
+- don't inline the branch though, resulting node requires the tags
+- if it is a branch with a tag, assign `tag_offset`, which will be later used memoize caching
+
+It breaks down multiplier rules so we can use "linked-list" in memoize table to represent them.
+- if a rule contains maybe/star/plus, a child rule named `{scope_name}${rule_name}${multiplier_num}` is created
+  - so the maybe/star/plus can have a cache slot, to chain the elements
+  - check the `has_next` and `get_next` functions defined below to get how the linked-list works.
+- analysis don't need to consider nested case, because by syntax, there won't be any multiplier inside multiplier -- we won't have labels like `foo$bar$1$2`.
 
 Then we will have this info:
 
 ```c
-struct ScopeClosure {
-  const char* scope_name;
-  Symtab defined_rules;
-  ...
-};
-```
+typedef enum {
+  SCOPED_UNIT_CALL = 1,
+  SCOPED_UNIT_TERM,
+  SCOPED_UNIT_BRANCHES,
+  SCOPED_UNIT_SEQ,
 
-### Breakdown rules
+  SCOPED_UNIT_MAYBE,
+  SCOPED_UNIT_STAR,
+  SCOPED_UNIT_PLUS
+} ScopedUnitKind;
 
-Create funciton `_breakdown_rules()`, which generates fine-grained rules.
+struct ScopedUnit;
+typedef struct ScopedUnit ScopedUnit;
+typedef ScopedUnit* ScopedUnits;
 
-For example, this composite rule:
+typedef struct {
+  ScopedUnit* lhs;
+  ScopedUnit* rhs;
+} ScopedInterlace;
 
-```
-foo = a [
-  b
-  c
-] [
-  e
-  f
-]
+// a struct for codegen convenience
+struct ScopedUnit {
+  ScopedUnitKind kind;
 
-# Assume only `c` is a branch rule, b/e/f are non-branch rules
-```
+  union {
+    const char* callee; // scoped_rule_name from symtab, not owned
+    int32_t term_id;
+    ScopedUnits children; // for branches & seq
+    ScopedUnit* base; // maybe
+    ScopedInterlace interlace; // for star & plus
+  } as;
 
-Then `foo` should be separated to:
-
-```
-foo = seq(a foo$1 foo$2)
-foo$1 = branches(b, foo$1$2)
-foo$1$2 = seq(c) # wrap in seq, avoid calling branch from branch directly
-foo$2 = branches(e, f)
-```
-
-One nuance is:
-- if a branch rule calls another branch rule, wrap the child rule in a seq
-- this wrapping ensures an invariance: to find out a branch rule's cached consumed token size, we can first read the slot to get the child rule id (`foo$1$2` for the above example), and read the size from directly -- without the need of further drill-down.
-
-After closure analysis & rule breakdown, we will have the following structure which codegen can use easily:
-
-```c
-enum ScopedRuleKind {
-  SCOPED_RULE_KIND_BRANCHES,
-  SCOPED_RULE_KIND_SEQ,
-  SCOPED_RULE_KIND_CALL,
-  SCOPED_RULE_KIND_JOIN,
-  SCOPED_RULE_KIND_TERM,
-};
+  // index in tags, or -1 for non-tagged unit
+  // when there is tag_offset, parsing should set the tag_bit to 1
+  int32_t tag_offset;
+} ScopedUnit;
 
 struct ScopedRule {
-  const char* name; // for example: "foo$1$2"
-  ScopedRuleKind kind;
-  union {
-    int32_t* branches; // darray of scoped_rule_ids
-    int32_t* seq;      // darray of scoped_rule_ids
-    int32_t call;      // scoped_rule_id
-    {int32_t, int32_t} join; // {lhs, rhs}, maps to lhs*<rhs> / lhs+<rhs>
-    int32_t term;      // term (token id | scope id)
-  } as;
-  char multiplier; // ?, *, +
-  DebugInfo di; // maps to source code
-  bool needs_memo; // non-term/call rules
+  const char* scoped_rule_name; // not owned, point to ScopeClosure.scoped_rule_names
+  ScopedUnits units; // tree clone of the original rule, but `id` and `interlace_rhs_id` are re-numbered as scoped_rule_ids
+  Symtab tags; // total tags
 
   // ... analysis|codegen props, see below
 };
 
+typedef ScopedRule* ScopedRules; // darray
+
 struct ScopeClosure {
   const char* scope_name;
-  Symtab defined_rules;
-  ScopedRule* rules; // darray of broken down rules
-  int32_t memoizable_size;
+  // each rule is named: "{scope_name}${rule_name}", can be used as IR label
+  Symtab scoped_rule_names;
+  ScopedRules scoped_rules; // defined rules
+
+  // after analysis below
+  int64_t bits_bucket_size;
+  int64_t slots_size;
 };
 ```
 
 # Packrat parsing
 
-Rules except "call" or "term" can be memoized to make the parsing O(n).
+Defined rules can be memoized to make the parsing O(n).
 
-Create function `_sort_memoizables()`, which:
+What to memoize:
+- for maybe/star/plus rules:
+  - element token size (so we can iterate to next element)
+  - element token size --(after size)-> next element token size --(after size)-> ... -> -1 (end of match)
+  - for interlaced stat/plus rules, `element` token size means `lhs` token size
+- for other rules:
+  - matched token size
+- tags, so we know which branches are chosen, it can also be assigned to resulting node
 
-For each `ScopeClosure`, we first sort `ScopeClosure.rules` by need_memo, rules that don't need memoizing should be arranged after the row_size slots.
-1. create a new array `new_to_old` with `{old, needs_memo}`
-2. sort `new_to_old` by `needs_memo ? -1 : 1` and 
-3. create a reverse mapping `old_to_new`
-4. create `new_rules`, iterate `new_to_old` to retrieve old rules, rewrite call/join target by `old_to_new`
-5. replace `rules` with `new_rules`
+To map tags to bits, create function `_alloc_tag_bits()` to assign tag bits to each rule:
+- For each scope closure
+  - For each `body` in `PegGenInput.rules`
+    - create symtab `ScopedRule.tags` and give a number to all its tags
+  - Now we know how many bits per scoped_rule costs, arrange them to `uint64_t` buckets so that the required buckets are minimal
+    - this is a knapsack problem, we use a simple greedy algorithm to allocate them
 
-## `naive` mode
+After `_alloc_tag_bits`, we have:
+
+```c
+struct ScopedRule {
+  // ... basic props, see above
+
+  uint64_t tag_bit_index;
+  uint64_t tag_bit_mask;
+  uint64_t tag_bit_offset;
+}
+```
+
+We have 3 memoize_modes (passed from [cli](cli.md)).
+
+## `memoize_mode=none`
+
+TODO: parsing not using memoize table.
+
+## `memoize_mode=naive`
 
 ### Runtime Table
 
-Parsing table layout:
+Parsing table layout (runtime structs):
 
 ```c
-struct ScopedTable {
-  Col col[token_size];
-};
-
-struct Col {
-  int32_t slots[slots_size]; // slots_size = memoizable_size
+struct Col${scope_name} {
+  uint64_t bits[{bits_bucket_size}];
+  int32_t slots[{scoped_rule_size}];
 };
 ```
 
-Each slot stores:
+When memoize happens:
+- the token size of the matching rule. All slots initialized to `-1`: means we don't know the match yet.
 
-- if it is a branch rule, store the chosen branch's scope_rule_id
-  - to extract the parsed token size of a branch rule, get the `slot_index` of child `scope_rule_id`, then read it.
-- for other rule, stores the token size of the matching rule. All slots initialized to `-1`: means we don't know the match yet.
+## `memoize_mode=shared`
 
-## `row_shared` mode
+Basic idea: rules can share a slot & tagbits storage when they do not co-exist at one matching position (exclusiveness).
 
-Rule IDs can share a slot storage when 2 rules do not co-exist at one matching position. We need extra bits to denote what the slot means.
+We need some extra bits to denote what the slot & tagbits position means. And these bits can be packed together with tagbits.
 
-For memoizable rules (`scoped_rule_id < memoizable_size`), we do row-sharing analysis and allocate slots for them.
+Create function `_alloc_slot_bits()`, to finish the following analysis.
 
 ### Exclusiveness analysis
 
@@ -197,18 +216,12 @@ Compute `first_set(R)` and `last_set(R)` for each rule R, expanding references t
 
 Compute `max_size(R)` and `min_size(R)` for each rule R, use `-1` for unlimited size.
 
-Note that if a rule being called is also a scope, we should not expand it in first_set/last_set computation, just add the scope_id to the set.
+Two rules A, B are **exclusive** if one of following holds:
 
-Two rules A, B are **exclusive** if:
-
-OR
-- AND 
-  + `min_size(A) > 0`
-  + `min_size(B) > 0`
-  + `first_set(A) ∩ first_set(B) = ∅` // this also covers the `all_set` intersection case
-- AND
-  + `min_size(A) == max_size(A) == min_size(B) == max_size(B) > 0`
-  + `last_set(A) ∩ last_set(B) = ∅` // no need compare `first_set`, it is already checked
+- `min_size(A) > 0 and min_size(B) > 0 and first_set(A) ∩ first_set(B) = ∅`
+  + note: this also covers the `all_set` intersection case
+- `min_size(A) == max_size(A) == min_size(B) == max_size(B) > 0 and last_set(A) ∩ last_set(B) = ∅`
+  + note: no need compare `first_set`, it is already checked
 
 ### Interference graph and coloring
 
@@ -225,10 +238,18 @@ Use kissat (vendored SAT solver) to encode the k-coloring problem:
 
 After graph coloring, we have shared-groups (sets of peg rule ids).
 
-Then we use reverse-bitset representation to denote what each slot means:
-- the bit map co-lives with cache slots in one single struct:
-  - `struct Col { int32_t bits[nseg_groups]; int32_t slots[slot_size]; }`
-- init state: set all bits & slots to 1 `memset(peg_table, -1 /* 0xFF */, table_bytes)`
+The Col data structure is still a similar struture
+
+```c
+struct Col${scope_name} {
+  uint64_t bits[{total_buckets}]; // buckets for both slot bits and tag bits
+  int32_t slots[{segment_size}];
+};
+```
+
+Then we use negated-bitset representation to denote what each slot means:
+- the bit map co-lives with tag bits in `Col.bits`
+- init state: all bits & slots are set to 1 because `tt_alloc_memoize_table()` already did so.
 - for a rule, we know:
   - the segment it belongs to: `segment_bits = bits[segment_index] & segment_mask`
   - check the bit `rule_bit = segment_bits & rule_bit_mask`
@@ -239,25 +260,34 @@ Then we use reverse-bitset representation to denote what each slot means:
         - else deny the rule bit, set it to `0`.
     - if rule bit is `0`, it means previous tries cached the failure, rule does not match.
 
-For performance of generated code, same-group bitset should be segmented by 32. see coloring.md for more details.
+For performance of generated code, same-group bitset should be segmented by 64. see [coloring](coloring.md) for more details.
 
-After analysis, we have these information for a rule in a scope (different in other scope because per-scope numbering):
+`_alloc_shared_tag_bits` is executed after `_alloc_slot_bits`, filling the gaps in existing bit buckets:
+- For each color group (segment), calculate the max `symtab_count(tags)`
+- They can be put in the remaining bucket gaps, or create new buckets
+
+Put together, during and after analysis, we have these information for a rule in a scope (different in other scope because per-scope numbering):
 
 ```c
 struct ScopedRule {
   // ... basic props, see above
 
+  uint64_t tag_bit_index; // same for the segment
+  uint64_t tag_bit_mask; // same for the segment
+  uint64_t tag_bit_offset;  // same for the segment
+
   bool nullable;    // can the rule match 0-length token?
   Bitset first_set; // excluding epsilon
   Bitset last_set;  // excluding epsilon
 
-  uint32_t scoped_rule_id; // unique in a scope closure
-  uint32_t segment_index;  // check Col.bits[segment_index]
-  uint32_t segment_mask;
-  uint32_t rule_bit_mask;  // single bit in segment_mask
-  uint32_t slot_index;     // Col.slots[slot_index] is the matched token size, same segment, same slot_index
+  uint64_t segment_index;  // check Col.bits[segment_index]
+  uint64_t segment_mask;
+  uint64_t rule_bit_mask;  // single bit in segment_mask
+  uint64_t slot_index;     // Col.slots[slot_index] is the matched token size, same segment, same slot_index
 };
 ```
+
+And we also update `ScopeClosure.bits_bucket_size = bucket_count_after_alloc` and `ScopeClosure.slots_size = segment_count`, so the runtime `Col${scope_name}` will have this packed layout.
 
 # Code gen
 
@@ -267,40 +297,56 @@ In the funciton, we allocate & init table for the scope, then lower to fine-gran
 ```pseudo
 %tc = tt_current(tt)
 %col = i64 0
-%table_size = tt_current_size(tt) * sizeof_col
-%peg_table = malloc(%table_size)
-memset(%peg_table, -1 /* 0xFF */, %table_size)
+%peg_table = tt_alloc_memoize_table(%tc, sizeof_col)
 %tc->value = %peg_table
 %tokens = tc->tokens
 br {scope_name}$foo
 
 {scope_name}$foo:
-  ; access memoize table
-  ; generated by peg_ir
+  { reads memoize table }
+  { if rule has tag bits }
+    %tag_bits = 0;
+  { end }
+
+  { peg_ir_emit_parse(ctx, scoped_rule.body, fail_bb) }
+
+  { if rule has tag bits }
+    %bits = gep(%peg_table[%col].bits);
+    %bits[{tag_bit_index}] &= ~{tag_bit_mask}
+    %bits[{tag_bit_index}] |= %tag_bits
+  { end }
+  { cache in memoize table }
+  br done_bb
+
+fail_bb:
+  { denies memoize table }
+  %parsed_tokens = -1
+
+done_bb:
+  { peg_ir_emit_ret(ctx) }
+
 
 {scope_name}$foo$1:
-  ; no access memoize table for non-memoizable rule
-  ; generated by peg_ir
+  ...
 
 ...
 
-ret %parse_success
+ret %parse_result
 ```
 
 To access memoize table:
 
 - Read memoize table slot
-  - `table->col[%col].slots[%slot_index]`
+  - `%peg_table[%col].slots[%slot_index]`
 - Write memoize table slot
-  - `table->col[%col].slots[%slot_index] = val`
-- In LLVM IR, we have `define internal @table_gep` to help this op.
+  - `%peg_table[%col].slots[%slot_index] = val`
 
-In `row_shared` mode, we also have:
+When memoize_mode=`shared` mode, we also have:
 
-- `define internal @bit_test(ptr table, i64 col, i64 col_size, i64 seg_offset, i32 rule_bit)`: Test rule's bit in the segment. Returns `i1` (1 = may match, 0 = proven fail).
-  - `seg_offset = seg_idx * sizeof(i32)`
-- `define internal @bit_deny(ptr table, i64 col, i64 col_size, i64 seg_offset, i32 rule_bit)`: Clear rule's bit (cache failure).
-- `define internal @bit_exclude(ptr table, i64 col, i64 col_size, i64 seg_offset, i32 rule_bit)`: Keep only this rule's bit, zero out others in segment (cache exclusive match).
+- `define internal @bit_test(ptr table, i64 col, i64 col_size, i64 seg_offset, i64 rule_bit)`: Test rule's bit in the segment. Returns `i1` (1 = may match, 0 = proven fail).
+  - `seg_offset = seg_idx * sizeof(i64)`
+- `define internal @bit_deny(ptr table, i64 col, i64 col_size, i64 seg_offset, i64 rule_bit)`: Clear rule's bit (cache failure).
+- `define internal @bit_exclude(ptr table, i64 col, i64 col_size, i64 seg_offset, i64 rule_bit)`: Keep only this rule's bit, zero out others in segment (cache exclusive match).
 
 In the end the memoize table is associated to each `TokenChunk`.
 
@@ -308,15 +354,82 @@ We also impl tail-call optimization for calling simple rules.
 
 # User API: parse tree retrieval
 
-When parse succeeds, VPA will return a PegRef.
+When parse succeeds, VPA will return a PegRef for `main` rule.
 
-- have the full memoize table in order to construct the parse tree
-  - there are 2 kinds of types: 
-    - a universal reference `PegRef { TokenChunk* tc, int32_t col, int32_t next_col }`
-      - `tc->value` is the memoize table
-    - rule-specific nodes `Node_foo { struct { bool branch1: 1; bool branch2: 1; } is; PegRef child0; PegRef child1; ... }`.
-  - fields are reference to a table position, with `is` field to tell the branch
-  - by the `is` user can call a helper function defined in generated header, to extract child node from the memoize table
+```c
+typedef struct {
+  TokenChunk* tc;
+  int64_t col;
+  int64_t row;
+} PegRef;
+
+// for multiplier/interlaced rules
+typedef struct {
+  int64_t rhs_row;
+  int64_t col_size_in_i32; // per-scope setting
+  PegRef elem;
+} PegLink;
+
+typedef Node_{rule_name} {
+  struct {
+    bool {tag1}: 1;
+    bool {tag2}: 1;
+    ...
+  } is; // can tell the branch
+  PegRef {child0};
+  PegLink {multiplier_child1};
+  PegRef {child1};
+  ...
+};
+```
+
+For repeated name fields, the ocurrences are auto-renamed to `field$1, field$2`.
+
+Tag bits can be assigned all at once, the loading function is like:
+
+```c
+{prefix}_load_{normal_rule_name}(PegRef ref) {
+  Node_foo $1 = {0};
+  in64_t* $table = ref.tc->value;
+  switch (ref.tc->scope_id) {
+    case {scope_1}: {
+      ((uint64_t*)&$1.is)[0] = ($table[{tag_bit_index}] >> {tag_bit_offset}) & {tag_bit_mask};
+      break;
+    }
+    case {scope_2}: {
+      ... // we have different number allocations for different scopes
+      break;
+    }
+  }
+  return $1;
+}
+```
+
+Note if rule name is a scope, we have to expand the child token chunk first, and then the loading is like normal_rule_name.
+
+Generic link iterating functions should be defined as:
+
+```c
+bool {prefix}_has_next(PegLink l) {
+  int32_t* col = (int32_t*)l.elem.tc->value + l.col_size_in_i32 * l.elem.col;
+  int32_t lhs_slot = col[l.elem.row];
+  if (lhs_slot < 0) {
+    return false;
+  }
+  if (l.rhs_row >= 0) { // interlaced, also need to check rhs
+    int32_t* rhs_col = col + l.col_size_in_i32 * lhs_slot;
+    int32_t rhs_slot = rhs_col[l.rhs_row];
+    if (rhs_slot < 0) {
+      return false;
+    }
+  }
+  return true;
+}
+
+PegLink {prefix}_get_next(PegLink l) {
+  // increment l.elem.col by the slot size
+}
+```
 
 A typical using pattern is:
 
@@ -328,17 +441,15 @@ Node_foo foo = {prefix}_load_foo(ref);
 //   baz bar : tag2
 // ]
 if (foo.is.tag1) {
-  for (elem = foo.bar; has_next(elem); elem = get_next(elem)) {
-    bar = {prefix}_load_bar(elem);
+  for (PegLink l = foo.bar; {prefix}_has_next(l); l = {prefix}_get_next(l)) {
+    Node_bar bar = {prefix}_load_bar(l.elem);
     ...
   }
 } else if (foo.is.tag2) {
-  baz = {prefix}_load_baz(foo.baz);
-  bar = {prefix}_load_bar(foo.bar);
+  Node_baz baz = {prefix}_load_baz(foo.baz);
+  Node_bar bar = {prefix}_load_bar(foo.bar$1);
 }
 ```
-
-Note that `{prefix}_load_{decl_rule_name}` works on defined rules, no need to generate loaders for broken-down rules.
 
 # Node field naming scheme
 
@@ -369,5 +480,6 @@ TODO: implement cut operator `^`, when no terminal can match after cut, report c
 # Acceptance criteria
 
 - end-to-end test: create a terminal list (you can mimic json, for example), use generated code, to parse the list, and produce a memoize table, by the parsed memoize table, we can use the generated `{prefix}_load_{decl_rule_name}()` function to retrieve/drill-down the nodes, and the loading doesn't allocate heap memory at all.
+- if spec already given a variable/function name, don't re-invent yet another name for the same idea.
 - resulting memoize tables: assume there are 5 rules in scope A, 6 rules in scope B, resulting memoize tables should have rows 5 and 6 in each, not full row heights each.
-- resulting load_xxx MUST NOT call parse_xxx functions, just decode from memoize table.
+- When memoize_mode=naive/shared, resulting load_xxx MUST NOT call parse_xxx functions, just decode from memoize table.
