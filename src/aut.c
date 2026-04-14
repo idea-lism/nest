@@ -156,6 +156,13 @@ static int _cmp_int32(const void* a, const void* b) {
   return (x > y) - (x < y);
 }
 
+static int _cmp_dfa_trans(const void* a, const void* b) {
+  const DfaTrans* x = (const DfaTrans*)a;
+  const DfaTrans* y = (const DfaTrans*)b;
+  if (x->from != y->from) return (x->from > y->from) - (x->from < y->from);
+  return (x->cp_start > y->cp_start) - (x->cp_start < y->cp_start);
+}
+
 static void _determinize(Aut* a, Bitset* initial, NfaTrans* nfa, int nnfa, EpsTrans* eps, int neps, int nstates,
                          int32_t* sa, int32_t sa_n) {
   for (size_t i = 0; i < darray_size(a->dfa_states); i++) {
@@ -472,7 +479,24 @@ void aut_optimize(Aut* a) {
   free(act);
   darray_del(splits);
 
+  // Sort transitions by (from, cp_start) so the coalescing pass can merge adjacent ranges.
+  // After minimization, transitions from merged states may be scattered in the array.
   int final_ntrans = (int)darray_size(a->dfa_trans);
+  qsort(a->dfa_trans, (size_t)final_ntrans, sizeof(DfaTrans), _cmp_dfa_trans);
+
+  // Deduplicate identical transitions (same from, to, cp_start, cp_end)
+  int dedup_n = 0;
+  for (int i = 0; i < final_ntrans; i++) {
+    if (dedup_n > 0 && a->dfa_trans[dedup_n - 1].from == a->dfa_trans[i].from &&
+        a->dfa_trans[dedup_n - 1].to == a->dfa_trans[i].to &&
+        a->dfa_trans[dedup_n - 1].cp_start == a->dfa_trans[i].cp_start &&
+        a->dfa_trans[dedup_n - 1].cp_end == a->dfa_trans[i].cp_end) {
+      continue;
+    }
+    a->dfa_trans[dedup_n++] = a->dfa_trans[i];
+  }
+  final_ntrans = dedup_n;
+  a->dfa_trans = darray_grow(a->dfa_trans, (size_t)final_ntrans);
   for (int i = 0; i < final_ntrans; i++) {
     for (int j = i + 1; j < final_ntrans; j++) {
       if (a->dfa_trans[i].from == a->dfa_trans[j].from && a->dfa_trans[i].to == a->dfa_trans[j].to &&

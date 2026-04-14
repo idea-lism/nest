@@ -280,6 +280,36 @@ TEST(test_preserving_rule) {
   free(out);
 }
 
+// --- Optimize coalesces adjacent ranges from merged states ---
+
+static void _build_coalesce(Aut* a, IrWriter* w) {
+  // 0 --[a-m]--> 1, 0 --[n-z]--> 2
+  // 1 --[x]--> 3 (action 1), 2 --[x]--> 4 (action 1)
+  // States 1 and 2 are equivalent. After minimization they merge,
+  // so transitions [a-m] and [n-z] from state 0 both target the same
+  // merged state and should coalesce into [a-z].
+  aut_transition(a, (TransitionDef){0, 1, 'a', 'm'}, (DebugInfo){1, 1});
+  aut_transition(a, (TransitionDef){0, 2, 'n', 'z'}, (DebugInfo){1, 5});
+  aut_transition(a, (TransitionDef){1, 3, 'x', 'x'}, (DebugInfo){2, 1});
+  aut_action(a, 3, 1);
+  aut_transition(a, (TransitionDef){2, 4, 'x', 'x'}, (DebugInfo){2, 5});
+  aut_action(a, 4, 1);
+  aut_optimize(a);
+  aut_gen_dfa(a, w, false);
+}
+
+TEST(test_optimize_coalesces_ranges) {
+  char* out = _gen_ir(_build_coalesce);
+  // After coalescing, [a-z] = [97, 122] should appear as a single range check.
+  // 97 = 'a', 122 = 'z'. The IR should have "sge i32 %cp, 97" and "sle i32 %cp, 122".
+  assert(strstr(out, "97"));
+  assert(strstr(out, "122"));
+  // The split boundaries 109 ('m') and 110 ('n') should NOT appear — they were coalesced.
+  assert(!strstr(out, "109"));
+  assert(!strstr(out, "110"));
+  free(out);
+}
+
 // --- Optimize reduces states AND preserves actions ---
 
 TEST(test_optimize_preserves_action) {
@@ -415,6 +445,8 @@ TEST(test_compile_min_rule) { _write_and_compile(_build_min_rule, "min_rule"); }
 
 TEST(test_compile_preserve) { _write_and_compile(_build_preserve, "preserve"); }
 
+TEST(test_compile_coalesce) { _write_and_compile(_build_coalesce, "coalesce"); }
+
 // --- Lifecycle ---
 
 TEST(test_lifecycle) {
@@ -462,6 +494,7 @@ int main(void) {
   RUN(test_optimize_reduces_states);
   RUN(test_preserving_rule);
   RUN(test_optimize_preserves_action);
+  RUN(test_optimize_coalesces_ranges);
   RUN(test_compile_single);
   RUN(test_compile_range);
   RUN(test_compile_multi);
@@ -474,6 +507,7 @@ int main(void) {
   RUN(test_compile_action_basic);
   RUN(test_compile_min_rule);
   RUN(test_compile_preserve);
+  RUN(test_compile_coalesce);
   printf("all ok\n");
   return 0;
 }
