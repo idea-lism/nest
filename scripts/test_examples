@@ -1,0 +1,69 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+MODE="${1:-debug}"
+NEST="build/${MODE}/nest"
+CC="${CC:-clang}"
+CFLAGS="${CFLAGS:--std=c23 -O0}"
+TMPDIR=$(mktemp -d)
+trap 'rm -rf "$TMPDIR"' EXIT
+
+if [ ! -x "$NEST" ]; then
+  echo "error: $NEST not found, run: ruby config.rb $MODE && ninja" >&2
+  exit 1
+fi
+
+pass=0
+fail=0
+
+for dir in test/examples/*/; do
+  name=$(basename "$dir")
+  grammar="$dir/grammar.nest"
+  [ -f "$grammar" ] || continue
+
+  for mode in naive shared; do
+    # Compile grammar
+    if ! "$NEST" c "$grammar" -p "$name" -m "$mode" 2>"$TMPDIR/nest_err" ; then
+      echo "FAIL $name ($mode): nest c failed"
+      cat "$TMPDIR/nest_err" >&2
+      fail=$((fail + 1))
+      continue
+    fi
+
+    # Move generated files to tmpdir
+    mv "${name}.c" "${name}.h" "${name}.ll" "$TMPDIR/" 2>/dev/null
+
+    # Compile
+    if ! $CC $CFLAGS "$TMPDIR/${name}.c" "$TMPDIR/${name}.ll" -o "$TMPDIR/${name}" 2>"$TMPDIR/cc_err"; then
+      echo "FAIL $name ($mode): compile failed"
+      cat "$TMPDIR/cc_err" >&2
+      fail=$((fail + 1))
+      continue
+    fi
+
+    # Run each input/expected pair
+    for input_file in "$dir"/*.input; do
+      [ -f "$input_file" ] || continue
+      case_name=$(basename "$input_file" .input)
+      expected="$dir/${case_name}.expected"
+      [ -f "$expected" ] || continue
+
+      input_text=$(cat "$input_file")
+      actual=$("$TMPDIR/$name" "$input_text" 2>"$TMPDIR/stderr" || true)
+      stderr=$(cat "$TMPDIR/stderr")
+      combined=$(printf '%s\n%s' "$stderr" "$actual")
+
+      if diff -u "$expected" - <<<"$combined" >"$TMPDIR/diff" 2>&1; then
+        pass=$((pass + 1))
+      else
+        echo "FAIL $name/$case_name ($mode):"
+        cat "$TMPDIR/diff"
+        fail=$((fail + 1))
+      fi
+    done
+  done
+done
+
+echo ""
+echo "$pass passed, $fail failed"
+[ "$fail" -eq 0 ]

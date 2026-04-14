@@ -931,8 +931,26 @@ static char* _sanitize_field_name(const char* name) {
 // Header generation
 // ============================================================
 
-// Emit PEG-specific types (PegLink). PegRef is defined in VPA header.
+// Emit types needed by PEG inline loaders. Minimal Token/TokenChunk/TokenTree definitions
+// are guarded so the VPA runtime amalgamation (which includes the full token_tree.h) won't conflict.
 static void _gen_header_types(HeaderWriter* hw) {
+  hw_raw(hw, "#include <stdint.h>\n#include <stdbool.h>\n#include <string.h>\n\n");
+  hw_raw(hw, "#ifndef _NEST_TOKEN_TYPES\n#define _NEST_TOKEN_TYPES\n");
+  hw_raw(hw, "typedef struct { int32_t term_id; int32_t cp_start; int32_t cp_size; int32_t chunk_id; } Token;\n");
+  hw_raw(hw, "typedef Token* Tokens;\n");
+  hw_raw(hw, "typedef struct TokenChunk {\n"
+             "  int32_t scope_id; int32_t parent_id;\n"
+             "  void* value; void* aux_value; Tokens tokens;\n"
+             "} TokenChunk;\n");
+  hw_raw(hw, "typedef TokenChunk* TokenChunks;\n");
+  hw_raw(hw, "typedef struct TokenTree {\n"
+             "  const char* src; uint64_t* newline_map;\n"
+             "  TokenChunk* root; TokenChunk* current; TokenChunks table;\n"
+             "} TokenTree;\n");
+  hw_raw(hw, "#endif\n\n");
+  hw_raw(hw, "#ifndef _NEST_PEGREF\n#define _NEST_PEGREF\n");
+  hw_raw(hw, "typedef struct { TokenChunk* tc; int64_t col; int64_t row; } PegRef;\n");
+  hw_raw(hw, "#endif\n\n");
   hw_raw(hw, "typedef struct {\n  int64_t rhs_row;\n  int64_t col_size_in_i32;\n  PegRef elem;\n} PegLink;\n");
   hw_blank(hw);
 }
@@ -1001,7 +1019,9 @@ static void _gen_node_struct(HeaderWriter* hw, PegGenInput* input, RuleLookup* l
   if (tag_size > 0) {
     hw_raw(hw, "  struct {\n");
     for (int32_t t = 0; t < tag_size; t++) {
-      hw_fmt(hw, "    bool %s : 1;\n", symtab_get(&sr->tags, t + sr->tags.start_num));
+      char* san = _sanitize_field_name(symtab_get(&sr->tags, t + sr->tags.start_num));
+      hw_fmt(hw, "    bool %s : 1;\n", san);
+      free(san);
     }
     if (tag_size < 64) {
       hw_fmt(hw, "    uint64_t _padding : %d;\n", 64 - tag_size);
@@ -1026,11 +1046,15 @@ static void _gen_node_struct(HeaderWriter* hw, PegGenInput* input, RuleLookup* l
     }
     _field_dedup_free(&fd);
   } else if (orig->body.kind == PEG_TERM) {
+    bool is_link = (orig->body.multiplier == '*' || orig->body.multiplier == '+');
+    const char* type = is_link ? "PegLink" : "PegRef";
     char* san = _sanitize_field_name(_term_name(input, orig->body.id));
-    hw_fmt(hw, "  PegRef %s;\n", san);
+    hw_fmt(hw, "  %s %s;\n", type, san);
     free(san);
   } else if (orig->body.kind == PEG_CALL) {
-    hw_fmt(hw, "  PegRef %s;\n", symtab_get(&input->rule_names, orig->body.id));
+    bool is_link = (orig->body.multiplier == '*' || orig->body.multiplier == '+');
+    const char* type = is_link ? "PegLink" : "PegRef";
+    hw_fmt(hw, "  %s %s;\n", type, symtab_get(&input->rule_names, orig->body.id));
   }
   hw_fmt(hw, "} Node_%s;\n", rule_name);
   hw_blank(hw);
@@ -1296,8 +1320,25 @@ static void _gen_loader(HeaderWriter* hw, PegGenInput* input, RuleLookup* lu, co
       }
       _field_dedup_free(&fd);
     } else if (orig->body.kind == PEG_TERM) {
+      bool is_link = (orig->body.multiplier == '*' || orig->body.multiplier == '+');
       char* san = _sanitize_field_name(_term_name(input, orig->body.id));
-      if (_is_scope_term(input, orig->body.id)) {
+      if (is_link) {
+        int64_t col_size_in_i32 = cl->bits_bucket_size * 2 + cl->slots_size;
+        ScopedRule* wrapper = _find_scoped_rule(
+            cl, symtab_find_f(&cl->scoped_rule_names, "%s$%s$%d", cl->scope_name, rule_name, 1));
+        int32_t wrapper_row = wrapper ? _slot_row(cl, wrapper) : 0;
+        if (_is_scope_term(input, orig->body.id)) {
+          hw_fmt(hw,
+                 "    n.%s.elem.tc = &((TokenTree*)ref.tc->aux_value)->table[ref.tc->tokens[ref.col].chunk_id];\n",
+                 san);
+          hw_fmt(hw, "    n.%s.elem.col = 0;\n", san);
+        } else {
+          hw_fmt(hw, "    n.%s.elem.tc = ref.tc;\n    n.%s.elem.col = ref.col;\n", san, san);
+        }
+        hw_fmt(hw, "    n.%s.elem.row = %d;\n", san, wrapper_row);
+        hw_fmt(hw, "    n.%s.col_size_in_i32 = %lld;\n    n.%s.rhs_row = -1;\n", san, (long long)col_size_in_i32,
+               san);
+      } else if (_is_scope_term(input, orig->body.id)) {
         hw_fmt(hw, "    n.%s.tc = &((TokenTree*)ref.tc->aux_value)->table[ref.tc->tokens[ref.col].chunk_id];\n", san);
         hw_fmt(hw, "    n.%s.col = 0;\n    n.%s.row = 0;\n", san, san);
       } else {
@@ -1305,10 +1346,22 @@ static void _gen_loader(HeaderWriter* hw, PegGenInput* input, RuleLookup* lu, co
       }
       free(san);
     } else if (orig->body.kind == PEG_CALL) {
+      bool is_link = (orig->body.multiplier == '*' || orig->body.multiplier == '+');
       const char* fn = symtab_get(&input->rule_names, orig->body.id);
-      ScopedRule* callee_sr = _find_scoped_rule(cl, symtab_find_f(&cl->scoped_rule_names, "%s$%s", cl->scope_name, fn));
-      int32_t callee_row = callee_sr ? _slot_row(cl, callee_sr) : 0;
-      hw_fmt(hw, "    n.%s.tc = ref.tc;\n    n.%s.col = ref.col;\n    n.%s.row = %d;\n", fn, fn, fn, callee_row);
+      if (is_link) {
+        int64_t col_size_in_i32 = cl->bits_bucket_size * 2 + cl->slots_size;
+        ScopedRule* wrapper = _find_scoped_rule(
+            cl, symtab_find_f(&cl->scoped_rule_names, "%s$%s$%d", cl->scope_name, rule_name, 1));
+        int32_t wrapper_row = wrapper ? _slot_row(cl, wrapper) : 0;
+        hw_fmt(hw, "    n.%s.elem.tc = ref.tc;\n    n.%s.elem.col = ref.col;\n", fn, fn);
+        hw_fmt(hw, "    n.%s.elem.row = %d;\n", fn, wrapper_row);
+        hw_fmt(hw, "    n.%s.col_size_in_i32 = %lld;\n    n.%s.rhs_row = -1;\n", fn, (long long)col_size_in_i32, fn);
+      } else {
+        ScopedRule* callee_sr =
+            _find_scoped_rule(cl, symtab_find_f(&cl->scoped_rule_names, "%s$%s", cl->scope_name, fn));
+        int32_t callee_row = callee_sr ? _slot_row(cl, callee_sr) : 0;
+        hw_fmt(hw, "    n.%s.tc = ref.tc;\n    n.%s.col = ref.col;\n    n.%s.row = %d;\n", fn, fn, fn, callee_row);
+      }
     }
 
     hw_raw(hw, "    break;\n  }\n");
@@ -1347,6 +1400,22 @@ static void _gen_get_next(HeaderWriter* hw, const char* prefix) {
   hw_blank(hw);
 }
 
+static void _gen_peg_size(HeaderWriter* hw, ScopeClosure* closures, int32_t closure_size, const char* prefix) {
+  hw_fmt(hw, "static inline int32_t %s_peg_size(PegRef ref) {\n", prefix);
+  hw_raw(hw, "  if (!ref.tc || !ref.tc->value) return -1;\n");
+  hw_raw(hw, "  int64_t col_size;\n");
+  hw_raw(hw, "  switch (ref.tc->scope_id) {\n");
+  for (int32_t c = 0; c < closure_size; c++) {
+    int64_t col_size = closures[c].bits_bucket_size * 2 + closures[c].slots_size;
+    hw_fmt(hw, "  case %d: col_size = %lld; break;\n", closures[c].scope_id, (long long)col_size);
+  }
+  hw_raw(hw, "  default: return -1;\n");
+  hw_raw(hw, "  }\n");
+  hw_raw(hw, "  return ((int32_t*)ref.tc->value)[ref.col * col_size + ref.row];\n");
+  hw_raw(hw, "}\n");
+  hw_blank(hw);
+}
+
 static void _gen_header(PegGenInput* input, RuleLookup* lu, HeaderWriter* hw, ScopeClosure* closures,
                         int32_t closure_size, RuleScopeMap* scope_map, const char* prefix) {
   _gen_header_types(hw);
@@ -1381,6 +1450,7 @@ static void _gen_header(PegGenInput* input, RuleLookup* lu, HeaderWriter* hw, Sc
 
   _gen_has_next(hw, prefix);
   _gen_get_next(hw, prefix);
+  _gen_peg_size(hw, closures, closure_size, prefix);
 }
 
 // ============================================================
@@ -1401,6 +1471,7 @@ static void _gen_scope_ir(IrWriter* w, ScopeClosure* cl, int memoize_mode) {
   char* fn_name = _fmt("parse_%s", cl->scope_name);
   irwriter_define_startf(w, fn_name, "{i64, i64} @%s(ptr %%tt, ptr %%stack_ptr_in)", fn_name);
   irwriter_bb(w);
+  irwriter_dbg(w, 1, 0);
 
   IrVal tc = irwriter_call_retf(w, "ptr", "tt_current", "ptr %%tt");
   // tt_alloc_memoize_table already initializes to -1 via memset

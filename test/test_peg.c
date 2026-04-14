@@ -296,7 +296,7 @@ TEST(test_iteration_helpers) {
   assert(strstr(hdr_buf, "json_get_next") != NULL);
 
   // has_next and get_next must use tc->value, not tc directly
-  assert(strstr(hdr_buf, "l.elem.tc->value") != NULL);
+  assert(strstr(hdr_buf, "((TokenChunk*)l.elem.tc)->value") != NULL);
 
   free(ir_buf);
   free(hdr_buf);
@@ -409,7 +409,8 @@ TEST(test_call_targets_correct) {
   // and there must be a corresponding "value:" label.
 
   // First, check that we have a branch TO value
-  const char* br_to_value = strstr(g.ir_buf, "br label %main$value\n");
+  const char* br_to_value = strstr(g.ir_buf, "br label %main$value,");
+  if (!br_to_value) br_to_value = strstr(g.ir_buf, "br label %main$value\n");
   assert(br_to_value != NULL && "main should branch to value, not an interior node");
 
   // Check that value label exists in the IR
@@ -518,9 +519,9 @@ TEST(test_loader_decodes_from_table) {
   memcpy(body, body_start, body_len);
   body[body_len] = '\0';
 
-  // A real decoder must access ref.tc->value to read from the memo table
-  bool accesses_table = (strstr(body, "ref.tc->value") != NULL);
-  assert(accesses_table && "loader must decode from memo table via ref.tc->value");
+  // A real decoder must access _tc->value to read from the memo table
+  bool accesses_table = (strstr(body, "_tc->value") != NULL);
+  assert(accesses_table && "loader must decode from memo table via _tc->value");
 
   free(body);
   _free_gen(&g);

@@ -1,4 +1,5 @@
 // specs/cli.md
+#include "darray.h"
 #include "parse.h"
 #include "post_process.h"
 #include "re.h"
@@ -168,31 +169,143 @@ static int32_t _cmd_lex(int32_t argc, char** argv) {
   return 0;
 }
 
-static void _gen_example_c(FILE* f, const char* prefix, Symtab* tokens) {
+static bool _is_scope_term_ex(Symtab* scope_names, int32_t id) {
+  return id < symtab_count(scope_names) + scope_names->start_num;
+}
+
+static const char* _term_name_ex(Symtab* tokens, Symtab* scope_names, int32_t id) {
+  if (_is_scope_term_ex(scope_names, id))
+    return symtab_get(scope_names, id);
+  return symtab_get(tokens, id);
+}
+
+static char* _sanitize_ex(const char* name) {
+  size_t len = strlen(name);
+  char* out = malloc(len + 1);
+  for (size_t i = 0; i < len; i++)
+    out[i] = (name[i] == '@' || name[i] == '.') ? '_' : name[i];
+  out[len] = '\0';
+  return out;
+}
+
+// Simple field name dedup: mirrors _field_dedup_next in peg.c.
+typedef struct {
+  char** names;
+  int32_t count;
+  int32_t cap;
+} ExDedup;
+
+static void _exd_init(ExDedup* d) { memset(d, 0, sizeof(*d)); }
+static void _exd_free(ExDedup* d) {
+  for (int32_t i = 0; i < d->count; i++)
+    free(d->names[i]);
+  free(d->names);
+}
+static char* _exd_next(ExDedup* d, const char* base) {
+  int32_t occ = 0;
+  for (int32_t i = 0; i < d->count; i++)
+    if (strcmp(d->names[i], base) == 0)
+      occ++;
+  if (d->count >= d->cap) {
+    d->cap = d->cap ? d->cap * 2 : 8;
+    d->names = realloc(d->names, (size_t)d->cap * sizeof(char*));
+  }
+  d->names[d->count++] = strdup(base);
+  if (occ == 0)
+    return strdup(base);
+  char buf[256];
+  snprintf(buf, sizeof(buf), "%s$%d", base, occ);
+  return strdup(buf);
+}
+
+static char* _field_base(Symtab* tokens, Symtab* scope_names, Symtab* rule_names, PegUnit* u) {
+  if (u->kind == PEG_TERM)
+    return _sanitize_ex(_term_name_ex(tokens, scope_names, u->id));
+  if (u->kind == PEG_CALL)
+    return strdup(symtab_get(rule_names, u->id));
+  return strdup("_unknown");
+}
+
+// Emit print statements for children of a SEQ.
+static void _gen_print_children(FILE* f, const char* prefix, PegUnit* children, int32_t size, Symtab* tokens,
+                                Symtab* scope_names, Symtab* rule_names, ExDedup* fd) {
+  for (int32_t i = 0; i < size; i++) {
+    PegUnit* u = &children[i];
+    bool is_link = (u->multiplier == '*' || u->multiplier == '+');
+    bool is_opt = (u->multiplier == '?');
+
+    if (u->kind == PEG_TERM) {
+      char* base = _field_base(tokens, scope_names, rule_names, u);
+      char* fname = _exd_next(fd, base);
+      bool is_scope = _is_scope_term_ex(scope_names, u->id);
+      const char* tname = _term_name_ex(tokens, scope_names, u->id);
+      if (is_scope) {
+        int32_t rid = symtab_find(rule_names, tname);
+        if (rid >= 0) {
+          if (is_link) {
+            fprintf(f, "    for (PegLink _l = _n.%s; %s_has_next(_l); _l = %s_get_next(_l))\n", fname, prefix,
+                    prefix);
+            fprintf(f, "      print_%s(_l.elem, depth + 1);\n", tname);
+          } else {
+            fprintf(f, "    print_%s(_n.%s, depth + 1);\n", tname, fname);
+          }
+        }
+      } else if (is_link) {
+        fprintf(f, "    for (PegLink _l = _n.%s; %s_has_next(_l); _l = %s_get_next(_l)) {\n", fname, prefix, prefix);
+        fprintf(f, "      _indent(depth + 1); printf(\"%s\\n\");\n", tname);
+        fprintf(f, "    }\n");
+      } else {
+        fprintf(f, "    _indent(depth + 1); printf(\"%s\\n\");\n", tname);
+      }
+      free(fname);
+      free(base);
+    } else if (u->kind == PEG_CALL) {
+      const char* callee = symtab_get(rule_names, u->id);
+      char* fname = _exd_next(fd, callee);
+      if (is_link) {
+        fprintf(f, "    for (PegLink _l = _n.%s; %s_has_next(_l); _l = %s_get_next(_l))\n", fname, prefix, prefix);
+        fprintf(f, "      print_%s(_l.elem, depth + 1);\n", callee);
+      } else if (is_opt) {
+        fprintf(f, "    if (%s_peg_size(_n.%s) > 0)\n", prefix, fname);
+        fprintf(f, "      print_%s(_n.%s, depth + 1);\n", callee, fname);
+      } else {
+        fprintf(f, "    print_%s(_n.%s, depth + 1);\n", callee, fname);
+      }
+      free(fname);
+    }
+  }
+}
+
+static void _gen_example_c(FILE* f, const char* prefix, ParseState* ps) {
+  Symtab* tokens = &ps->tokens;
+  Symtab* scope_names = &ps->scope_names;
+  Symtab* rule_names = &ps->rule_names;
+  PegRules rules = ps->peg_rules;
+
   fprintf(f, "#include <stdint.h>\n");
   fprintf(f, "#include <stdio.h>\n");
   fprintf(f, "#include <string.h>\n\n");
   fprintf(f, "#define NEST_RT_IMPLEMENTATION\n");
   fprintf(f, "#include \"%s.h\"\n\n", prefix);
+
   fprintf(f, "int32_t %s_next_cp(void* src, int32_t cp_off) {\n", prefix);
   fprintf(f, "  return ((const unsigned char*)src)[cp_off];\n");
   fprintf(f, "}\n\n");
 
+  // tok_name
   fprintf(f, "static const char* tok_name(int32_t id) {\n");
   fprintf(f, "  switch (id) {\n");
   int32_t n_tokens = symtab_count(tokens);
   for (int32_t i = 0; i < n_tokens; i++) {
     int32_t tok_id = i + tokens->start_num;
     const char* name = symtab_get(tokens, tok_id);
-    if (strncmp(name, "@lit.", 5) == 0) {
+    if (strncmp(name, "@lit.", 5) == 0)
       continue;
-    }
     fprintf(f, "  case TOK_");
     for (const char* s = name + 1; *s; s++) {
       char c = toupper((unsigned char)*s);
-      if (!isalnum((unsigned char)*s)) {
+      if (!isalnum((unsigned char)*s))
         c = '_';
-      }
       fputc(c, f);
     }
     fprintf(f, ": return \"%s\";\n", name);
@@ -201,6 +314,125 @@ static void _gen_example_c(FILE* f, const char* prefix, Symtab* tokens) {
   fprintf(f, "  }\n");
   fprintf(f, "}\n\n");
 
+  fprintf(f, "static void _indent(int depth) {\n");
+  fprintf(f, "  for (int i = 0; i < depth; i++) printf(\"  \");\n");
+  fprintf(f, "}\n\n");
+
+  // Token list printer: walk chunks recursively, scope tokens recurse with depth+1
+  fprintf(f, "static void print_tokens(TokenTree* tt, TokenChunk* chunk, int depth, const char* input) {\n");
+  fprintf(f, "  int32_t n = (int32_t)darray_size(chunk->tokens);\n");
+  fprintf(f, "  for (int32_t i = 0; i < n; i++) {\n");
+  fprintf(f, "    Token* tok = &chunk->tokens[i];\n");
+  fprintf(f, "    if (tok->term_id < SCOPE_COUNT) {\n");
+  fprintf(f, "      print_tokens(tt, &tt->table[tok->chunk_id], depth + 1, input);\n");
+  fprintf(f, "    } else {\n");
+  fprintf(f, "      _indent(depth);\n");
+  fprintf(f, "      printf(\"%%s \\\"%%.*s\\\"\\n\", tok_name(tok->term_id), tok->cp_size, input + tok->cp_start);\n");
+  fprintf(f, "    }\n");
+  fprintf(f, "  }\n");
+  fprintf(f, "}\n\n");
+
+  // Forward declarations for print_<rule>
+  size_t n_rules = darray_size(rules);
+  for (size_t i = 0; i < n_rules; i++) {
+    const char* rname = symtab_get(rule_names, rules[i].global_id);
+    fprintf(f, "static void print_%s(PegRef ref, int depth);\n", rname);
+  }
+  fprintf(f, "\n");
+
+  // Per-rule print functions
+  for (size_t ri = 0; ri < n_rules; ri++) {
+    PegRule* rule = &rules[ri];
+    const char* rname = symtab_get(rule_names, rule->global_id);
+
+    fprintf(f, "static void print_%s(PegRef ref, int depth) {\n", rname);
+    fprintf(f, "  _indent(depth); printf(\"%s\\n\");\n", rname);
+    fprintf(f, "  if (%s_peg_size(ref) <= 0) return;\n", prefix);
+    fprintf(f, "  Node_%s _n = %s_load_%s(ref);\n", rname, prefix, rname);
+
+    PegUnit* body = &rule->body;
+
+    if (body->kind == PEG_SEQ) {
+      ExDedup fd;
+      _exd_init(&fd);
+      _gen_print_children(f, prefix, body->children, (int32_t)darray_size(body->children), tokens, scope_names,
+                          rule_names, &fd);
+      _exd_free(&fd);
+    } else if (body->kind == PEG_BRANCHES) {
+      int32_t nb = (int32_t)darray_size(body->children);
+      bool all_tagged = true;
+      for (int32_t bi = 0; bi < nb; bi++)
+        if (!body->children[bi].tag)
+          all_tagged = false;
+      ExDedup fd;
+      _exd_init(&fd);
+      if (all_tagged) {
+        for (int32_t bi = 0; bi < nb; bi++) {
+          PegUnit* branch = &body->children[bi];
+          char* stag = _sanitize_ex(branch->tag);
+          fprintf(f, "  %s (_n.is.%s) {\n", bi == 0 ? "if" : "} else if", stag);
+          free(stag);
+          if (branch->kind == PEG_SEQ)
+            _gen_print_children(f, prefix, branch->children, (int32_t)darray_size(branch->children), tokens,
+                                scope_names, rule_names, &fd);
+          else
+            _gen_print_children(f, prefix, branch, 1, tokens, scope_names, rule_names, &fd);
+        }
+        fprintf(f, "  }\n");
+      } else {
+        // Untagged branches — all children share one dedup, only matched ones print.
+        for (int32_t bi = 0; bi < nb; bi++) {
+          PegUnit* branch = &body->children[bi];
+          if (branch->kind == PEG_SEQ)
+            _gen_print_children(f, prefix, branch->children, (int32_t)darray_size(branch->children), tokens,
+                                scope_names, rule_names, &fd);
+          else
+            _gen_print_children(f, prefix, branch, 1, tokens, scope_names, rule_names, &fd);
+        }
+      }
+      _exd_free(&fd);
+    } else if (body->kind == PEG_TERM) {
+      bool is_scope = _is_scope_term_ex(scope_names, body->id);
+      const char* tname = _term_name_ex(tokens, scope_names, body->id);
+      bool is_link = (body->multiplier == '*' || body->multiplier == '+');
+      char* san = _sanitize_ex(tname);
+      if (is_scope) {
+        int32_t rid = symtab_find(rule_names, tname);
+        if (rid >= 0) {
+          if (is_link) {
+            fprintf(f, "  for (PegLink _l = _n.%s; %s_has_next(_l); _l = %s_get_next(_l))\n", san, prefix, prefix);
+            fprintf(f, "    print_%s(_l.elem, depth + 1);\n", tname);
+          } else {
+            fprintf(f, "  print_%s(_n.%s, depth + 1);\n", tname, san);
+          }
+        }
+      } else if (is_link) {
+        fprintf(f, "  for (PegLink _l = _n.%s; %s_has_next(_l); _l = %s_get_next(_l)) {\n", san, prefix, prefix);
+        fprintf(f, "    _indent(depth + 1); printf(\"%s\\n\");\n", tname);
+        fprintf(f, "  }\n");
+      } else {
+        fprintf(f, "  _indent(depth + 1); printf(\"%s\\n\");\n", tname);
+      }
+      free(san);
+    } else if (body->kind == PEG_CALL) {
+      const char* callee = symtab_get(rule_names, body->id);
+      bool is_link = (body->multiplier == '*' || body->multiplier == '+');
+      bool is_opt = (body->multiplier == '?');
+      if (is_link) {
+        fprintf(f, "  for (PegLink _l = _n.%s; %s_has_next(_l); _l = %s_get_next(_l))\n", callee, prefix, prefix);
+        fprintf(f, "    print_%s(_l.elem, depth + 1);\n", callee);
+      } else if (is_opt) {
+        fprintf(f, "  if (%s_peg_size(_n.%s) > 0)\n", prefix, callee);
+        fprintf(f, "    print_%s(_n.%s, depth + 1);\n", callee, callee);
+      } else {
+        fprintf(f, "  print_%s(_n.%s, depth + 1);\n", callee, callee);
+      }
+    }
+
+    fprintf(f, "}\n\n");
+  }
+
+  // main: lex+parse via vpa_lex (which calls PEG parsers on scope .end)
   fprintf(f, "int main(int argc, char** argv) {\n");
   fprintf(f, "  if (argc < 2) {\n");
   fprintf(f, "    fprintf(stderr, \"usage: %%s <input>\\n\", argv[0]);\n");
@@ -210,18 +442,13 @@ static void _gen_example_c(FILE* f, const char* prefix, Symtab* tokens) {
   fprintf(f, "  int32_t len = (int32_t)strlen(input);\n");
   fprintf(f, "  char* ustr = ustr_new(len, input);\n");
   fprintf(f, "  TokenTree* tt = tt_tree_new(ustr);\n");
-  fprintf(f, "  vpa_lex(input, len, tt, NULL, NULL);\n\n");
-  fprintf(f, "  int32_t n_chunks = (int32_t)darray_size(tt->table);\n");
-  fprintf(f, "  for (int32_t c = 0; c < n_chunks; c++) {\n");
-  fprintf(f, "    TokenChunk* chunk = &tt->table[c];\n");
-  fprintf(f, "    int32_t n = (int32_t)darray_size(chunk->tokens);\n");
-  fprintf(f, "    for (int32_t i = 0; i < n; i++) {\n");
-  fprintf(f, "      Token* tok = &chunk->tokens[i];\n");
-  fprintf(f, "      printf(\"%%s (id=%%d) \\\"%%.*s\\\"\\n\",\n");
-  fprintf(f, "             tok_name(tok->tok_id), tok->tok_id,\n");
-  fprintf(f, "             tok->cp_size, input + tok->cp_start);\n");
-  fprintf(f, "    }\n");
-  fprintf(f, "  }\n\n");
+  fprintf(f, "  ParseContext ctx = {0};\n");
+  fprintf(f, "  vpa_lex((void*)input, len, tt, NULL, &ctx);\n\n");
+  fprintf(f, "  printf(\"------\\n\");\n");
+  fprintf(f, "  print_tokens(tt, tt->root, 0, input);\n");
+  fprintf(f, "  printf(\"------\\n\");\n");
+  fprintf(f, "  PegRef main_ref = {.tc = tt->root, .col = 0, .row = 0};\n");
+  fprintf(f, "  if (tt->root->value) print_main(main_ref, 0);\n\n");
   fprintf(f, "  tt_tree_del(tt, false);\n");
   fprintf(f, "  ustr_del(ustr);\n");
   fprintf(f, "  return 0;\n");
@@ -376,7 +603,7 @@ static int32_t _cmd_compile(int32_t argc, char** argv) {
       ret = -1;
       goto cleanup;
     }
-    _gen_example_c(fc, prefix, &ps->tokens);
+    _gen_example_c(fc, prefix, ps);
     fclose(fc);
   }
 

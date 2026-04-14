@@ -397,14 +397,14 @@ static void _gen_vpa_lex(VpaGenInput* input, IrWriter* w, const char* prefix) {
 // --- {prefix}_parse / {prefix}_cleanup ---
 
 // ParseResult = {PegRef, TokenTree*, ParseErrors} = {i8*, i32, i32, i8*, i8*}
-#define PARSE_RESULT_TY "{i8*, i32, i32, i8*, i8*}"
+#define PARSE_RESULT_TY "{i8*, i64, i64, i8*, i8*}"
 
 static void _gen_parse_entry(IrWriter* w, const char* prefix) {
   if (!prefix) {
     return;
   }
 
-  irwriter_declare(w, "void", "vpa_lex", "i8*, i32, i8*, i8*, i8*");
+  irwriter_declare(w, "void", "vpa_lex", "i8*, i64, i8*, i8*, i8*");
   irwriter_declare(w, "i8*", "tt_tree_new", "i8*");
   irwriter_declare(w, "i32", "ustr_size", "i8*");
 
@@ -416,12 +416,14 @@ static void _gen_parse_entry(IrWriter* w, const char* prefix) {
   free(parse_name);
   irwriter_bb(w);
   IrVal len = irwriter_call_retf(w, "i32", "ustr_size", "i8* %%src");
+  IrVal len64 = irwriter_sext(w, "i32", len, "i64");
   IrVal tt = irwriter_call_retf(w, "i8*", "tt_tree_new", "i8* %%src");
-  irwriter_call_void_fmtf(w, "vpa_lex", "i8* %%src, i32 %%r%d, i8* %%r%d, i8* null, i8* %%ctx", (int)len, (int)tt);
+  irwriter_call_void_fmtf(w, "vpa_lex", "i8* %%src, i64 %%r%d, i8* %%r%d, i8* null, i8* %%ctx", (int)len64,
+                           (int)tt);
 
   IrVal r0 = irwriter_insertvalue(w, PARSE_RESULT_TY, -1, "i8*", irwriter_imm(w, "null"), 0);
-  IrVal r1 = irwriter_insertvalue(w, PARSE_RESULT_TY, r0, "i32", irwriter_imm_int(w, 0), 1);
-  IrVal r2 = irwriter_insertvalue(w, PARSE_RESULT_TY, r1, "i32", irwriter_imm_int(w, 0), 2);
+  IrVal r1 = irwriter_insertvalue(w, PARSE_RESULT_TY, r0, "i64", irwriter_imm_int(w, 0), 1);
+  IrVal r2 = irwriter_insertvalue(w, PARSE_RESULT_TY, r1, "i64", irwriter_imm_int(w, 0), 2);
   IrVal r3 = irwriter_insertvalue(w, PARSE_RESULT_TY, r2, "i8*", tt, 3);
   IrVal r4 = irwriter_insertvalue(w, PARSE_RESULT_TY, r3, "i8*", irwriter_imm(w, "null"), 4);
   irwriter_ret(w, PARSE_RESULT_TY, r4);
@@ -525,8 +527,10 @@ static void _gen_header(VpaGenInput* input, HeaderWriter* hw, int32_t n_actions,
   hw_raw(hw, "typedef ParseError* ParseErrors;\n");
   hw_blank(hw);
 
-  // PegRef (shared type, also used by PEG header)
-  hw_raw(hw, "typedef struct {\n  void* tc;\n  int64_t col;\n  int64_t row;\n} PegRef;\n");
+  // PegRef — already defined by PEG header when PEG rules are present; guarded to avoid redefinition.
+  hw_raw(hw, "#ifndef _NEST_PEGREF\n#define _NEST_PEGREF\n");
+  hw_raw(hw, "typedef struct {\n  TokenChunk* tc;\n  int64_t col;\n  int64_t row;\n} PegRef;\n");
+  hw_raw(hw, "#endif\n");
   hw_blank(hw);
 
   // ParseResult
@@ -550,7 +554,7 @@ static void _gen_header(VpaGenInput* input, HeaderWriter* hw, int32_t n_actions,
   hw_blank(hw);
 
   // extern declarations
-  hw_raw(hw, "extern void vpa_lex(void* src, int32_t len, void* tt, void* errors, void* ctx);\n");
+  hw_raw(hw, "extern void vpa_lex(void* src, int64_t len, void* tt, void* errors, void* ctx);\n");
   hw_blank(hw);
 
   if (prefix) {
