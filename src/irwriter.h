@@ -63,7 +63,6 @@ IrVal irwriter_next_reg(IrWriter* w);
 void irwriter_emit_val(IrWriter* w, IrVal val);
 void irwriter_emit_label(IrWriter* w, IrLabel label);
 
-IrVal irwriter_phi2(IrWriter* w, const char* ty, IrVal v1, IrLabel bb1, IrVal v2, IrLabel bb2);
 IrVal irwriter_sext(IrWriter* w, const char* from_ty, IrVal val, const char* to_ty);
 
 void irwriter_type_def(IrWriter* w, const char* name, const char* body);

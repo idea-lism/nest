@@ -20,7 +20,7 @@
 - `src/re.c`, `src/aut.c`, `src/irwriter.c`: regex -> automata -> LLVM IR pipeline.
 - `src/parse_gen.c`: build-time generated lexers for `.nest` syntax.
 - `src/parse.c`: parses `.nest` sources and owns parser state/error reporting.
-- `src/peg.c`, `src/peg_ir.c`: PEG analysis and code generation.
+- `src/peg_analyze.c`, `src/peg_gen.c`, `src/peg_ir.c`: PEG analysis and code generation.
 - `src/vpa.c`: visibly pushdown lexer/parser pieces.
 - `src/coloring.c`, `src/graph.c`: graph coloring for PEG memoization layout.
 - `src/ustr.c`, `src/bitset.c`, `src/darray.c`: reusable runtime/data structures.
@@ -38,7 +38,7 @@
 
 - Regex / automata work: `specs/re.md`, `specs/aut.md`, `specs/re_ir.md`, `specs/irwriter.md`
 - Parser frontend work: `specs/parse.md`, `specs/parse_gen.md`, `specs/post_process.md`
-- PEG work: `specs/peg.md`, `specs/peg_ir.md`, `specs/coloring.md`
+- PEG work: `specs/peg_analyze.md`, `specs/peg_gen.md`, `specs/peg_ir.md`, `specs/coloring.md`
 - CLI / build / tests: `specs/cli.md`, `specs/building.md`, `specs/test.md`
 - Strings / containers: `specs/ustr.md`, `specs/bitset.md`, `specs/darray.md`
 
@@ -100,7 +100,8 @@ Common single-test binaries:
 ```sh
 build/debug/test_re
 build/debug/test_parse
-build/debug/test_peg
+build/debug/test_peg_analyze
+build/debug/test_peg_gen
 build/debug/test_coloring
 ```
 

@@ -52,6 +52,8 @@ typedef struct {
   int32_t global_id;
   // scope_id = symtab_intern(scope_names, name)
   int32_t scope_id; // -1 for non-scope
+  int32_t source_line; // line in .nest file (for LLVM IR debug info), 0 = unknown
+  int32_t source_col;
   PegUnit body;
 } PegRule;
 
@@ -145,6 +147,8 @@ struct ScopeClosure {
   // each rule is named: "{scope_name}${rule_name}", can be used as IR label
   Symtab scoped_rule_names;
   ScopedRules scoped_rules; // defined rules
+  int32_t source_line; // line in .nest file (from PegRule), for LLVM IR debug info
+  int32_t source_col;
 
   // after analysis below
   int64_t bits_bucket_size;
@@ -296,11 +300,39 @@ struct ScopedRule {
 
 And we also update `ScopeClosure.bits_bucket_size = bucket_count_after_alloc` and `ScopeClosure.slots_size = segment_count`, so the runtime `Col${scope_name}` will have this packed layout.
 
+# Node field layout
+
+After all analysis passes, compute `NodeField` layout for each `ScopedRule` with `original_global_id >= 0`. This precomputes all information codegen needs to emit `Node_xxx` structs and loader functions, so codegen doesn't need to walk the original `PegUnit` tree.
+
+```c
+typedef enum {
+  NODE_ADVANCE_NONE = 0, // link field, no cursor advance
+  NODE_ADVANCE_ONE,      // term, advance cursor by 1
+  NODE_ADVANCE_SLOT,     // call/branches, advance cursor by slot value
+} NodeAdvanceKind;
+
+typedef struct {
+  char* name;               // sanitized, deduped (owned)
+  bool is_link;             // PegLink vs PegRef
+  bool is_scope;            // term refers to a scope
+  int32_t ref_row;          // PegRef.row or PegLink.elem.row
+  int32_t rhs_row;          // PegLink interlace rhs row (-1 for none)
+  NodeAdvanceKind advance;  // how to advance cursor after this field
+  int32_t advance_slot_row; // valid when advance == NODE_ADVANCE_SLOT
+} NodeField;
+
+typedef NodeField* NodeFields; // darray
+```
+
+This is stored in `ScopedRule.node_fields` (NULL for generated sub-rules).
+
+Field names are sanitized (`@` and `.` replaced with `_`) and deduplicated (second occurrence becomes `name$1`, third `name$2`, etc.).
+
 Code generation and user API are specified in [peg_gen](peg_gen.md).
 
 # Output
 
-`peg_analyze` returns a [PegGenInput](peg_gen.md) struct for code generation.
+`peg_analyze` returns a [PegGenInput](peg_gen.md) struct for code generation. Call `peg_analyze_free()` to release the analyzed closures when done.
 
 # Acceptance criteria
 

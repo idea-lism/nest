@@ -40,6 +40,9 @@ typedef struct {
 
   // see the `action` rule in bootstrap.nest and numbering in parse.md
   VpaActionUnits action_units;
+
+  int32_t source_line; // line in .nest file (for LLVM IR debug info), 0 = unknown
+  int32_t source_col;
 } VpaUnit;
 
 // use `VpaUnits` when we mean a darray
@@ -51,7 +54,9 @@ typedef struct {
   VpaUnit leader;
   VpaUnits children;
   bool has_parser;
-  bool is_macro; // parse-time: macro rule, removed after inlining
+  bool is_macro;       // parse-time: macro rule, removed after inlining
+  int32_t source_line; // line in .nest file (for LLVM IR debug info), 0 = unknown
+  int32_t source_col;
 } VpaScope;
 
 typedef struct {

@@ -174,16 +174,18 @@ static bool _is_scope_term_ex(Symtab* scope_names, int32_t id) {
 }
 
 static const char* _term_name_ex(Symtab* tokens, Symtab* scope_names, int32_t id) {
-  if (_is_scope_term_ex(scope_names, id))
+  if (_is_scope_term_ex(scope_names, id)) {
     return symtab_get(scope_names, id);
+  }
   return symtab_get(tokens, id);
 }
 
 static char* _sanitize_ex(const char* name) {
   size_t len = strlen(name);
   char* out = malloc(len + 1);
-  for (size_t i = 0; i < len; i++)
+  for (size_t i = 0; i < len; i++) {
     out[i] = (name[i] == '@' || name[i] == '.') ? '_' : name[i];
+  }
   out[len] = '\0';
   return out;
 }
@@ -197,32 +199,38 @@ typedef struct {
 
 static void _exd_init(ExDedup* d) { memset(d, 0, sizeof(*d)); }
 static void _exd_free(ExDedup* d) {
-  for (int32_t i = 0; i < d->count; i++)
+  for (int32_t i = 0; i < d->count; i++) {
     free(d->names[i]);
+  }
   free(d->names);
 }
 static char* _exd_next(ExDedup* d, const char* base) {
   int32_t occ = 0;
-  for (int32_t i = 0; i < d->count; i++)
-    if (strcmp(d->names[i], base) == 0)
+  for (int32_t i = 0; i < d->count; i++) {
+    if (strcmp(d->names[i], base) == 0) {
       occ++;
+    }
+  }
   if (d->count >= d->cap) {
     d->cap = d->cap ? d->cap * 2 : 8;
     d->names = realloc(d->names, (size_t)d->cap * sizeof(char*));
   }
   d->names[d->count++] = strdup(base);
-  if (occ == 0)
+  if (occ == 0) {
     return strdup(base);
+  }
   char buf[256];
   snprintf(buf, sizeof(buf), "%s$%d", base, occ);
   return strdup(buf);
 }
 
 static char* _field_base(Symtab* tokens, Symtab* scope_names, Symtab* rule_names, PegUnit* u) {
-  if (u->kind == PEG_TERM)
+  if (u->kind == PEG_TERM) {
     return _sanitize_ex(_term_name_ex(tokens, scope_names, u->id));
-  if (u->kind == PEG_CALL)
+  }
+  if (u->kind == PEG_CALL) {
     return strdup(symtab_get(rule_names, u->id));
+  }
   return strdup("_unknown");
 }
 
@@ -243,8 +251,7 @@ static void _gen_print_children(FILE* f, const char* prefix, PegUnit* children, 
         int32_t rid = symtab_find(rule_names, tname);
         if (rid >= 0) {
           if (is_link) {
-            fprintf(f, "    for (PegLink _l = _n.%s; %s_has_next(_l); _l = %s_get_next(_l))\n", fname, prefix,
-                    prefix);
+            fprintf(f, "    for (PegLink _l = _n.%s; %s_has_next(_l); _l = %s_get_next(_l))\n", fname, prefix, prefix);
             fprintf(f, "      print_%s(_l.elem, depth + 1);\n", tname);
           } else {
             fprintf(f, "    print_%s(_n.%s, depth + 1);\n", tname, fname);
@@ -299,13 +306,15 @@ static void _gen_example_c(FILE* f, const char* prefix, ParseState* ps) {
   for (int32_t i = 0; i < n_tokens; i++) {
     int32_t tok_id = i + tokens->start_num;
     const char* name = symtab_get(tokens, tok_id);
-    if (strncmp(name, "@lit.", 5) == 0)
+    if (strncmp(name, "@lit.", 5) == 0) {
       continue;
+    }
     fprintf(f, "  case TOK_");
     for (const char* s = name + 1; *s; s++) {
       char c = toupper((unsigned char)*s);
-      if (!isalnum((unsigned char)*s))
+      if (!isalnum((unsigned char)*s)) {
         c = '_';
+      }
       fputc(c, f);
     }
     fprintf(f, ": return \"%s\";\n", name);
@@ -362,9 +371,11 @@ static void _gen_example_c(FILE* f, const char* prefix, ParseState* ps) {
     } else if (body->kind == PEG_BRANCHES) {
       int32_t nb = (int32_t)darray_size(body->children);
       bool all_tagged = true;
-      for (int32_t bi = 0; bi < nb; bi++)
-        if (!body->children[bi].tag)
+      for (int32_t bi = 0; bi < nb; bi++) {
+        if (!body->children[bi].tag) {
           all_tagged = false;
+        }
+      }
       ExDedup fd;
       _exd_init(&fd);
       if (all_tagged) {
@@ -373,22 +384,24 @@ static void _gen_example_c(FILE* f, const char* prefix, ParseState* ps) {
           char* stag = _sanitize_ex(branch->tag);
           fprintf(f, "  %s (_n.is.%s) {\n", bi == 0 ? "if" : "} else if", stag);
           free(stag);
-          if (branch->kind == PEG_SEQ)
+          if (branch->kind == PEG_SEQ) {
             _gen_print_children(f, prefix, branch->children, (int32_t)darray_size(branch->children), tokens,
                                 scope_names, rule_names, &fd);
-          else
+          } else {
             _gen_print_children(f, prefix, branch, 1, tokens, scope_names, rule_names, &fd);
+          }
         }
         fprintf(f, "  }\n");
       } else {
         // Untagged branches — all children share one dedup, only matched ones print.
         for (int32_t bi = 0; bi < nb; bi++) {
           PegUnit* branch = &body->children[bi];
-          if (branch->kind == PEG_SEQ)
+          if (branch->kind == PEG_SEQ) {
             _gen_print_children(f, prefix, branch->children, (int32_t)darray_size(branch->children), tokens,
                                 scope_names, rule_names, &fd);
-          else
+          } else {
             _gen_print_children(f, prefix, branch, 1, tokens, scope_names, rule_names, &fd);
+          }
         }
       }
       _exd_free(&fd);
@@ -559,14 +572,14 @@ static int32_t _cmd_compile(int32_t argc, char** argv) {
     goto cleanup;
   }
 
-  int memoize_mode = MEMO_SHARED;
+  int memoize_mode = MEMOIZE_SHARED;
   if (arg_m) {
     if (strcmp(arg_m, "none") == 0) {
-      memoize_mode = MEMO_NONE;
+      memoize_mode = MEMOIZE_NONE;
     } else if (strcmp(arg_m, "naive") == 0) {
-      memoize_mode = MEMO_NAIVE;
+      memoize_mode = MEMOIZE_NAIVE;
     } else if (strcmp(arg_m, "shared") == 0) {
-      memoize_mode = MEMO_SHARED;
+      memoize_mode = MEMOIZE_SHARED;
     } else {
       fprintf(stderr, "nest: unknown memoize mode: %s\n", arg_m);
       ret = -1;
@@ -574,17 +587,21 @@ static int32_t _cmd_compile(int32_t argc, char** argv) {
     }
   }
   if (verbose) {
-    fprintf(stderr, "[nest] peg_gen\n");
+    fprintf(stderr, "[nest] peg_analyze\n");
   }
-  peg_gen(
-      &(PegGenInput){
+  PegGenInput gen_input = peg_analyze(
+      &(PegAnalyzeInput){
           .rules = ps->peg_rules,
           .tokens = ps->tokens,
           .scope_names = ps->scope_names,
           .rule_names = ps->rule_names,
           .verbose = verbose,
       },
-      hw, w, memoize_mode, prefix);
+      memoize_mode, prefix);
+  if (verbose) {
+    fprintf(stderr, "[nest] peg_gen\n");
+  }
+  peg_gen(&gen_input, hw, w);
   if (verbose) {
     fprintf(stderr, "[nest] vpa_gen\n");
   }
@@ -607,6 +624,8 @@ static int32_t _cmd_compile(int32_t argc, char** argv) {
     _gen_example_c(fc, prefix, ps);
     fclose(fc);
   }
+
+  peg_analyze_free(&gen_input);
 
 cleanup:
   irwriter_end(w);

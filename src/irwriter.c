@@ -451,20 +451,6 @@ void irwriter_emit_val(IrWriter* w, IrVal val) { _emit_val(w->out, w->imms, val)
 
 void irwriter_emit_label(IrWriter* w, IrLabel label) { _emit_label(w->out, w->labels, label); }
 
-IrVal irwriter_phi2(IrWriter* w, const char* ty, IrVal v1, IrLabel bb1, IrVal v2, IrLabel bb2) {
-  IrVal r = _next_reg(w);
-  fprintf(w->out, "  %%r%d = phi %s [ ", (int)r, ty);
-  _emit_val(w->out, w->imms, v1);
-  fprintf(w->out, ", %%");
-  _emit_label(w->out, w->labels, bb1);
-  fprintf(w->out, " ], [ ");
-  _emit_val(w->out, w->imms, v2);
-  fprintf(w->out, ", %%");
-  _emit_label(w->out, w->labels, bb2);
-  fprintf(w->out, " ]\n");
-  return r;
-}
-
 IrVal irwriter_sext(IrWriter* w, const char* from_ty, IrVal val, const char* to_ty) {
   IrVal r = _next_reg(w);
   fprintf(w->out, "  %%r%d = sext %s ", (int)r, from_ty);

@@ -38,6 +38,9 @@ typedef struct {
   // action_unit_id > 0: maps to token_id
   // action_unit_id <= 0: maps to -hook_id
   VpaActionUnits action_units;
+
+  int32_t source_line; // line in .nest file (for LLVM IR debug info), 0 = unknown
+  int32_t source_col;
 } VpaUnit;
 
 // use `VpaUnits` when we mean a darray
@@ -50,6 +53,8 @@ typedef struct {
   VpaUnits children;
   bool is_macro; // after pp_inline_macros no macro scope is left
   bool has_parser;
+  int32_t source_line; // line in .nest file (for LLVM IR debug info), 0 = unknown
+  int32_t source_col;
 } VpaScope;
 
 typedef struct {

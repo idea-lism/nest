@@ -653,6 +653,9 @@ static bool _parse_scope_line(ParseState* ps, TokenChunk* chunk, int32_t* tpos, 
   }
 
   VpaUnit u = {0};
+  Location loc = tt_locate(ps->tree, t->cp_start);
+  u.source_line = loc.line;
+  u.source_col = loc.col;
   if (t->term_id == SCOPE_RE) {
     if (!_consume_re(ps, chunk, tpos, &u)) {
       return false;
@@ -724,7 +727,8 @@ static bool _parse_lit_scope(ParseState* ps, TokenChunk* chunk, VpaScope* scope)
     ReIr re = (ReIr)sc->value;
     sc->value = NULL;
 
-    VpaUnit u = {.kind = VPA_RE, .re = re};
+    Location loc = tt_locate(ps->tree, t->cp_start);
+    VpaUnit u = {.kind = VPA_RE, .re = re, .source_line = loc.line, .source_col = loc.col};
     int32_t tok_id = symtab_intern_f(&ps->tokens, "@lit.%s", sc->aux_value);
     free(sc->aux_value);
     sc->aux_value = NULL;
@@ -844,6 +848,9 @@ static bool _parse_vpa_rule(ParseState* ps, TokenChunk* chunk, int32_t* tpos) {
   }
 
   VpaScope* scope = _new_scope(ps, _tok_str(ps, name));
+  Location loc = tt_locate(ps->tree, name->cp_start);
+  scope->source_line = loc.line;
+  scope->source_col = loc.col;
 
   Token* t = _peek(chunk, *tpos);
   if (!t) {
@@ -910,6 +917,9 @@ static bool _parse_vpa_module_rule(ParseState* ps, TokenChunk* chunk, int32_t* t
   }
 
   VpaScope* scope = _new_scope(ps, _tok_str(ps, name));
+  Location loc = tt_locate(ps->tree, name->cp_start);
+  scope->source_line = loc.line;
+  scope->source_col = loc.col;
   scope->is_macro = true;
 
   Token* t = _peek(chunk, *tpos);
@@ -1151,7 +1161,12 @@ static bool _parse_peg_rule(ParseState* ps, TokenChunk* chunk, int32_t* tpos) {
     ps->peg_rules = darray_new(sizeof(PegRule), 0);
   }
   int32_t gid = _intern_tok(&ps->rule_names, ps->src, name_tok);
-  darray_push(ps->peg_rules, ((PegRule){.global_id = gid, .scope_id = -1, .body = {.kind = PEG_SEQ}}));
+  Location loc = tt_locate(ps->tree, name_tok->cp_start);
+  darray_push(ps->peg_rules, ((PegRule){.global_id = gid,
+                                        .scope_id = -1,
+                                        .source_line = loc.line,
+                                        .source_col = loc.col,
+                                        .body = {.kind = PEG_SEQ}}));
   return _parse_seq(ps, chunk, tpos, &ps->peg_rules[darray_size(ps->peg_rules) - 1].body);
 }
 

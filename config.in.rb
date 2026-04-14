@@ -50,8 +50,13 @@ exe "test_peg_ir",
   deps: %w[ustr],
   ext_libs: kissat
 
-exe "test_peg",
-  srcs: base_lean + %w[test/test_peg.c test/compat.c],
+exe "test_peg_analyze",
+  srcs: base_lean + %w[test/test_peg_analyze.c test/compat.c],
+  deps: %w[ustr],
+  ext_libs: kissat
+
+exe "test_peg_gen",
+  srcs: base_lean + %w[test/test_peg_gen.c test/compat.c],
   deps: %w[ustr],
   ext_libs: kissat
 

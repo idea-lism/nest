@@ -99,11 +99,13 @@ In the end the memoize table is associated to each `TokenChunk`.
 
 When parse succeeds, VPA will return a PegRef for `main` rule.
 
+Node struct fields and loader code are generated from precomputed `ScopedRule.node_fields` (see [peg_analyze](peg_analyze.md)). Each `NodeField` describes one struct field with its name, type (PegRef vs PegLink), and per-scope slot row assignments for the loader's cursor advancement.
+
 ```c
 typedef struct {
   TokenChunk* tc;
   int64_t col;
-  int64_t row;
+  int64_t row; // absolute i32 row in { i64 bits[]; i32 slots[] }
 } PegRef;
 
 // for multiplier/interlaced rules

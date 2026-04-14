@@ -1,4 +1,4 @@
-// specs/peg.md
+// specs/peg_analyze.md, specs/peg_gen.md
 #pragma once
 
 #include "bitset.h"
@@ -10,7 +10,7 @@
 #include <stdbool.h>
 #include <stdint.h>
 
-// --- PEG input types (produced by parser, consumed by peg_gen) ---
+// --- PEG input types (produced by parser, consumed by peg_analyze) ---
 
 typedef enum {
   PEG_CALL = 1,
@@ -39,7 +39,9 @@ struct PegUnit {
 
 typedef struct {
   int32_t global_id;
-  int32_t scope_id; // -1 for non-scope
+  int32_t scope_id;    // -1 for non-scope
+  int32_t source_line; // line in .nest file (for LLVM IR debug info), 0 = unknown
+  int32_t source_col;
   PegUnit body;
 } PegRule;
 
@@ -50,10 +52,10 @@ typedef struct {
   Symtab tokens;      // owned by ParseState
   Symtab scope_names; // owned by ParseState
   Symtab rule_names;  // owned by ParseState
-  int32_t verbose;
-} PegGenInput;
+  int verbose;
+} PegAnalyzeInput;
 
-// --- Internal types for code generation ---
+// --- Scoped unit types (produced by analysis) ---
 
 typedef enum {
   SCOPED_UNIT_CALL = 1,
@@ -90,11 +92,34 @@ struct ScopedUnit {
   bool nullable;
 };
 
+// --- Node field layout (precomputed by analysis for codegen) ---
+
+typedef enum {
+  NODE_ADVANCE_NONE = 0, // link field, no cursor advance
+  NODE_ADVANCE_ONE,      // term, advance cursor by 1
+  NODE_ADVANCE_SLOT,     // call/branches, advance cursor by slot value
+} NodeAdvanceKind;
+
+typedef struct {
+  char* name;               // sanitized, deduped (owned)
+  bool is_link;             // PegLink vs PegRef
+  bool is_scope;            // term refers to a scope
+  int32_t ref_row;          // PegRef.row or PegLink.elem.row
+  int32_t rhs_row;          // PegLink interlace rhs row (-1 for none)
+  NodeAdvanceKind advance;  // how to advance cursor after this field
+  int32_t advance_slot_row; // valid when advance == NODE_ADVANCE_SLOT
+} NodeField;
+
+typedef NodeField* NodeFields; // darray
+
 typedef struct {
   const char* scoped_rule_name; // not owned
   ScopedUnit body;              // tree clone
   Symtab tags;                  // total tags for this rule
   int32_t original_global_id;   // -1 for generated sub-rules
+
+  // node field layout (precomputed, NULL for generated sub-rules)
+  NodeFields node_fields;
 
   // tag bit allocation
   uint64_t tag_bit_index;
@@ -120,6 +145,8 @@ typedef ScopedRule* ScopedRules; // darray
 typedef struct {
   const char* scope_name;
   int32_t scope_id;
+  int32_t source_line; // line in .nest file (from PegRule), for LLVM IR debug info
+  int32_t source_col;
   Symtab scoped_rule_names;
   ScopedRules scoped_rules;
 
@@ -129,8 +156,22 @@ typedef struct {
 
 // --- Memoize modes (from cli.md) ---
 
-typedef enum { MEMO_NONE = 0, MEMO_NAIVE = 1, MEMO_SHARED = 2 } MemoMode;
+typedef enum { MEMOIZE_NONE = 0, MEMOIZE_NAIVE = 1, MEMOIZE_SHARED = 2 } MemoizeMode;
+
+// --- PEG codegen input (produced by peg_analyze, consumed by peg_gen) ---
+
+typedef struct {
+  ScopeClosure* scope_closures; // darray, fully analyzed (from peg_analyze)
+  Symtab tokens;                // forwarded from PegAnalyzeInput
+  Symtab scope_names;           // forwarded from PegAnalyzeInput
+  Symtab rule_names;            // forwarded from PegAnalyzeInput
+  int memoize_mode;
+  const char* prefix;
+  int verbose;
+} PegGenInput;
 
 // --- Public API ---
 
-void peg_gen(PegGenInput* input, HeaderWriter* hw, IrWriter* w, int memoize_mode, const char* prefix);
+PegGenInput peg_analyze(PegAnalyzeInput* input, int memoize_mode, const char* prefix);
+void peg_analyze_free(PegGenInput* result);
+void peg_gen(PegGenInput* input, HeaderWriter* hw, IrWriter* w);

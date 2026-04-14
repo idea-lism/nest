@@ -70,7 +70,6 @@ static void _gen_scope_dfa(VpaGenInput* input, IrWriter* w, VpaScope* scope, Act
 
   Aut* aut = aut_new(func_name, "vpa");
   Re* re = re_new(aut);
-  DebugInfo di = {0, 0};
 
   int32_t n_children = scope->children ? (int32_t)darray_size(scope->children) : 0;
   bool started = false;
@@ -102,6 +101,7 @@ static void _gen_scope_dfa(VpaGenInput* input, IrWriter* w, VpaScope* scope, Act
     }
     started = true;
 
+    DebugInfo di = {u->source_line, u->source_col};
     re_ir_exec(re, ir, di);
     re_action(re, aid);
   }
@@ -117,6 +117,7 @@ static void _gen_scope_dfa(VpaGenInput* input, IrWriter* w, VpaScope* scope, Act
 
   irwriter_define_startf(w, wrapper_name, "{i64, i64} @%s(i64 %%state_i64, i64 %%cp_i64)", wrapper_name);
   irwriter_bb(w);
+  irwriter_dbg(w, scope->source_line, scope->source_col);
   irwriter_rawf(w, "  %%state = trunc i64 %%state_i64 to i32\n");
   irwriter_rawf(w, "  %%cp = trunc i64 %%cp_i64 to i32\n");
 
@@ -166,6 +167,7 @@ static void _gen_dispatch(VpaGenInput* input, IrWriter* w, Actions actions) {
       w, "vpa_dispatch",
       "void @vpa_dispatch(i64 %%action_id_i64, i8* %%tt, i64 %%cp_start_i64, i64 %%cp_size_i64, i8* %%ctx)");
   irwriter_bb(w);
+  irwriter_dbg(w, 0, 0);
   irwriter_rawf(w, "  %%action_id = trunc i64 %%action_id_i64 to i32\n");
   irwriter_rawf(w, "  %%cp_start = trunc i64 %%cp_start_i64 to i32\n");
   irwriter_rawf(w, "  %%cp_size = trunc i64 %%cp_size_i64 to i32\n");
@@ -288,6 +290,7 @@ static void _gen_vpa_lex(VpaGenInput* input, IrWriter* w, const char* prefix) {
   irwriter_define_startf(w, "vpa_lex", "void @vpa_lex(i8* %%src, i64 %%len_i64, i8* %%tt, i8* %%errors, i8* %%ctx)");
 
   irwriter_bb(w);
+  irwriter_dbg(w, 0, 0);
   irwriter_rawf(w, "  %%len = trunc i64 %%len_i64 to i32\n");
 
   IrVal cp_off_ptr = irwriter_alloca(w, "i32");
@@ -423,11 +426,11 @@ static void _gen_parse_entry(IrWriter* w, const char* prefix) {
   irwriter_define_startf(w, parse_name, PARSE_RESULT_TY " @%s(i8* %%ctx, i8* %%src)", parse_name);
   free(parse_name);
   irwriter_bb(w);
+  irwriter_dbg(w, 0, 0);
   IrVal len = irwriter_call_retf(w, "i32", "ustr_size", "i8* %%src");
   IrVal len64 = irwriter_sext(w, "i32", len, "i64");
   IrVal tt = irwriter_call_retf(w, "i8*", "tt_tree_new", "i8* %%src");
-  irwriter_call_void_fmtf(w, "vpa_lex", "i8* %%src, i64 %%r%d, i8* %%r%d, i8* null, i8* %%ctx", (int)len64,
-                           (int)tt);
+  irwriter_call_void_fmtf(w, "vpa_lex", "i8* %%src, i64 %%r%d, i8* %%r%d, i8* null, i8* %%ctx", (int)len64, (int)tt);
 
   IrVal r0 = irwriter_insertvalue(w, PARSE_RESULT_TY, -1, "i8*", irwriter_imm(w, "null"), 0);
   IrVal r1 = irwriter_insertvalue(w, PARSE_RESULT_TY, r0, "i64", irwriter_imm_int(w, 0), 1);
@@ -444,6 +447,7 @@ static void _gen_parse_entry(IrWriter* w, const char* prefix) {
   irwriter_define_startf(w, cleanup_name, "void @%s(" PARSE_RESULT_TY " %%res)", cleanup_name);
   free(cleanup_name);
   irwriter_bb(w);
+  irwriter_dbg(w, 0, 0);
   irwriter_ret_void(w);
   irwriter_define_end(w);
 }
