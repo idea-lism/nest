@@ -295,8 +295,8 @@ TEST(test_iteration_helpers) {
   assert(strstr(hdr_buf, "json_has_next") != NULL);
   assert(strstr(hdr_buf, "json_get_next") != NULL);
 
-  // has_next and get_next must use tc->value, not tc directly
-  assert(strstr(hdr_buf, "((TokenChunk*)l.elem.tc)->value") != NULL);
+  // has_next and get_next must use tc->value
+  assert(strstr(hdr_buf, "l.elem.tc->value") != NULL);
 
   free(ir_buf);
   free(hdr_buf);
@@ -519,9 +519,9 @@ TEST(test_loader_decodes_from_table) {
   memcpy(body, body_start, body_len);
   body[body_len] = '\0';
 
-  // A real decoder must access _tc->value to read from the memo table
-  bool accesses_table = (strstr(body, "_tc->value") != NULL);
-  assert(accesses_table && "loader must decode from memo table via _tc->value");
+  // A real decoder must access ref.tc->value to read from the memo table
+  bool accesses_table = (strstr(body, "ref.tc->value") != NULL);
+  assert(accesses_table && "loader must decode from memo table via ref.tc->value");
 
   free(body);
   _free_gen(&g);

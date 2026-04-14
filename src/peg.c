@@ -1775,6 +1775,7 @@ void peg_gen(PegGenInput* input, HeaderWriter* hw, IrWriter* w, int memoize_mode
   }
 
   peg_ir_emit_helpers(w);
+  irwriter_type_def(w, "Token", "{i32, i32, i32, i32}");
   if (memoize_mode == MEMO_SHARED) {
     peg_ir_emit_bit_helpers(w);
   }

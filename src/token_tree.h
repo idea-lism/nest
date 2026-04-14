@@ -2,6 +2,9 @@
 
 #include <stdint.h>
 
+#ifndef _NEST_TOKEN_TYPES
+#define _NEST_TOKEN_TYPES
+
 // 16 bytes a token
 typedef struct {
   int32_t term_id; // token_id or scope_id (in the same numbering system), parse analysis should give a universal
@@ -33,6 +36,8 @@ typedef struct TokenTree {
   TokenChunk* current;
   TokenChunks table; // darray fat pointer
 } TokenTree;
+
+#endif // _NEST_TOKEN_TYPES
 
 typedef struct {
   int32_t line;

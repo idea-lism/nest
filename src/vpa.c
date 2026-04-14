@@ -120,14 +120,11 @@ static void _gen_scope_dfa(VpaGenInput* input, IrWriter* w, VpaScope* scope, Act
   irwriter_rawf(w, "  %%state = trunc i64 %%state_i64 to i32\n");
   irwriter_rawf(w, "  %%cp = trunc i64 %%cp_i64 to i32\n");
 
-  IrVal result = irwriter_call_retf(w, "{i32, i32}", func_name, "i32 %%state, i32 %%cp");
-  IrVal new_state = irwriter_extractvalue(w, "{i32, i32}", result, 0);
-  IrVal action_id = irwriter_extractvalue(w, "{i32, i32}", result, 1);
-  IrVal ns64 = irwriter_sext(w, "i32", new_state, "i64");
-  IrVal ai64 = irwriter_sext(w, "i32", action_id, "i64");
-  IrVal r0 = irwriter_insertvalue(w, "{i64, i64}", -1, "i64", ns64, 0);
-  IrVal r1 = irwriter_insertvalue(w, "{i64, i64}", r0, "i64", ai64, 1);
-  irwriter_ret(w, "{i64, i64}", r1);
+  // _dfa_* functions use the widened {i64,i64}(i64,i64) ABI
+  IrVal state64 = irwriter_sext(w, "i32", irwriter_imm(w, "%state"), "i64");
+  IrVal cp64 = irwriter_sext(w, "i32", irwriter_imm(w, "%cp"), "i64");
+  IrVal result = irwriter_call_retf(w, "{i64, i64}", func_name, "i64 %%r%d, i64 %%r%d", (int)state64, (int)cp64);
+  irwriter_ret(w, "{i64, i64}", result);
   irwriter_define_end(w);
 
   re_del(re);
@@ -329,10 +326,17 @@ static void _gen_vpa_lex(VpaGenInput* input, IrWriter* w, const char* prefix) {
     int dfa_fn_len = snprintf(NULL, 0, "_dfa_%s", input->scopes[0].name);
     char* dfa_fn = malloc((size_t)dfa_fn_len + 1);
     snprintf(dfa_fn, (size_t)dfa_fn_len + 1, "_dfa_%s", input->scopes[0].name);
-    IrVal result = irwriter_call_retf(w, "{i32, i32}", dfa_fn, "i32 %%r%d, i32 %%r%d", (int)dfa_state, (int)cp);
+    // DFA functions use {i64,i64}(i64,i64) ABI — widen i32 args and narrow results
+    IrVal state64 = irwriter_sext(w, "i32", dfa_state, "i64");
+    IrVal cp64 = irwriter_sext(w, "i32", cp, "i64");
+    IrVal result = irwriter_call_retf(w, "{i64, i64}", dfa_fn, "i64 %%r%d, i64 %%r%d", (int)state64, (int)cp64);
     free(dfa_fn);
-    IrVal new_state = irwriter_extractvalue(w, "{i32, i32}", result, 0);
-    IrVal action = irwriter_extractvalue(w, "{i32, i32}", result, 1);
+    IrVal new_state64 = irwriter_extractvalue(w, "{i64, i64}", result, 0);
+    IrVal action64 = irwriter_extractvalue(w, "{i64, i64}", result, 1);
+    irwriter_rawf(w, "  %%r%d = trunc i64 %%r%d to i32\n", irwriter_next_reg(w), (int)new_state64);
+    IrVal new_state = (IrVal)(irwriter_next_reg(w) - 1);
+    irwriter_rawf(w, "  %%r%d = trunc i64 %%r%d to i32\n", irwriter_next_reg(w), (int)action64);
+    IrVal action = (IrVal)(irwriter_next_reg(w) - 1);
 
     IrLabel has_action_bb = irwriter_label(w);
     IrLabel no_action_bb = irwriter_label(w);
@@ -374,8 +378,12 @@ static void _gen_vpa_lex(VpaGenInput* input, IrWriter* w, const char* prefix) {
   irwriter_br_cond(w, has_last, dispatch_action_bb, done_bb);
 
   irwriter_bb_at(w, dispatch_action_bb);
-  irwriter_call_void_fmtf(w, "vpa_dispatch", "i32 %%r%d, i8* %%tt, i32 %%r%d, i32 %%r%d, i8* %%ctx", (int)last_action,
-                          (int)tok_start, (int)tok_size);
+  // vpa_dispatch uses i64 ABI — widen i32 args
+  IrVal la64 = irwriter_sext(w, "i32", last_action, "i64");
+  IrVal ts64 = irwriter_sext(w, "i32", tok_start, "i64");
+  IrVal sz64 = irwriter_sext(w, "i32", tok_size, "i64");
+  irwriter_call_void_fmtf(w, "vpa_dispatch", "i64 %%r%d, i8* %%tt, i64 %%r%d, i64 %%r%d, i8* %%ctx", (int)la64,
+                          (int)ts64, (int)sz64);
 
   irwriter_store(w, "i32", match_off, cp_off_ptr);
   irwriter_store(w, "i32", match_off, token_start_ptr);
@@ -404,7 +412,7 @@ static void _gen_parse_entry(IrWriter* w, const char* prefix) {
     return;
   }
 
-  irwriter_declare(w, "void", "vpa_lex", "i8*, i64, i8*, i8*, i8*");
+  // vpa_lex is already defined in this module; no declare needed
   irwriter_declare(w, "i8*", "tt_tree_new", "i8*");
   irwriter_declare(w, "i32", "ustr_size", "i8*");
 

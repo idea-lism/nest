@@ -289,7 +289,7 @@ static void _gen_example_c(FILE* f, const char* prefix, ParseState* ps) {
   fprintf(f, "#include \"%s.h\"\n\n", prefix);
 
   fprintf(f, "int32_t %s_next_cp(void* src, int32_t cp_off) {\n", prefix);
-  fprintf(f, "  return ((const unsigned char*)src)[cp_off];\n");
+  fprintf(f, "  return ustr_cp_at((const char*)src, cp_off);\n");
   fprintf(f, "}\n\n");
 
   // tok_name
@@ -319,15 +319,16 @@ static void _gen_example_c(FILE* f, const char* prefix, ParseState* ps) {
   fprintf(f, "}\n\n");
 
   // Token list printer: walk chunks recursively, scope tokens recurse with depth+1
-  fprintf(f, "static void print_tokens(TokenTree* tt, TokenChunk* chunk, int depth, const char* input) {\n");
+  fprintf(f, "static void print_tokens(TokenTree* tt, TokenChunk* chunk, int depth) {\n");
   fprintf(f, "  int32_t n = (int32_t)darray_size(chunk->tokens);\n");
   fprintf(f, "  for (int32_t i = 0; i < n; i++) {\n");
   fprintf(f, "    Token* tok = &chunk->tokens[i];\n");
   fprintf(f, "    if (tok->term_id < SCOPE_COUNT) {\n");
-  fprintf(f, "      print_tokens(tt, &tt->table[tok->chunk_id], depth + 1, input);\n");
+  fprintf(f, "      print_tokens(tt, &tt->table[tok->chunk_id], depth + 1);\n");
   fprintf(f, "    } else {\n");
   fprintf(f, "      _indent(depth);\n");
-  fprintf(f, "      printf(\"%%s \\\"%%.*s\\\"\\n\", tok_name(tok->term_id), tok->cp_size, input + tok->cp_start);\n");
+  fprintf(f, "      UstrByteSlice sl = ustr_slice_bytes(tt->src, tok->cp_start, tok->cp_start + tok->cp_size);\n");
+  fprintf(f, "      printf(\"%%s \\\"%%.*s\\\"\\n\", tok_name(tok->term_id), sl.size, sl.s);\n");
   fprintf(f, "    }\n");
   fprintf(f, "  }\n");
   fprintf(f, "}\n\n");
@@ -443,9 +444,9 @@ static void _gen_example_c(FILE* f, const char* prefix, ParseState* ps) {
   fprintf(f, "  char* ustr = ustr_new(len, input);\n");
   fprintf(f, "  TokenTree* tt = tt_tree_new(ustr);\n");
   fprintf(f, "  ParseContext ctx = {0};\n");
-  fprintf(f, "  vpa_lex((void*)input, len, tt, NULL, &ctx);\n\n");
+  fprintf(f, "  vpa_lex((void*)ustr, ustr_size(ustr), tt, NULL, &ctx);\n\n");
   fprintf(f, "  printf(\"------\\n\");\n");
-  fprintf(f, "  print_tokens(tt, tt->root, 0, input);\n");
+  fprintf(f, "  print_tokens(tt, tt->root, 0);\n");
   fprintf(f, "  printf(\"------\\n\");\n");
   fprintf(f, "  PegRef main_ref = {.tc = tt->root, .col = 0, .row = 0};\n");
   fprintf(f, "  if (tt->root->value) print_main(main_ref, 0);\n\n");

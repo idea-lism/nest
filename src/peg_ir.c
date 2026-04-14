@@ -105,7 +105,7 @@ static void _emit_term(PegIrCtx* ctx, ScopedUnit* unit, IrLabel fail_label) {
 
 IrLabel peg_ir_emit_call(PegIrCtx* ctx, const char* callee_name) {
   IrWriter* w = ctx->ir_writer;
-  IrLabel ret_label = irwriter_label_f(w, "ret_%s", callee_name);
+  IrLabel ret_label = irwriter_label(w);
 
   darray_push(ctx->ret_labels, ret_label);
 

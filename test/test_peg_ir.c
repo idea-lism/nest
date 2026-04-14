@@ -144,7 +144,7 @@ TEST(test_emit_call_blockaddress) {
   assert(strstr(out, "blockaddress(@parse_scope,"));
   assert(!strstr(out, "@current_fn"));
 
-  // blockaddress label must be a valid label, e.g. %L0 (numbered label)
+  // blockaddress label must be a valid label (numeric)
   assert(strstr(out, "blockaddress(@parse_scope, %L"));
 
   // indirectbr destination list must not be empty
