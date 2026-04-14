@@ -80,7 +80,7 @@ static void _emit_term(PegIrCtx* ctx, ScopedUnit* unit, IrLabel fail_label) {
   IrWriter* w = ctx->ir_writer;
   IrVal col_val = irwriter_load(w, "i64", ctx->col);
 
-  IrVal n_tok = irwriter_sext(w, "i32", ctx->n_tokens, "i64");
+  IrVal n_tok = irwriter_sext(w, "i32", ctx->token_size, "i64");
   IrVal in_bounds = irwriter_icmp(w, "slt", "i64", col_val, n_tok);
   IrLabel bounds_ok = irwriter_label(w);
   irwriter_br_cond(w, in_bounds, bounds_ok, fail_label);

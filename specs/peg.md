@@ -44,7 +44,7 @@ struct PegUnit {
   int32_t interlace_rhs_id; // calee rule's global_id | token id | scope id
 
   char* tag;         // (owned, may be NULL)
-  PegUnits children; // seq members or branch members
+  PegUnits children; // seq members or branch members; may be NULL (darray_size handles NULL → 0)
 };
 
 typedef struct {
@@ -205,6 +205,7 @@ struct Col${scope_name} {
 
 When memoize happens:
 - the token size of the matching rule. All slots initialized to `-1`: means we don't know the match yet.
+- in naive mode, match failure is stored as `-2` (but we don't store/check `-2` in shared mode, see details below).
 
 ## `memoize_mode=shared`
 
@@ -411,13 +412,15 @@ Tag bits can be assigned all at once, the loading function is like:
 ```c
 {prefix}_load_{normal_rule_name}(PegRef ref) {
   Node_foo $1 = {0};
-  in64_t* $table = ref.tc->value;
+  int64_t* $table = ref.tc->value;
   switch (ref.tc->scope_id) {
     case {rule_used_in_scopes[0]}: {
-      ((uint64_t*)&$1.is)[0] = ($table[{tag_bit_index}] >> {tag_bit_offset}) & {tag_bit_mask};
+      int64_t* $col = $table + ref.col * {col_size_in_i64 of this scope}
+      ((uint64_t*)&$1.is)[0] = ($col[{tag_bit_index}] >> {tag_bit_offset}) & {tag_bit_mask};
       break;
     }
     case {rule_used_in_scopes[1]}: {
+      int64_t* $col = $table + ref.col * {col_size_in_i64 of this scope}
       ... // we have different number allocations for different scopes
       break;
     }

@@ -63,8 +63,7 @@ static RuleLookup _build_rule_lookup(PegGenInput* input) {
   RuleLookup lu = {.input = input};
   lu.rule_count = symtab_count(&input->rule_names);
   lu.rule_by_gid = calloc((size_t)lu.rule_count, sizeof(PegRule*));
-  int32_t n = (int32_t)darray_size(input->rules);
-  for (int32_t i = 0; i < n; i++) {
+  for (size_t i = 0; i < darray_size(input->rules); i++) {
     int32_t idx;
     if (_rule_gid_index(&lu, input->rules[i].global_id, &idx)) {
       lu.rule_by_gid[idx] = &input->rules[i];
@@ -104,10 +103,8 @@ typedef struct {
   int32_t multiplier_num;
 } GatherCtx;
 
-// Intern a scoped rule name, ensure scoped_rules array is sized. Returns index.
-static int32_t _intern_rule(ScopeClosure* cl, const char* scope_name, const char* rule_name,
-                            int32_t original_global_id) {
-  int32_t id = symtab_intern_f(&cl->scoped_rule_names, "%s$%s", scope_name, rule_name);
+// Ensure scoped_rules array covers a symtab ID. Returns index.
+static int32_t _intern_rule_id(ScopeClosure* cl, int32_t id, int32_t original_global_id) {
   int32_t idx = id - cl->scoped_rule_names.start_num;
   while ((int32_t)darray_size(cl->scoped_rules) <= idx) {
     ScopedRule empty = {0};
@@ -118,6 +115,12 @@ static int32_t _intern_rule(ScopeClosure* cl, const char* scope_name, const char
     cl->scoped_rules[idx].original_global_id = original_global_id;
   }
   return idx;
+}
+
+static int32_t _intern_rule(ScopeClosure* cl, const char* scope_name, const char* rule_name,
+                            int32_t original_global_id) {
+  int32_t id = symtab_intern_f(&cl->scoped_rule_names, "%s$%s", scope_name, rule_name);
+  return _intern_rule_id(cl, id, original_global_id);
 }
 
 static ScopedUnit _breakdown(GatherCtx* gctx, PegUnit* unit, const char* parent_rule_name);
@@ -158,9 +161,9 @@ static ScopedUnit _breakdown(GatherCtx* gctx, PegUnit* unit, const char* parent_
   // handle multiplier: create child rule
   if (unit->multiplier) {
     gctx->multiplier_num++;
-    char* child_name = _fmt("%s$%d", parent_rule_name, gctx->multiplier_num);
-    int32_t child_idx = _intern_rule(gctx->closure, gctx->closure->scope_name, child_name, -1);
-    free(child_name);
+    int32_t child_id = symtab_intern_f(&gctx->closure->scoped_rule_names, "%s$%s$%d", gctx->closure->scope_name,
+                                       parent_rule_name, gctx->multiplier_num);
+    int32_t child_idx = _intern_rule_id(gctx->closure, child_id, -1);
 
     PegUnit lhs_copy = *unit;
     lhs_copy.multiplier = 0;
@@ -211,7 +214,7 @@ static ScopedUnit _breakdown(GatherCtx* gctx, PegUnit* unit, const char* parent_
   }
 
   if (unit->kind == PEG_SEQ) {
-    int32_t n = unit->children ? (int32_t)darray_size(unit->children) : 0;
+    int32_t n = (int32_t)darray_size(unit->children);
     if (n == 1) {
       ScopedUnit child = _breakdown(gctx, &unit->children[0], parent_rule_name);
       if (unit->children[0].tag && unit->children[0].tag[0]) {
@@ -229,17 +232,16 @@ static ScopedUnit _breakdown(GatherCtx* gctx, PegUnit* unit, const char* parent_
   }
 
   if (unit->kind == PEG_BRANCHES) {
-    int32_t n = unit->children ? (int32_t)darray_size(unit->children) : 0;
     su.kind = SCOPED_UNIT_BRANCHES;
     su.as.children = darray_new(sizeof(ScopedUnit), 0);
-    for (int32_t i = 0; i < n; i++) {
+    for (size_t i = 0; i < darray_size(unit->children); i++) {
       ScopedUnit child = _breakdown(gctx, &unit->children[i], parent_rule_name);
       if (child.kind == SCOPED_UNIT_BRANCHES) {
         // wrap nested branches in a seq child rule (spec: don't inline branches)
         gctx->multiplier_num++;
-        char* wrap_name = _fmt("%s$%d", parent_rule_name, gctx->multiplier_num);
-        int32_t wrap_idx = _intern_rule(gctx->closure, gctx->closure->scope_name, wrap_name, -1);
-        free(wrap_name);
+        int32_t wrap_id = symtab_intern_f(&gctx->closure->scoped_rule_names, "%s$%s$%d", gctx->closure->scope_name,
+                                          parent_rule_name, gctx->multiplier_num);
+        int32_t wrap_idx = _intern_rule_id(gctx->closure, wrap_id, -1);
         if (!gctx->closure->scoped_rules[wrap_idx].scoped_rule_name) {
           gctx->closure->scoped_rules[wrap_idx].scoped_rule_name = (const char*)1;
         }
@@ -275,7 +277,7 @@ static void _resolve_unit_names(ScopeClosure* cl, ScopedUnit* su) {
     break;
   case SCOPED_UNIT_SEQ:
   case SCOPED_UNIT_BRANCHES:
-    for (int32_t i = 0; i < (int32_t)darray_size(su->as.children); i++) {
+    for (size_t i = 0; i < darray_size(su->as.children); i++) {
       _resolve_unit_names(cl, &su->as.children[i]);
     }
     break;
@@ -309,12 +311,12 @@ static ScopeClosure _gather_scope_closures(RuleLookup* lu, PegRule* scope_rule) 
   cl.scoped_rules[scope_idx].body = scope_body;
 
   // resolve name pointers (symtab is now stable)
-  int32_t n_rules = (int32_t)darray_size(cl.scoped_rules);
-  for (int32_t i = 0; i < n_rules; i++) {
+  int32_t rule_size = (int32_t)darray_size(cl.scoped_rules);
+  for (int32_t i = 0; i < rule_size; i++) {
     cl.scoped_rules[i].scoped_rule_name = symtab_get(&cl.scoped_rule_names, i + cl.scoped_rule_names.start_num);
     symtab_init(&cl.scoped_rules[i].tags, 0);
   }
-  for (int32_t i = 0; i < n_rules; i++) {
+  for (int32_t i = 0; i < rule_size; i++) {
     _resolve_unit_names(&cl, &cl.scoped_rules[i].body);
   }
 
@@ -331,16 +333,13 @@ static void _alloc_tags_unit(ScopedUnit* unit, Symtab* tags, PegUnit* orig) {
   }
   // handle single-child seq inlining
   if (orig->kind == PEG_SEQ && unit->kind != SCOPED_UNIT_SEQ) {
-    int32_t n_orig = orig->children ? (int32_t)darray_size(orig->children) : 0;
-    if (n_orig == 1) {
+    if (darray_size(orig->children) == 1) {
       _alloc_tags_unit(unit, tags, &orig->children[0]);
       return;
     }
   }
   if (unit->kind == SCOPED_UNIT_BRANCHES && orig->kind == PEG_BRANCHES) {
-    int32_t n = (int32_t)darray_size(unit->as.children);
-    int32_t n_orig = orig->children ? (int32_t)darray_size(orig->children) : 0;
-    for (int32_t i = 0; i < n && i < n_orig; i++) {
+    for (size_t i = 0; i < darray_size(unit->as.children) && i < darray_size(orig->children); i++) {
       if (orig->children[i].tag && orig->children[i].tag[0]) {
         int32_t tag_id = symtab_intern(tags, orig->children[i].tag);
         unit->as.children[i].tag_bit_local_offset = tag_id - tags->start_num;
@@ -348,17 +347,14 @@ static void _alloc_tags_unit(ScopedUnit* unit, Symtab* tags, PegUnit* orig) {
     }
   }
   if (orig->kind == PEG_SEQ && unit->kind == SCOPED_UNIT_SEQ) {
-    int32_t n = (int32_t)darray_size(unit->as.children);
-    int32_t n_orig = orig->children ? (int32_t)darray_size(orig->children) : 0;
-    for (int32_t i = 0; i < n && i < n_orig; i++) {
+    for (size_t i = 0; i < darray_size(unit->as.children) && i < darray_size(orig->children); i++) {
       _alloc_tags_unit(&unit->as.children[i], tags, &orig->children[i]);
     }
   }
 }
 
 static void _alloc_tags(RuleLookup* lu, ScopeClosure* cl) {
-  int32_t n_rules = (int32_t)darray_size(cl->scoped_rules);
-  for (int32_t i = 0; i < n_rules; i++) {
+  for (size_t i = 0; i < darray_size(cl->scoped_rules); i++) {
     ScopedRule* sr = &cl->scoped_rules[i];
     if (sr->original_global_id < 0) {
       continue;
@@ -377,12 +373,12 @@ static void _alloc_tags(RuleLookup* lu, ScopeClosure* cl) {
 
 typedef struct {
   int32_t rule_idx;
-  int32_t n_tags;
+  int32_t tag_size;
 } _TagEntry;
 
 static int _cmp_tag_entry_desc(const void* a, const void* b) {
-  int32_t ta = ((const _TagEntry*)a)->n_tags;
-  int32_t tb = ((const _TagEntry*)b)->n_tags;
+  int32_t ta = ((const _TagEntry*)a)->tag_size;
+  int32_t tb = ((const _TagEntry*)b)->tag_size;
   if (ta != tb) {
     return (tb > ta) ? 1 : -1;
   }
@@ -390,16 +386,14 @@ static int _cmp_tag_entry_desc(const void* a, const void* b) {
 }
 
 static void _alloc_tag_bits(ScopeClosure* cl) {
-  int32_t n_rules = (int32_t)darray_size(cl->scoped_rules);
-
   // collect rules that have tags
   _TagEntry* entries = NULL;
-  int32_t n_entries = 0;
-  for (int32_t i = 0; i < n_rules; i++) {
+  int32_t entry_size = 0;
+  for (size_t i = 0; i < darray_size(cl->scoped_rules); i++) {
     int32_t nt = symtab_count(&cl->scoped_rules[i].tags);
     if (nt > 0) {
-      entries = realloc(entries, (size_t)(n_entries + 1) * sizeof(_TagEntry));
-      entries[n_entries++] = (_TagEntry){.rule_idx = i, .n_tags = nt};
+      entries = realloc(entries, (size_t)(entry_size + 1) * sizeof(_TagEntry));
+      entries[entry_size++] = (_TagEntry){.rule_idx = i, .tag_size = nt};
     } else {
       cl->scoped_rules[i].tag_bit_index = 0;
       cl->scoped_rules[i].tag_bit_mask = 0;
@@ -407,33 +401,33 @@ static void _alloc_tag_bits(ScopeClosure* cl) {
     }
   }
 
-  if (n_entries == 0) {
+  if (entry_size == 0) {
     cl->bits_bucket_size = 0;
     free(entries);
     return;
   }
 
-  // sort by n_tags descending (first-fit-decreasing)
-  qsort(entries, (size_t)n_entries, sizeof(_TagEntry), _cmp_tag_entry_desc);
+  // sort by tag_size descending (first-fit-decreasing)
+  qsort(entries, (size_t)entry_size, sizeof(_TagEntry), _cmp_tag_entry_desc);
 
   // greedy first-fit into 64-bit buckets
-  int32_t n_buckets = 0;
+  int32_t bucket_size = 0;
   int32_t* bucket_remaining = NULL;
 
-  for (int32_t e = 0; e < n_entries; e++) {
-    int32_t nt = entries[e].n_tags;
+  for (int32_t e = 0; e < entry_size; e++) {
+    int32_t nt = entries[e].tag_size;
     int32_t best = -1;
-    for (int32_t b = 0; b < n_buckets; b++) {
+    for (int32_t b = 0; b < bucket_size; b++) {
       if (bucket_remaining[b] >= nt) {
         best = b;
         break;
       }
     }
     if (best < 0) {
-      bucket_remaining = realloc(bucket_remaining, (size_t)(n_buckets + 1) * sizeof(int32_t));
-      bucket_remaining[n_buckets] = 64;
-      best = n_buckets;
-      n_buckets++;
+      bucket_remaining = realloc(bucket_remaining, (size_t)(bucket_size + 1) * sizeof(int32_t));
+      bucket_remaining[bucket_size] = 64;
+      best = bucket_size;
+      bucket_size++;
     }
     int32_t offset = 64 - bucket_remaining[best];
     ScopedRule* sr = &cl->scoped_rules[entries[e].rule_idx];
@@ -443,7 +437,7 @@ static void _alloc_tag_bits(ScopeClosure* cl) {
     bucket_remaining[best] -= nt;
   }
 
-  cl->bits_bucket_size = n_buckets;
+  cl->bits_bucket_size = bucket_size;
   free(entries);
   free(bucket_remaining);
 }
@@ -485,8 +479,7 @@ static void _compute_nullable(ScopeClosure* cl, ScopedRule* sr, ScopedUnit* unit
     sr->nullable = true;
     sr->min_size = 0;
     sr->max_size = 0;
-    int32_t n = (int32_t)darray_size(unit->as.children);
-    for (int32_t i = 0; i < n; i++) {
+    for (size_t i = 0; i < darray_size(unit->as.children); i++) {
       ScopedRule tmp = {0};
       _compute_nullable(cl, &tmp, &unit->as.children[i]);
       if (!tmp.nullable) {
@@ -505,8 +498,7 @@ static void _compute_nullable(ScopeClosure* cl, ScopedRule* sr, ScopedUnit* unit
     sr->nullable = false;
     sr->min_size = UINT32_MAX;
     sr->max_size = 0;
-    int32_t n = (int32_t)darray_size(unit->as.children);
-    for (int32_t i = 0; i < n; i++) {
+    for (size_t i = 0; i < darray_size(unit->as.children); i++) {
       ScopedRule tmp = {0};
       _compute_nullable(cl, &tmp, &unit->as.children[i]);
       if (tmp.nullable) {
@@ -561,14 +553,14 @@ static bool _is_unit_nullable(ScopeClosure* cl, ScopedUnit* unit) {
     return false;
   }
   case SCOPED_UNIT_SEQ:
-    for (int32_t i = 0; i < (int32_t)darray_size(unit->as.children); i++) {
+    for (size_t i = 0; i < darray_size(unit->as.children); i++) {
       if (!_is_unit_nullable(cl, &unit->as.children[i])) {
         return false;
       }
     }
     return true;
   case SCOPED_UNIT_BRANCHES:
-    for (int32_t i = 0; i < (int32_t)darray_size(unit->as.children); i++) {
+    for (size_t i = 0; i < darray_size(unit->as.children); i++) {
       if (_is_unit_nullable(cl, &unit->as.children[i])) {
         return true;
       }
@@ -599,7 +591,7 @@ static void _compute_first_set(ScopeClosure* cl, ScopedUnit* unit, Bitset* set) 
     break;
   }
   case SCOPED_UNIT_SEQ:
-    for (int32_t i = 0; i < (int32_t)darray_size(unit->as.children); i++) {
+    for (size_t i = 0; i < darray_size(unit->as.children); i++) {
       _compute_first_set(cl, &unit->as.children[i], set);
       if (!_is_unit_nullable(cl, &unit->as.children[i])) {
         break;
@@ -607,7 +599,7 @@ static void _compute_first_set(ScopeClosure* cl, ScopedUnit* unit, Bitset* set) 
     }
     break;
   case SCOPED_UNIT_BRANCHES:
-    for (int32_t i = 0; i < (int32_t)darray_size(unit->as.children); i++) {
+    for (size_t i = 0; i < darray_size(unit->as.children); i++) {
       _compute_first_set(cl, &unit->as.children[i], set);
     }
     break;
@@ -647,7 +639,7 @@ static void _compute_last_set(ScopeClosure* cl, ScopedUnit* unit, Bitset* set) {
     break;
   }
   case SCOPED_UNIT_BRANCHES:
-    for (int32_t i = 0; i < (int32_t)darray_size(unit->as.children); i++) {
+    for (size_t i = 0; i < darray_size(unit->as.children); i++) {
       _compute_last_set(cl, &unit->as.children[i], set);
     }
     break;
@@ -666,7 +658,7 @@ static void _stamp_unit_nullable(ScopeClosure* cl, ScopedUnit* unit) {
   switch (unit->kind) {
   case SCOPED_UNIT_SEQ:
   case SCOPED_UNIT_BRANCHES:
-    for (int32_t i = 0; i < (int32_t)darray_size(unit->as.children); i++) {
+    for (size_t i = 0; i < darray_size(unit->as.children); i++) {
       _stamp_unit_nullable(cl, &unit->as.children[i]);
     }
     break;
@@ -786,10 +778,10 @@ static void _alloc_slot_bits(ScopeClosure* cl) {
     }
   }
   int32_t* edges = graph_edges(g);
-  int32_t n_edges = graph_n_edges(g);
+  int32_t edge_size = graph_n_edges(g);
   ColoringResult* cr = NULL;
   for (int32_t k = 1; k <= n; k++) {
-    cr = coloring_solve(n, edges, n_edges, k, 10000, 42);
+    cr = coloring_solve(n, edges, edge_size, k, 10000, 42);
     if (cr) {
       break;
     }
@@ -824,15 +816,15 @@ static void _alloc_slot_bits(ScopeClosure* cl) {
 // some bits; tag bits for rules in that segment can use the remaining bits.
 // Rules sharing a segment share tag_bit_index/mask/offset.
 static void _alloc_shared_tag_bits(ScopeClosure* cl) {
-  int32_t n_rules = (int32_t)darray_size(cl->scoped_rules);
-  int32_t n_segments = (int32_t)cl->slots_size;
+  int32_t rule_size = (int32_t)darray_size(cl->scoped_rules);
+  int32_t segment_size = (int32_t)cl->slots_size;
 
   // count used bits per segment (from segment_mask), and max tags per segment
-  int32_t* seg_used_bits = calloc((size_t)n_segments, sizeof(int32_t));
-  int32_t* seg_max_tags = calloc((size_t)n_segments, sizeof(int32_t));
-  for (int32_t i = 0; i < n_rules; i++) {
+  int32_t* seg_used_bits = calloc((size_t)segment_size, sizeof(int32_t));
+  int32_t* seg_max_tags = calloc((size_t)segment_size, sizeof(int32_t));
+  for (int32_t i = 0; i < rule_size; i++) {
     int32_t seg = (int32_t)cl->scoped_rules[i].segment_index;
-    if (seg < n_segments) {
+    if (seg < segment_size) {
       seg_used_bits[seg] = (int32_t)__builtin_popcountll(cl->scoped_rules[i].segment_mask);
       int32_t nt = symtab_count(&cl->scoped_rules[i].tags);
       if (nt > seg_max_tags[seg]) {
@@ -841,8 +833,8 @@ static void _alloc_shared_tag_bits(ScopeClosure* cl) {
     }
   }
 
-  int64_t next_bucket = n_segments; // first bucket after segment buckets
-  for (int32_t seg = 0; seg < n_segments; seg++) {
+  int64_t next_bucket = segment_size; // first bucket after segment buckets
+  for (int32_t seg = 0; seg < segment_size; seg++) {
     int32_t max_tags = seg_max_tags[seg];
     if (max_tags == 0) {
       continue;
@@ -862,7 +854,7 @@ static void _alloc_shared_tag_bits(ScopeClosure* cl) {
     }
     uint64_t tag_bit_mask = _tag_mask(max_tags, tag_bit_offset);
     // assign to all rules in this segment
-    for (int32_t i = 0; i < n_rules; i++) {
+    for (int32_t i = 0; i < rule_size; i++) {
       if ((int32_t)cl->scoped_rules[i].segment_index == seg) {
         cl->scoped_rules[i].tag_bit_index = tag_bit_index;
         cl->scoped_rules[i].tag_bit_offset = tag_bit_offset;
@@ -871,7 +863,7 @@ static void _alloc_shared_tag_bits(ScopeClosure* cl) {
     }
   }
   // zero out tag bits for rules with no tags
-  for (int32_t i = 0; i < n_rules; i++) {
+  for (int32_t i = 0; i < rule_size; i++) {
     if (symtab_count(&cl->scoped_rules[i].tags) == 0) {
       cl->scoped_rules[i].tag_bit_index = 0;
       cl->scoped_rules[i].tag_bit_mask = 0;
@@ -896,8 +888,7 @@ typedef struct {
 static void _field_dedup_init(FieldDedup* fd) { fd->names = darray_new(sizeof(char*), 0); }
 
 static void _field_dedup_free(FieldDedup* fd) {
-  int32_t n = (int32_t)darray_size(fd->names);
-  for (int32_t i = 0; i < n; i++) {
+  for (size_t i = 0; i < darray_size(fd->names); i++) {
     free(fd->names[i]);
   }
   darray_del(fd->names);
@@ -906,9 +897,8 @@ static void _field_dedup_free(FieldDedup* fd) {
 // Record one occurrence, return the dedup'd name (malloc'd).
 // First occurrence of "x" -> "x", second -> "x$1", third -> "x$2".
 static char* _field_dedup_next(FieldDedup* fd, const char* base_name) {
-  int32_t n = (int32_t)darray_size(fd->names);
   int32_t occ = 0;
-  for (int32_t i = 0; i < n; i++) {
+  for (size_t i = 0; i < darray_size(fd->names); i++) {
     if (strcmp(fd->names[i], base_name) == 0) {
       occ++;
     }
@@ -967,9 +957,9 @@ static int32_t _slot_row(ScopeClosure* cl, ScopedRule* sr) {
 // For PEG_TERM: always 1 token wide, no slot lookup needed.
 // For PEG_CALL without multiplier: read slot to advance cur.
 // For PEG_CALL with multiplier (PegLink): set elem.row + rhs_row from wrapper rule.
-static void _gen_child_fields_struct(HeaderWriter* hw, PegGenInput* input, PegUnit* children, int32_t n_children,
+static void _gen_child_fields_struct(HeaderWriter* hw, PegGenInput* input, PegUnit* children, int32_t child_size,
                                      FieldDedup* fd) {
-  for (int32_t i = 0; i < n_children; i++) {
+  for (int32_t i = 0; i < child_size; i++) {
     PegUnit* u = &children[i];
     if (u->kind == PEG_TERM) {
       bool is_link = (u->multiplier == '*' || u->multiplier == '+');
@@ -987,12 +977,10 @@ static void _gen_child_fields_struct(HeaderWriter* hw, PegGenInput* input, PegUn
       hw_fmt(hw, "  %s %s;\n", type, dedup);
       free(dedup);
     } else if (u->kind == PEG_BRANCHES) {
-      int32_t nb = u->children ? (int32_t)darray_size(u->children) : 0;
-      for (int32_t j = 0; j < nb; j++) {
+      for (size_t j = 0; j < darray_size(u->children); j++) {
         PegUnit* branch = &u->children[j];
         if (branch->kind == PEG_SEQ) {
-          int32_t bnc = branch->children ? (int32_t)darray_size(branch->children) : 0;
-          _gen_child_fields_struct(hw, input, branch->children, bnc, fd);
+          _gen_child_fields_struct(hw, input, branch->children, (int32_t)darray_size(branch->children), fd);
         } else if (branch->kind == PEG_TERM || branch->kind == PEG_CALL) {
           _gen_child_fields_struct(hw, input, branch, 1, fd);
         }
@@ -1008,33 +996,30 @@ static void _gen_node_struct(HeaderWriter* hw, PegGenInput* input, RuleLookup* l
   if (!orig) {
     return;
   }
-  int32_t n_tags = symtab_count(&sr->tags);
+  int32_t tag_size = symtab_count(&sr->tags);
   hw_fmt(hw, "typedef struct {\n");
-  if (n_tags > 0) {
+  if (tag_size > 0) {
     hw_raw(hw, "  struct {\n");
-    for (int32_t t = 0; t < n_tags; t++) {
+    for (int32_t t = 0; t < tag_size; t++) {
       hw_fmt(hw, "    bool %s : 1;\n", symtab_get(&sr->tags, t + sr->tags.start_num));
     }
-    if (n_tags < 64) {
-      hw_fmt(hw, "    uint64_t _padding : %d;\n", 64 - n_tags);
+    if (tag_size < 64) {
+      hw_fmt(hw, "    uint64_t _padding : %d;\n", 64 - tag_size);
     }
     hw_raw(hw, "  } is;\n");
   }
   if (orig->body.kind == PEG_SEQ) {
     FieldDedup fd;
     _field_dedup_init(&fd);
-    int32_t n = orig->body.children ? (int32_t)darray_size(orig->body.children) : 0;
-    _gen_child_fields_struct(hw, input, orig->body.children, n, &fd);
+    _gen_child_fields_struct(hw, input, orig->body.children, (int32_t)darray_size(orig->body.children), &fd);
     _field_dedup_free(&fd);
   } else if (orig->body.kind == PEG_BRANCHES) {
     FieldDedup fd;
     _field_dedup_init(&fd);
-    int32_t n = orig->body.children ? (int32_t)darray_size(orig->body.children) : 0;
-    for (int32_t i = 0; i < n; i++) {
+    for (size_t i = 0; i < darray_size(orig->body.children); i++) {
       PegUnit* branch = &orig->body.children[i];
       if (branch->kind == PEG_SEQ) {
-        int32_t nc = branch->children ? (int32_t)darray_size(branch->children) : 0;
-        _gen_child_fields_struct(hw, input, branch->children, nc, &fd);
+        _gen_child_fields_struct(hw, input, branch->children, (int32_t)darray_size(branch->children), &fd);
       } else if (branch->kind == PEG_TERM || branch->kind == PEG_CALL) {
         _gen_child_fields_struct(hw, input, branch, 1, &fd);
       }
@@ -1066,17 +1051,16 @@ typedef struct {
   int32_t size;
 } RuleScopeMap;
 
-static RuleScopeMap _build_scope_map(PegGenInput* input, ScopeClosure* closures, int32_t n_closures) {
+static RuleScopeMap _build_scope_map(PegGenInput* input, ScopeClosure* closures, int32_t closure_size) {
   RuleScopeMap map = {
       .start_num = input->rule_names.start_num,
       .size = symtab_count(&input->rule_names),
   };
   map.entries = calloc((size_t)map.size, sizeof(RuleScopeEntry*));
   map.counts = calloc((size_t)map.size, sizeof(int32_t));
-  for (int32_t c = 0; c < n_closures; c++) {
+  for (int32_t c = 0; c < closure_size; c++) {
     ScopeClosure* cl = &closures[c];
-    int32_t nr = (int32_t)darray_size(cl->scoped_rules);
-    for (int32_t i = 0; i < nr; i++) {
+    for (size_t i = 0; i < darray_size(cl->scoped_rules); i++) {
       ScopedRule* sr = &cl->scoped_rules[i];
       if (sr->original_global_id < 0) {
         continue;
@@ -1105,12 +1089,12 @@ static void _free_scope_map(RuleScopeMap* map) {
 // Emit loader field assignments for a sequence of PegUnit children.
 // Writes into the hw-generated loader body, using a `_cur` variable that tracks
 // the running token position. After each child, advances _cur by reading the slot.
-static void _gen_child_fields_loader(HeaderWriter* hw, PegGenInput* input, PegUnit* children, int32_t n_children,
+static void _gen_child_fields_loader(HeaderWriter* hw, PegGenInput* input, PegUnit* children, int32_t child_size,
                                      FieldDedup* fd, ScopeClosure* cl, const char* parent_rule_name,
                                      int32_t* multiplier_num_ptr) {
   int64_t col_size_in_i32 = cl->bits_bucket_size * 2 + cl->slots_size;
 
-  for (int32_t i = 0; i < n_children; i++) {
+  for (int32_t i = 0; i < child_size; i++) {
     PegUnit* u = &children[i];
     bool is_link = (u->multiplier == '*' || u->multiplier == '+');
 
@@ -1185,8 +1169,7 @@ static void _gen_child_fields_loader(HeaderWriter* hw, PegGenInput* input, PegUn
       free(dedup);
     } else if (u->kind == PEG_BRANCHES) {
       // branch alternatives all start at _cur; set each alternative's children to _cur
-      int32_t nb = u->children ? (int32_t)darray_size(u->children) : 0;
-      for (int32_t j = 0; j < nb; j++) {
+      for (size_t j = 0; j < darray_size(u->children); j++) {
         PegUnit* branch = &u->children[j];
         if (branch->kind == PEG_TERM) {
           char* san = _sanitize_field_name(_term_name(input, branch->id));
@@ -1212,8 +1195,7 @@ static void _gen_child_fields_loader(HeaderWriter* hw, PegGenInput* input, PegUn
           hw_fmt(hw, "  n.%s.row = %d;\n", dedup, callee_row);
           free(dedup);
         } else if (branch->kind == PEG_SEQ) {
-          int32_t bnc = branch->children ? (int32_t)darray_size(branch->children) : 0;
-          for (int32_t k = 0; k < bnc; k++) {
+          for (size_t k = 0; k < darray_size(branch->children); k++) {
             PegUnit* bc = &branch->children[k];
             if (bc->kind == PEG_TERM) {
               char* san = _sanitize_field_name(_term_name(input, bc->id));
@@ -1266,12 +1248,13 @@ static void _gen_loader(HeaderWriter* hw, PegGenInput* input, RuleLookup* lu, co
   if (!orig) {
     return;
   }
-  int32_t n_tags = symtab_count(&scope_entries[0].sr->tags);
-  bool has_tags = (n_tags > 0);
+  int32_t tag_size = symtab_count(&scope_entries[0].sr->tags);
+  bool has_tags = (tag_size > 0);
 
   hw_fmt(hw, "static inline Node_%s %s_load_%s(PegRef ref) {\n", rule_name, prefix, rule_name);
   hw_fmt(hw, "  Node_%s n;\n", rule_name);
-  hw_fmt(hw, "  memset(&n, 0, sizeof(n));\n");
+  hw_raw(hw, "  memset(&n, 0, sizeof(n));\n");
+  hw_raw(hw, "  int64_t* table = (int64_t*)ref.tc->value;\n");
   hw_raw(hw, "  int64_t _cur = ref.col;\n");
 
   hw_raw(hw, "  switch (ref.tc->scope_id) {\n");
@@ -1282,16 +1265,12 @@ static void _gen_loader(HeaderWriter* hw, PegGenInput* input, RuleLookup* lu, co
 
     hw_fmt(hw, "  case %d: {\n", scope_entries[e].scope_id);
 
-    // tag decoding
+    // tag decoding: col = table + ref.col * col_size_in_i64
     if (has_tags) {
-      hw_fmt(hw, "    int64_t* bits_base = (int64_t*)((int32_t*)ref.tc->value + %lld * ref.col);\n",
-             (long long)col_size_in_i32);
-      hw_fmt(hw, "    uint64_t tag_val = (bits_base[%llu] >> %lluULL) & 0x%llxULL;\n",
+      hw_fmt(hw, "    int64_t* col = (int64_t*)((int32_t*)table + %lld * ref.col);\n", (long long)col_size_in_i32);
+      hw_fmt(hw, "    ((uint64_t*)&n.is)[0] = (col[%llu] >> %lluULL) & 0x%llxULL;\n",
              (unsigned long long)sr->tag_bit_index, (unsigned long long)sr->tag_bit_offset,
-             (unsigned long long)_tag_mask(n_tags, 0));
-      for (int32_t t = 0; t < n_tags; t++) {
-        hw_fmt(hw, "    n.is.%s = (tag_val >> %d) & 1;\n", symtab_get(&sr->tags, t + sr->tags.start_num), t);
-      }
+             (unsigned long long)_tag_mask(tag_size, 0));
     }
 
     // child field assignments using this scope's closure
@@ -1299,19 +1278,18 @@ static void _gen_loader(HeaderWriter* hw, PegGenInput* input, RuleLookup* lu, co
       FieldDedup fd;
       _field_dedup_init(&fd);
       int32_t multiplier_num = 0;
-      int32_t nc = orig->body.children ? (int32_t)darray_size(orig->body.children) : 0;
-      _gen_child_fields_loader(hw, input, orig->body.children, nc, &fd, cl, rule_name, &multiplier_num);
+      _gen_child_fields_loader(hw, input, orig->body.children, (int32_t)darray_size(orig->body.children), &fd, cl,
+                               rule_name, &multiplier_num);
       _field_dedup_free(&fd);
     } else if (orig->body.kind == PEG_BRANCHES) {
       FieldDedup fd;
       _field_dedup_init(&fd);
-      int32_t nc = orig->body.children ? (int32_t)darray_size(orig->body.children) : 0;
-      for (int32_t i = 0; i < nc; i++) {
+      for (size_t i = 0; i < darray_size(orig->body.children); i++) {
         PegUnit* branch = &orig->body.children[i];
         int32_t multiplier_num = 0;
         if (branch->kind == PEG_SEQ) {
-          int32_t bnc = branch->children ? (int32_t)darray_size(branch->children) : 0;
-          _gen_child_fields_loader(hw, input, branch->children, bnc, &fd, cl, rule_name, &multiplier_num);
+          _gen_child_fields_loader(hw, input, branch->children, (int32_t)darray_size(branch->children), &fd, cl,
+                                   rule_name, &multiplier_num);
         } else if (branch->kind == PEG_TERM || branch->kind == PEG_CALL) {
           _gen_child_fields_loader(hw, input, branch, 1, &fd, cl, rule_name, &multiplier_num);
         }
@@ -1370,17 +1348,16 @@ static void _gen_get_next(HeaderWriter* hw, const char* prefix) {
 }
 
 static void _gen_header(PegGenInput* input, RuleLookup* lu, HeaderWriter* hw, ScopeClosure* closures,
-                        int32_t n_closures, RuleScopeMap* scope_map, const char* prefix) {
+                        int32_t closure_size, RuleScopeMap* scope_map, const char* prefix) {
   _gen_header_types(hw);
 
   // Collect unique original rule names across all closures.
   Symtab emitted_rules;
   symtab_init(&emitted_rules, 0);
 
-  for (int32_t c = 0; c < n_closures; c++) {
+  for (int32_t c = 0; c < closure_size; c++) {
     ScopeClosure* cl = &closures[c];
-    int32_t nr = (int32_t)darray_size(cl->scoped_rules);
-    for (int32_t i = 0; i < nr; i++) {
+    for (size_t i = 0; i < darray_size(cl->scoped_rules); i++) {
       ScopedRule* sr = &cl->scoped_rules[i];
       if (sr->original_global_id < 0) {
         continue;
@@ -1411,8 +1388,8 @@ static void _gen_header(PegGenInput* input, RuleLookup* lu, HeaderWriter* hw, Sc
 // ============================================================
 
 static void _gen_scope_ir(IrWriter* w, ScopeClosure* cl, int memoize_mode) {
-  int32_t n_rules = (int32_t)darray_size(cl->scoped_rules);
-  if (n_rules == 0) {
+  int32_t rule_size = (int32_t)darray_size(cl->scoped_rules);
+  if (rule_size == 0) {
     return;
   }
   int64_t sizeof_col = cl->bits_bucket_size * 8 + cl->slots_size * 4;
@@ -1441,7 +1418,7 @@ static void _gen_scope_ir(IrWriter* w, ScopeClosure* cl, int memoize_mode) {
   IrVal tag_bits = irwriter_alloca(w, "i64");
   irwriter_store(w, "i64", irwriter_imm_int(w, 0), tag_bits);
 
-  IrVal n_tokens = irwriter_call_retf(w, "i32", "tt_current_size", "ptr %%tt");
+  IrVal token_size = irwriter_call_retf(w, "i32", "tt_current_size", "ptr %%tt");
 
   // tc->tokens at offset 24 (scope_id:4, parent_id:4, value:8, aux_value:8)
   irwriter_rawf(w, "  %%r%d = getelementptr i8, ptr %%r%d, i64 24\n", irwriter_next_reg(w), (int)tc);
@@ -1453,7 +1430,7 @@ static void _gen_scope_ir(IrWriter* w, ScopeClosure* cl, int memoize_mode) {
       .tc = tc,
       .tokens = tokens,
       .col = col_ptr,
-      .n_tokens = n_tokens,
+      .token_size = token_size,
       .stack_ptr = stack_ptr,
       .parse_result = parse_result,
       .tag_bits = tag_bits,
@@ -1464,18 +1441,19 @@ static void _gen_scope_ir(IrWriter* w, ScopeClosure* cl, int memoize_mode) {
   // entry: push ret_site + push col, then branch to entrance rule (spec: peg_ir_emit_call)
   IrLabel final_ret = peg_ir_emit_call(&ctx, cl->scoped_rules[0].scoped_rule_name);
 
-  for (int32_t i = 0; i < n_rules; i++) {
+  for (int32_t i = 0; i < rule_size; i++) {
     ScopedRule* sr = &cl->scoped_rules[i];
     irwriter_rawf(w, "\n%s:\n", sr->scoped_rule_name);
 
-    int32_t n_tags = symtab_count(&sr->tags);
+    int32_t tag_size = symtab_count(&sr->tags);
     ctx.tag_bit_offset = (int64_t)sr->tag_bit_offset;
 
     IrLabel done_bb = irwriter_label(w);
-    IrLabel compute_bb = irwriter_label(w);
+    IrLabel fail_bb = irwriter_label(w);
+    IrLabel material_parse = irwriter_label(w);
 
     if (memoize_mode == MEMO_NONE) {
-      irwriter_br(w, compute_bb);
+      irwriter_br(w, material_parse);
     } else if (memoize_mode == MEMO_SHARED) {
       IrVal col_val = irwriter_load(w, "i64", col_ptr);
       IrVal row_off = irwriter_binop(w, "mul", "i64", col_val, irwriter_imm_int(w, (int)sizeof_col));
@@ -1492,22 +1470,18 @@ static void _gen_scope_ir(IrWriter* w, ScopeClosure* cl, int memoize_mode) {
                                     (int)peg_table, (int)col_val, (long long)sizeof_col, (unsigned long long)seg_off,
                                     (unsigned long long)sr->rule_bit_mask);
       IrLabel bit_ok = irwriter_label(w);
-      IrLabel bit_fail = irwriter_label(w);
-      irwriter_br_cond(w, bt, bit_ok, bit_fail);
-
-      irwriter_bb_at(w, bit_fail);
-      irwriter_store(w, "i64", irwriter_imm_int(w, -1), parsed_tokens);
-      irwriter_br(w, done_bb);
+      irwriter_br_cond(w, bt, bit_ok, fail_bb);
 
       irwriter_bb_at(w, bit_ok);
-      IrLabel use_cache = irwriter_label(w);
-      irwriter_br_cond(w, is_cached, use_cache, compute_bb);
-      irwriter_bb_at(w, use_cache);
+      IrLabel fast_ret = irwriter_label(w);
+      irwriter_br_cond(w, is_cached, fast_ret, material_parse);
+      irwriter_bb_at(w, fast_ret);
       IrVal cached = irwriter_sext(w, "i32", slot_val, "i64");
       irwriter_store(w, "i64", cached, parsed_tokens);
       irwriter_store(w, "i64", irwriter_binop(w, "add", "i64", col_val, cached), col_ptr);
       irwriter_br(w, done_bb);
     } else {
+      // naive: three-way check on slot value
       IrVal col_val = irwriter_load(w, "i64", col_ptr);
       IrVal row_off = irwriter_binop(w, "mul", "i64", col_val, irwriter_imm_int(w, (int)sizeof_col));
       IrVal slot_byte = irwriter_binop(
@@ -1516,21 +1490,28 @@ static void _gen_scope_ir(IrWriter* w, ScopeClosure* cl, int memoize_mode) {
                     (int)slot_byte);
       IrVal slot_ptr = (IrVal)(irwriter_next_reg(w) - 1);
       IrVal slot_val = irwriter_load(w, "i32", slot_ptr);
-      IrVal is_cached = irwriter_icmp(w, "ne", "i32", slot_val, irwriter_imm_int(w, -1));
 
-      IrLabel use_cache = irwriter_label(w);
-      irwriter_br_cond(w, is_cached, use_cache, compute_bb);
-      irwriter_bb_at(w, use_cache);
+      // slot >= 0 -> fast_ret (cached success)
+      IrVal is_success = irwriter_icmp(w, "sge", "i32", slot_val, irwriter_imm_int(w, 0));
+      IrLabel fast_ret = irwriter_label(w);
+      IrLabel not_success = irwriter_label(w);
+      irwriter_br_cond(w, is_success, fast_ret, not_success);
+
+      irwriter_bb_at(w, fast_ret);
       IrVal cached = irwriter_sext(w, "i32", slot_val, "i64");
       irwriter_store(w, "i64", cached, parsed_tokens);
       irwriter_store(w, "i64", irwriter_binop(w, "add", "i64", col_val, cached), col_ptr);
       irwriter_br(w, done_bb);
+
+      // slot == -2 -> fail_bb (cached failure), slot == -1 -> material_parse (unknown)
+      irwriter_bb_at(w, not_success);
+      IrVal is_unknown = irwriter_icmp(w, "eq", "i32", slot_val, irwriter_imm_int(w, -1));
+      irwriter_br_cond(w, is_unknown, material_parse, fail_bb);
     }
 
-    irwriter_bb_at(w, compute_bb);
-    // material_parse: col is already saved on stack by caller
+    irwriter_bb_at(w, material_parse);
 
-    if (n_tags > 0) {
+    if (tag_size > 0) {
       irwriter_store(w, "i64", irwriter_imm_int(w, 0), tag_bits);
     }
 
@@ -1540,15 +1521,14 @@ static void _gen_scope_ir(IrWriter* w, ScopeClosure* cl, int memoize_mode) {
     peg_ir_emit_parse(&ctx, &sr->body, parse_fail);
     irwriter_br(w, parse_success);
 
-    // parse_success: peek start_col via @top, compute parsed_tokens = col - start_col
     irwriter_bb_at(w, parse_success);
-    IrVal old_col = irwriter_call_retf(w, "i64", "top", "ptr %%r%d", (int)stack_ptr);
+    IrVal start_col = irwriter_call_retf(w, "i64", "top", "ptr %%r%d", (int)stack_ptr);
     IrVal cur_col = irwriter_load(w, "i64", col_ptr);
-    IrVal pt = irwriter_binop(w, "sub", "i64", cur_col, old_col);
+    IrVal pt = irwriter_binop(w, "sub", "i64", cur_col, start_col);
     irwriter_store(w, "i64", pt, parsed_tokens);
 
-    if (n_tags > 0) {
-      IrVal bo = irwriter_binop(w, "mul", "i64", old_col, irwriter_imm_int(w, (int)sizeof_col));
+    if (tag_size > 0) {
+      IrVal bo = irwriter_binop(w, "mul", "i64", start_col, irwriter_imm_int(w, (int)sizeof_col));
       IrVal tbo = irwriter_binop(w, "add", "i64", bo, irwriter_imm_int(w, (int)(sr->tag_bit_index * 8)));
       irwriter_rawf(w, "  %%r%d = getelementptr i8, ptr %%r%d, i64 %%r%d\n", irwriter_next_reg(w), (int)peg_table,
                     (int)tbo);
@@ -1562,7 +1542,7 @@ static void _gen_scope_ir(IrWriter* w, ScopeClosure* cl, int memoize_mode) {
     }
     if (memoize_mode == MEMO_SHARED) {
       IrVal pt2 = irwriter_load(w, "i64", parsed_tokens);
-      IrVal so = irwriter_binop(w, "mul", "i64", old_col, irwriter_imm_int(w, (int)sizeof_col));
+      IrVal so = irwriter_binop(w, "mul", "i64", start_col, irwriter_imm_int(w, (int)sizeof_col));
       IrVal sbo = irwriter_binop(w, "add", "i64", so,
                                  irwriter_imm_int(w, (int)(cl->bits_bucket_size * 8 + (int64_t)sr->slot_index * 4)));
       irwriter_rawf(w, "  %%r%d = getelementptr i8, ptr %%r%d, i64 %%r%d\n", irwriter_next_reg(w), (int)peg_table,
@@ -1571,12 +1551,12 @@ static void _gen_scope_ir(IrWriter* w, ScopeClosure* cl, int memoize_mode) {
       irwriter_rawf(w, "  %%r%d = trunc i64 %%r%d to i32\n", irwriter_next_reg(w), (int)pt2);
       irwriter_store(w, "i32", (IrVal)(irwriter_next_reg(w) - 1), wp);
       irwriter_call_void_fmtf(w, "bit_exclude", "ptr %%r%d, i64 %%r%d, i64 %lld, i64 %llu, i64 %llu, i64 %llu",
-                              (int)peg_table, (int)old_col, (long long)sizeof_col,
+                              (int)peg_table, (int)start_col, (long long)sizeof_col,
                               (unsigned long long)(sr->segment_index * 8), (unsigned long long)sr->segment_mask,
                               (unsigned long long)sr->rule_bit_mask);
     } else if (memoize_mode == MEMO_NAIVE) {
       IrVal pt2 = irwriter_load(w, "i64", parsed_tokens);
-      IrVal so = irwriter_binop(w, "mul", "i64", old_col, irwriter_imm_int(w, (int)sizeof_col));
+      IrVal so = irwriter_binop(w, "mul", "i64", start_col, irwriter_imm_int(w, (int)sizeof_col));
       IrVal sbo = irwriter_binop(w, "add", "i64", so,
                                  irwriter_imm_int(w, (int)(cl->bits_bucket_size * 8 + (int64_t)sr->slot_index * 4)));
       irwriter_rawf(w, "  %%r%d = getelementptr i8, ptr %%r%d, i64 %%r%d\n", irwriter_next_reg(w), (int)peg_table,
@@ -1587,7 +1567,7 @@ static void _gen_scope_ir(IrWriter* w, ScopeClosure* cl, int memoize_mode) {
     }
     irwriter_br(w, done_bb);
 
-    // parse_fail: restore col from call-pushed value, deny memoize
+    // parse_fail: restore col, deny memoize, then branch to fail_bb
     irwriter_bb_at(w, parse_fail);
     IrVal fail_col = irwriter_call_retf(w, "i64", "top", "ptr %%r%d", (int)stack_ptr);
     irwriter_store(w, "i64", fail_col, col_ptr);
@@ -1595,7 +1575,20 @@ static void _gen_scope_ir(IrWriter* w, ScopeClosure* cl, int memoize_mode) {
       irwriter_call_void_fmtf(w, "bit_deny", "ptr %%r%d, i64 %%r%d, i64 %lld, i64 %llu, i64 %llu", (int)peg_table,
                               (int)fail_col, (long long)sizeof_col, (unsigned long long)(sr->segment_index * 8),
                               (unsigned long long)sr->rule_bit_mask);
+    } else if (memoize_mode == MEMO_NAIVE) {
+      // cache failure as -2 in the slot
+      IrVal so = irwriter_binop(w, "mul", "i64", fail_col, irwriter_imm_int(w, (int)sizeof_col));
+      IrVal sbo = irwriter_binop(w, "add", "i64", so,
+                                 irwriter_imm_int(w, (int)(cl->bits_bucket_size * 8 + (int64_t)sr->slot_index * 4)));
+      irwriter_rawf(w, "  %%r%d = getelementptr i8, ptr %%r%d, i64 %%r%d\n", irwriter_next_reg(w), (int)peg_table,
+                    (int)sbo);
+      IrVal wp = (IrVal)(irwriter_next_reg(w) - 1);
+      irwriter_store(w, "i32", irwriter_imm_int(w, -2), wp);
     }
+    irwriter_br(w, fail_bb);
+
+    // fail_bb: set parsed_tokens = -1, branch to done_bb
+    irwriter_bb_at(w, fail_bb);
     irwriter_store(w, "i64", irwriter_imm_int(w, -1), parsed_tokens);
     irwriter_br(w, done_bb);
 
@@ -1624,7 +1617,7 @@ static void _free_scoped_unit(ScopedUnit* su) {
   case SCOPED_UNIT_SEQ:
   case SCOPED_UNIT_BRANCHES:
     if (su->as.children) {
-      for (int32_t i = 0; i < (int32_t)darray_size(su->as.children); i++) {
+      for (size_t i = 0; i < darray_size(su->as.children); i++) {
         _free_scoped_unit(&su->as.children[i]);
       }
       darray_del(su->as.children);
@@ -1653,8 +1646,7 @@ static void _free_scoped_unit(ScopedUnit* su) {
 }
 
 static void _free_closure(ScopeClosure* cl) {
-  int32_t n = (int32_t)darray_size(cl->scoped_rules);
-  for (int32_t i = 0; i < n; i++) {
+  for (size_t i = 0; i < darray_size(cl->scoped_rules); i++) {
     _free_scoped_unit(&cl->scoped_rules[i].body);
     symtab_free(&cl->scoped_rules[i].tags);
     if (cl->scoped_rules[i].first_set) {
@@ -1673,8 +1665,8 @@ static void _free_closure(ScopeClosure* cl) {
 // ============================================================
 
 void peg_gen(PegGenInput* input, HeaderWriter* hw, IrWriter* w, int memoize_mode, const char* prefix) {
-  int32_t n_rules = (int32_t)darray_size(input->rules);
-  if (n_rules == 0) {
+  int32_t rule_size = (int32_t)darray_size(input->rules);
+  if (rule_size == 0) {
     return;
   }
 
@@ -1685,19 +1677,19 @@ void peg_gen(PegGenInput* input, HeaderWriter* hw, IrWriter* w, int memoize_mode
   }
 
   ScopeClosure* closures = darray_new(sizeof(ScopeClosure), 0);
-  for (int32_t i = 0; i < n_rules; i++) {
+  for (int32_t i = 0; i < rule_size; i++) {
     if (input->rules[i].scope_id >= 0) {
       ScopeClosure cl = _gather_scope_closures(&lu, &input->rules[i]);
       darray_push(closures, cl);
     }
   }
-  int32_t n_closures = (int32_t)darray_size(closures);
+  int32_t closure_size = (int32_t)darray_size(closures);
 
-  for (int32_t c = 0; c < n_closures; c++) {
+  for (int32_t c = 0; c < closure_size; c++) {
     _alloc_tags(&lu, &closures[c]);
   }
 
-  for (int32_t c = 0; c < n_closures; c++) {
+  for (int32_t c = 0; c < closure_size; c++) {
     if (input->verbose) {
       fprintf(stderr, "  [peg] analyzing scope '%s'\n", closures[c].scope_name);
     }
@@ -1715,18 +1707,18 @@ void peg_gen(PegGenInput* input, HeaderWriter* hw, IrWriter* w, int memoize_mode
   if (memoize_mode == MEMO_SHARED) {
     peg_ir_emit_bit_helpers(w);
   }
-  for (int32_t c = 0; c < n_closures; c++) {
+  for (int32_t c = 0; c < closure_size; c++) {
     if (input->verbose) {
       fprintf(stderr, "  [peg] generating IR for scope '%s'\n", closures[c].scope_name);
     }
     _gen_scope_ir(w, &closures[c], memoize_mode);
   }
 
-  RuleScopeMap scope_map = _build_scope_map(input, closures, n_closures);
-  _gen_header(input, &lu, hw, closures, n_closures, &scope_map, prefix);
+  RuleScopeMap scope_map = _build_scope_map(input, closures, closure_size);
+  _gen_header(input, &lu, hw, closures, closure_size, &scope_map, prefix);
   _free_scope_map(&scope_map);
 
-  for (int32_t c = 0; c < n_closures; c++) {
+  for (int32_t c = 0; c < closure_size; c++) {
     _free_closure(&closures[c]);
   }
   darray_del(closures);

@@ -567,9 +567,8 @@ TEST(test_branch_stores_child_id) {
   memcpy(body, body_start, body_len);
   body[body_len] = '\0';
 
-  // The loader must set at least one is.* field
-  bool sets_is = (strstr(body, ".is.") != NULL || strstr(body, "is.number") != NULL ||
-                  strstr(body, "is.string") != NULL || strstr(body, "is.array") != NULL);
+  // The loader must set tag bits: either individual .is.xxx fields or bulk &n.is assignment
+  bool sets_is = (strstr(body, ".is.") != NULL || strstr(body, "&n.is)") != NULL);
   assert(sets_is && "branch loader must set is.* fields from memoize table");
 
   free(body);

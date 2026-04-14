@@ -25,6 +25,14 @@ lines of code is better than a premature abstraction.
 - Avoid backwards-compatibility hacks like renaming unused _vars, re-exporting types, adding // removed
 comments for removed code, etc. If you are certain that something is unused, you can delete it completely.
 
+### Tests review
+
+Are they really testing correctness or just stubs?
+
+Are they in a "unit test" manner or tests other things?
+
+Are there major code paths not being tested?
+
 ### Idiomatic C: utilize fat pointers
 
 We already have:
@@ -101,3 +109,11 @@ if (mode == NONE) {
   ...
 }
 ```
+
+### Idiomatic C: unified naming
+
+Naming should be consistent, clearly represents what it does, and honest to spec, no re-inventing new variable/function names when specs has already named them.
+
+Bad code: `n_tags`, `n_tokens`
+
+Good code: `tag_size`, `token_count`

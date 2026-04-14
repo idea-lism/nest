@@ -265,6 +265,160 @@ TEST(test_emit_branches) {
   free(out);
 }
 
+TEST(test_emit_plus) {
+  TestCtx t = _setup("test_fn");
+  ScopedUnit lhs = {.kind = SCOPED_UNIT_TERM, .tag_bit_local_offset = -1, .as = {.term_id = 11}};
+  ScopedUnit* lhs_heap = malloc(sizeof(ScopedUnit));
+  *lhs_heap = lhs;
+
+  ScopedUnit plus = {.kind = SCOPED_UNIT_PLUS, .tag_bit_local_offset = -1};
+  plus.as.interlace = (ScopedInterlace){.lhs = lhs_heap, .rhs = NULL};
+
+  IrLabel fail = irwriter_label(t.w);
+  peg_ir_emit_parse(&t.ctx, &plus, fail);
+  irwriter_br(t.w, fail);
+  irwriter_bb_at(t.w, fail);
+  irwriter_ret(t.w, "{i64, i64}", irwriter_imm(t.w, "undef"));
+
+  char* out = _finish(&t);
+  // plus must check the first element against term_id 11
+  assert(strstr(out, "11"));
+  assert(strstr(out, "icmp eq i32"));
+  // first element failure must branch to the outer fail label (not swallowed)
+  // plus has a loop, so there should be an add for col increment
+  assert(strstr(out, "add i64"));
+  // non-nullable body: no advancement check (icmp ne i64) needed
+  // count "icmp ne i64" occurrences — should be zero
+  int ne_count = 0;
+  for (const char* p = out; (p = strstr(p, "icmp ne i64")) != NULL; p += 11) {
+    ne_count++;
+  }
+  assert(ne_count == 0 && "non-nullable plus should not emit advancement check");
+  free(lhs_heap);
+  free(out);
+}
+
+TEST(test_emit_plus_nullable) {
+  TestCtx t = _setup("test_fn");
+  // a maybe-wrapped term is nullable
+  ScopedUnit inner = {.kind = SCOPED_UNIT_TERM, .tag_bit_local_offset = -1, .as = {.term_id = 15}};
+  ScopedUnit* inner_heap = malloc(sizeof(ScopedUnit));
+  *inner_heap = inner;
+  ScopedUnit base = {.kind = SCOPED_UNIT_MAYBE, .tag_bit_local_offset = -1, .nullable = true};
+  base.as.base = inner_heap;
+  ScopedUnit* base_heap = malloc(sizeof(ScopedUnit));
+  *base_heap = base;
+
+  ScopedUnit plus = {.kind = SCOPED_UNIT_PLUS, .tag_bit_local_offset = -1};
+  plus.as.interlace = (ScopedInterlace){.lhs = base_heap, .rhs = NULL};
+
+  IrLabel fail = irwriter_label(t.w);
+  peg_ir_emit_parse(&t.ctx, &plus, fail);
+  irwriter_br(t.w, fail);
+  irwriter_bb_at(t.w, fail);
+  irwriter_ret(t.w, "{i64, i64}", irwriter_imm(t.w, "undef"));
+
+  char* out = _finish(&t);
+  // nullable body: must emit advancement check to prevent infinite loop
+  assert(strstr(out, "icmp ne i64") && "nullable plus must emit advancement check");
+  free(inner_heap);
+  free(base_heap);
+  free(out);
+}
+
+TEST(test_emit_star_interlace) {
+  TestCtx t = _setup("test_fn");
+  ScopedUnit lhs = {.kind = SCOPED_UNIT_TERM, .tag_bit_local_offset = -1, .as = {.term_id = 30}};
+  ScopedUnit* lhs_heap = malloc(sizeof(ScopedUnit));
+  *lhs_heap = lhs;
+  ScopedUnit rhs = {.kind = SCOPED_UNIT_TERM, .tag_bit_local_offset = -1, .as = {.term_id = 31}};
+  ScopedUnit* rhs_heap = malloc(sizeof(ScopedUnit));
+  *rhs_heap = rhs;
+
+  ScopedUnit star = {.kind = SCOPED_UNIT_STAR, .tag_bit_local_offset = -1};
+  star.as.interlace = (ScopedInterlace){.lhs = lhs_heap, .rhs = rhs_heap};
+
+  IrLabel fail = irwriter_label(t.w);
+  peg_ir_emit_parse(&t.ctx, &star, fail);
+  irwriter_br(t.w, fail);
+  irwriter_bb_at(t.w, fail);
+  irwriter_ret(t.w, "{i64, i64}", irwriter_imm(t.w, "undef"));
+
+  char* out = _finish(&t);
+  // interlaced star: first element parsed, then loop(sep, elem)
+  // both term ids must appear
+  assert(strstr(out, "30"));
+  assert(strstr(out, "31"));
+  // interlace loop needs save/restore for backtracking on sep failure
+  assert(strstr(out, "call void @save("));
+  assert(strstr(out, "call void @restore("));
+  free(lhs_heap);
+  free(rhs_heap);
+  free(out);
+}
+
+TEST(test_emit_plus_interlace) {
+  TestCtx t = _setup("test_fn");
+  ScopedUnit lhs = {.kind = SCOPED_UNIT_TERM, .tag_bit_local_offset = -1, .as = {.term_id = 40}};
+  ScopedUnit* lhs_heap = malloc(sizeof(ScopedUnit));
+  *lhs_heap = lhs;
+  ScopedUnit rhs = {.kind = SCOPED_UNIT_TERM, .tag_bit_local_offset = -1, .as = {.term_id = 41}};
+  ScopedUnit* rhs_heap = malloc(sizeof(ScopedUnit));
+  *rhs_heap = rhs;
+
+  ScopedUnit plus = {.kind = SCOPED_UNIT_PLUS, .tag_bit_local_offset = -1};
+  plus.as.interlace = (ScopedInterlace){.lhs = lhs_heap, .rhs = rhs_heap};
+
+  IrLabel fail = irwriter_label(t.w);
+  peg_ir_emit_parse(&t.ctx, &plus, fail);
+  irwriter_br(t.w, fail);
+  irwriter_bb_at(t.w, fail);
+  irwriter_ret(t.w, "{i64, i64}", irwriter_imm(t.w, "undef"));
+
+  char* out = _finish(&t);
+  // interlaced plus: first element must succeed (branches to fail on failure)
+  // both term ids must appear
+  assert(strstr(out, "40"));
+  assert(strstr(out, "41"));
+  // interlace loop needs save/restore for backtracking on sep failure
+  assert(strstr(out, "call void @save("));
+  assert(strstr(out, "call void @restore("));
+  // first element uses fail_label, so there must be a conditional branch
+  // to the fail block for the first parse
+  assert(strstr(out, "icmp eq i32"));
+  free(lhs_heap);
+  free(rhs_heap);
+  free(out);
+}
+
+TEST(test_emit_star_nullable) {
+  TestCtx t = _setup("test_fn");
+  // nullable body: a maybe-wrapped term
+  ScopedUnit inner = {.kind = SCOPED_UNIT_TERM, .tag_bit_local_offset = -1, .as = {.term_id = 50}};
+  ScopedUnit* inner_heap = malloc(sizeof(ScopedUnit));
+  *inner_heap = inner;
+  ScopedUnit base = {.kind = SCOPED_UNIT_MAYBE, .tag_bit_local_offset = -1, .nullable = true};
+  base.as.base = inner_heap;
+  ScopedUnit* base_heap = malloc(sizeof(ScopedUnit));
+  *base_heap = base;
+
+  ScopedUnit star = {.kind = SCOPED_UNIT_STAR, .tag_bit_local_offset = -1};
+  star.as.interlace = (ScopedInterlace){.lhs = base_heap, .rhs = NULL};
+
+  IrLabel fail = irwriter_label(t.w);
+  peg_ir_emit_parse(&t.ctx, &star, fail);
+  irwriter_br(t.w, fail);
+  irwriter_bb_at(t.w, fail);
+  irwriter_ret(t.w, "{i64, i64}", irwriter_imm(t.w, "undef"));
+
+  char* out = _finish(&t);
+  // nullable body: must emit advancement check to prevent infinite loop
+  assert(strstr(out, "icmp ne i64") && "nullable star must emit advancement check");
+  free(inner_heap);
+  free(base_heap);
+  free(out);
+}
+
 TEST(test_tag_bit_set) {
   TestCtx t = _setup("test_fn");
   t.ctx.tag_bit_offset = 2;
@@ -293,6 +447,11 @@ int main(void) {
   RUN(test_emit_maybe_phi);
   RUN(test_emit_star);
   RUN(test_emit_branches);
+  RUN(test_emit_plus);
+  RUN(test_emit_plus_nullable);
+  RUN(test_emit_star_interlace);
+  RUN(test_emit_plus_interlace);
+  RUN(test_emit_star_nullable);
   RUN(test_tag_bit_set);
   printf("test_peg_ir: OK\n");
   return 0;

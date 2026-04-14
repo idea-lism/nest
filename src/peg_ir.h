@@ -22,10 +22,10 @@ typedef struct {
   IrVal parse_result;
   IrVal tag_bits;
   IrVal parsed_tokens;
-  IrVal n_tokens;
+  IrVal token_size;
 
   // accumulated return labels for indirectbr destination list
-  IrLabel* ret_labels; // darray, owned
+  IrLabels ret_labels; // darray, owned
 } PegIrCtx;
 
 // emit IR for a ScopedUnit tree; on success falls through with parsed_tokens set; on failure branches to fail_label

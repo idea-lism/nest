@@ -7,6 +7,7 @@
 typedef struct IrWriter IrWriter;
 typedef int32_t IrVal;
 typedef int32_t IrLabel;
+typedef IrLabel* IrLabels; // darray
 
 IrWriter* irwriter_new(FILE* out, const char* target_triple);
 void irwriter_del(IrWriter* w);
