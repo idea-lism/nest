@@ -1,31 +1,73 @@
 Generate AGENTS.md, so opencode won't need to explore the whole project to get in context in a new session.
 
-The AGENTS.md must highlight the following info:
+For the "Project Structure" part, list what each source file does in simple words, and point to corresponding specs/xxx.md
 
-### Brief
+So the resulting AGENTS.md layout is like this:
 
-1. A regex-to-LLVM-IR compiler. 
+`````markdown
+### Architecture
+
+1. A regex-to-LLVM-IR compiler.
    - Regex patterns → NFA → DFA (minimized) → LLVM IR text → native code via clang.
 2. A optimized PEG parser.
-   - Graph-coloring optimized parsing.
+   - Graph-coloring optimized parsing. uses kissat
 
-### Rules
+IMPLEMENTATION MUST FOLLOW SPECS.
 
-If I said "refactor", it means disruptive changes.
+### Project Structure
 
-### Develop
+src/
+  aut.h: automata constructing and generating, follows specs/aut.md
+  aut.c: impls aut.h
+  nest.c: command line interface, follows specs/cli.md and specs/test_examples.md
+  ...
+test/
+  ...
+test/examples/: follows specs/test_examples.md
+  ...
+config.rb: platform-related config, generates build.ninja
+config.in.rb: defined sources, targets, dependencies
 
-```
+### Common Tasks
+
+```sh
 ruby config.rb debug
 ninja
+ninja format
 ```
 
-Run tests / benchmarks
-
-```
+Run tests / benchmarks:
+```sh
 scripts/test # in release mode
 scripts/test debug
 scripts/benchmark
+scripts/test_examples
+```
+
+Adding new source files:
+- add the entry in config.in.rb
+- add related test
+
+### Utils to Avoid Boilerplates
+
+Ustr
+```c
+// typical use of ustr.h
+```
+
+Darray
+```c
+// typical use of darray.h
+```
+
+IrWriter
+```c
+// typical use of irwriter.h
+```
+
+TokenTree
+```c
+// typical use of token_tree.h
 ```
 
 ### Code Style
@@ -35,11 +77,11 @@ scripts/benchmark
 - use stdint. for example, `int32_t` instead of `int`
 - static (private) functions should start with `_`, names be simple as possible (without module prefix)
 
-clang-format
+### Naming
 
-- line width: `120`
-- if style: `if (xxx) {\n ... \n} else {...`
-- pointer arg style: `foo* foo`
-- enforce brace on block bodies
-- on macOS, use `xcrun clang-format` to format
-- others use default (indent = 2 space)
+Naming is important for readable code, should clearly represents what it does, and honest to spec, no re-inventing new variable/function names when specs has already named them.
+
+Bad code: `n_tags`, `n_tokens`
+
+Good code: `tag_size`, `token_bytesize`, `tag_size_in_i32`, `tag_size_in_i64`
+`````

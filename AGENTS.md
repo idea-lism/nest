@@ -1,193 +1,166 @@
-# Project: tailorbird
-
-## Brief
+### Architecture
 
 1. A regex-to-LLVM-IR compiler.
-   - Regex patterns -> NFA -> DFA (minimized) -> LLVM IR text -> native code via clang.
+   - Regex patterns → NFA → DFA (minimized) → LLVM IR text → native code via clang.
 2. A optimized PEG parser.
-   - Graph-coloring optimized parsing.
+   - Graph-coloring optimized parsing. uses kissat
 
-## Rules
+IMPLEMENTATION MUST FOLLOW SPECS.
 
-- If the user says "refactor", treat that as permission for disruptive changes.
-- Prefer small, local edits over broad rewrites.
-- Do not invent compatibility layers unless there is a real external need.
-- Check the relevant `specs/*.md` file before changing a subsystem.
+### Project Structure
 
-## Key Entry Points
+src/
+  nest.c: CLI entry point. subcommands: `nest l`, `nest c`, `nest h`, `nest r`. follows specs/cli.md
+  re.h: regex builder on top of automata — intervals, ranges, NFA construction. follows specs/re.md
+  re.c: impls re.h
+  re_ir.h: intermediate representation for regex patterns (opcodes like RE_IR_APPEND_CH, RE_IR_FORK, etc.). follows specs/re_ir.md
+  re_ir.c: impls re_ir.h, converts ReIr opcodes into re.h calls
+  aut.h: automata constructing (NFA→DFA), minimization, LLVM IR generation. follows specs/aut.md
+  aut.c: impls aut.h
+  irwriter.h: LLVM IR text emitter (functions, basic blocks, instructions, debug metadata). follows specs/irwriter.md
+  irwriter.c: impls irwriter.h
+  parse.h: parser for `.nest` source files, owns ParseState and error reporting. follows specs/parse.md
+  parse.c: impls parse.h, lexes and parses `.nest` syntax into token tree
+  parse_gen.c: build-time tool that generates lexer functions for `.nest` syntax. follows specs/parse_gen.md
+  post_process.h: ordered compile passes after parsing (macro inlining, tag generation, validation). follows specs/post_process.md
+  post_process.c: impls post_process.h
+  peg.h: PEG types shared across analyze/gen/ir (PegUnit, PegRule, PegAnalysis). follows specs/peg_analyze.md, specs/peg_gen.md
+  peg_analyze.c: PEG grammar analysis — FIRST/FOLLOW sets, conflict detection, memoization planning. follows specs/peg_analyze.md
+  peg_gen.c: PEG code generation — emits C header with parser tables and structure definitions. follows specs/peg_gen.md
+  peg_ir.c: PEG IR emission — generates LLVM IR for PEG parsing functions. follows specs/peg_ir.md
+  peg_ir.h: PEG IR context (PegIrCtx) shared state for IR emission. follows specs/peg_ir.md
+  vpa.h: visibly pushdown automaton — scoped lexer with hooks, regex compilation per scope. follows specs/vpa.md
+  vpa.c: impls vpa.h
+  coloring.h: graph k-coloring via kissat SAT solver (falls back to DSatur on Windows). follows specs/coloring.md
+  coloring.c: impls coloring.h
+  graph.h: adjacency-list graph — edges, random generation, max clique finding
+  graph.c: impls graph.h
+  header_writer.h: C header file emitter (structs, enums, defines, typedefs)
+  header_writer.c: impls header_writer.h
+  token_tree.h: hierarchical token storage — chunks, scopes, memoization tables. follows specs/token_tree.md
+  token_tree.c: impls token_tree.h
+  symtab.h: string interning table — intern/find/get by integer ID. follows specs/symtab.md
+  symtab.c: impls symtab.h
+  ustr.h: UTF-8 string with codepoint-level operations (size, slice, iterate). follows specs/ustr.md
+  ustr.c: impls ustr.h, dispatches to platform-specific backends
+  ustr_neon.c: ARM NEON accelerated UTF-8 validation
+  ustr_avx.c: x86 AVX2 accelerated UTF-8 validation
+  ustr_naive.c: portable fallback UTF-8 validation
+  ustr_intern.h: internal interface shared by ustr backends
+  bitset.h: dynamic bitset with set operations (or, and, equal). follows specs/bitset.md
+  bitset.c: impls bitset.h
+  darray.h: generic dynamic array (fat pointer, type-erased). follows specs/darray.md
+  darray.c: impls darray.h
+test/
+  test_re.c, test_re_ir.c: regex builder and IR tests
+  test_aut.c: automata NFA→DFA and LLVM IR generation tests
+  test_irwriter.c: IR text emitter tests
+  test_parse.c, test_parse_gen.c: parser and lexer generator tests
+  test_peg_analyze.c, test_peg_gen.c, test_peg_ir.c: PEG subsystem tests
+  test_post_process.c: post-processing pass tests
+  test_vpa.c: VPA lexer tests
+  test_coloring.c: graph coloring tests
+  test_symtab.c: symbol table tests
+  test_token_tree.c: token tree tests
+  test_ustr.c, test_bitset.c: utility tests
+  bench_ustr.c: UTF-8 string benchmarks
+  compat.c: platform compatibility helpers for tests
+test/examples/: example `.nest` files (calc, clike, json, words). follows specs/example_test.md
+scripts/
+  test: run all tests (accepts `debug` or `release` arg)
+  bench: run benchmarks
+  coverage: build & generate coverage report
+  test_examples: run example `.nest` files
+  amalgamate.rb: produce single-file amalgamation
+  gen_str_header.rb: generate string constant headers
+config.rb: platform-related config, generates build.ninja
+config.in.rb: defined sources, targets, dependencies
+specs/: design docs; read the relevant one before editing a subsystem
 
-- `src/nest.c`: CLI entry point. Subcommands: `nest l`, `nest c`, `nest h`, `nest r`.
-- `src/re.c`, `src/aut.c`, `src/irwriter.c`: regex -> automata -> LLVM IR pipeline.
-- `src/parse_gen.c`: build-time generated lexers for `.nest` syntax.
-- `src/parse.c`: parses `.nest` sources and owns parser state/error reporting.
-- `src/peg_analyze.c`, `src/peg_gen.c`, `src/peg_ir.c`: PEG analysis and code generation.
-- `src/vpa.c`: visibly pushdown lexer/parser pieces.
-- `src/coloring.c`, `src/graph.c`: graph coloring for PEG memoization layout.
-- `src/ustr.c`, `src/bitset.c`, `src/darray.c`: reusable runtime/data structures.
-
-## Repo Map
-
-- `src/` core implementation.
-- `test/` tests and benchmarks.
-- `scripts/` wrappers for test, bench, and coverage runs.
-- `specs/` design docs; read the relevant one before editing.
-- `config.rb` / `config.in.rb`: generate `build.ninja` and define targets.
-- `README.md`: user-facing build and CLI usage.
-
-## Specs To Read First
-
-- Regex / automata work: `specs/re.md`, `specs/aut.md`, `specs/re_ir.md`, `specs/irwriter.md`
-- Parser frontend work: `specs/parse.md`, `specs/parse_gen.md`, `specs/post_process.md`
-- PEG work: `specs/peg_analyze.md`, `specs/peg_gen.md`, `specs/peg_ir.md`, `specs/coloring.md`
-- CLI / build / tests: `specs/cli.md`, `specs/building.md`, `specs/test.md`
-- Strings / containers: `specs/ustr.md`, `specs/bitset.md`, `specs/darray.md`
-
-## Build
-
-Prereqs: Ruby, Ninja, and `unzip`.
-
-Common build:
+### Common Tasks
 
 ```sh
 ruby config.rb debug
 ninja
+ninja format
 ```
 
+Run tests / benchmarks:
 ```sh
-ruby config.rb release
-ninja
-```
-
-```sh
-ruby config.rb coverage
-ninja
-```
-
-Build modes from `config.in.rb`:
-
-- `debug`: `-O0 -g -fsanitize=address -fsanitize=undefined`
-- `release`: `-O2`
-- `coverage`: `-O0 -g -fprofile-instr-generate -fcoverage-mapping`
-
-- `build/<mode>/nest`
-- `build/<mode>/parse_gen`
-- `build/<mode>/test_*`
-- `build/<mode>/bench_*`
-- `out/libre.a`
-- `out/rt.h`
-
-## Test And Benchmark Commands
-
-```sh
-scripts/test
-```
-
-```sh
+scripts/test         # in release mode
 scripts/test debug
-scripts/test release
+scripts/benchmark
+scripts/test_examples
 ```
 
 Single test flow:
-
 ```sh
 ruby config.rb debug
 ninja build/debug/test_aut
 build/debug/test_aut
 ```
 
-Common single-test binaries:
+Adding new source files:
+- add the entry in config.in.rb
+- add related test
 
-```sh
-build/debug/test_re
-build/debug/test_parse
-build/debug/test_peg_analyze
-build/debug/test_peg_gen
-build/debug/test_coloring
+### Utils to Avoid Boilerplates
+
+Ustr
+```c
+// UTF-8 string with codepoint-level indexing
+char* s = ustr_new(strlen(data), data);  // create from raw bytes
+int32_t len = ustr_size(s);              // codepoint count
+char* sub = ustr_slice(s, 2, 5);         // slice by codepoint range
+ustr_del(s);                             // free
 ```
 
-```sh
-scripts/bench
-scripts/bench release
-build/release/bench_ustr
+Darray
+```c
+// generic dynamic array (fat pointer style)
+int32_t* arr = darray_new(sizeof(int32_t), 0);
+darray_push(arr, 42);
+darray_push(arr, 99);
+size_t n = darray_size(arr);   // 2
+arr = darray_concat(arr, other);
+darray_del(arr);
 ```
 
-```sh
-scripts/coverage
+IrWriter
+```c
+// LLVM IR text emitter
+IrWriter* w = irwriter_new(out_file, target_triple);
+irwriter_start(w, "source.ll", ".");
+irwriter_define_startf(w, "match", "{i64, i64} @match(i64 %%state_i64, i64 %%cp_i64)");
+irwriter_set_widen_ret(w);
+irwriter_bb(w);
+// ... emit instructions ...
+irwriter_define_end(w);
+irwriter_end(w);
+irwriter_del(w);
 ```
 
-- `build/coverage/html/index.html`
-
-Useful target discovery:
-
-```sh
-ninja -t targets | grep 'test_'
+TokenTree
+```c
+// hierarchical token storage with scope stack
+TokenTree* tree = tt_tree_new(ustr_source);
+tt_push(tree, scope_id);                           // push scope
+tt_add(tree, tok_id, cp_start, cp_size, -1);       // add token
+TokenChunk* chunk = tt_pop(tree);                   // pop scope
+tt_tree_del(tree, false);
 ```
 
-## Formatting
+### Code Style
 
-Clang-format is configured by `.clang-format`:
+- types use camel case: `Aut`, `IrWriter`, `ColoringResult`
+- vars & functions use snake case: `header_path`, `aut_gen_dfa`
+- use stdint. for example, `int32_t` instead of `int`
+- static (private) functions should start with `_`, names be simple as possible (without module prefix)
 
-- based on LLVM style
-- column limit `120`
-- pointer alignment: left (`foo* p`)
-- braces are inserted for block bodies
+### Naming
 
-```sh
-xcrun clang-format -i path/to/file.c path/to/file.h
-```
+Naming is important for readable code, should clearly represents what it does, and honest to spec, no re-inventing new variable/function names when specs has already named them.
 
-On other platforms use `clang-format -i`.
+Bad code: `n_tags`, `n_tokens`
 
-## Code Style
-
-- Types use camel case: `Aut`, `IrWriter`, `ColoringResult`.
-- Variables and functions use snake case: `header_path`, `aut_gen_dfa`.
-- Static private helpers start with `_`: `_usage`, `_detect_triple`, `_build_segments`.
-- Use explicit stdint types: `int32_t`, `uint8_t`, `int64_t`.
-- Prefer `bool` for boolean state where the module already uses it.
-- Keep related logic in one function unless extraction clearly improves reuse or clarity.
-- Prefer small local structs and helpers over large abstraction layers.
-
-## Includes And File Layout
-
-- Put project headers first, then system headers.
-- Keep include order stable and simple; do not over-normalize unrelated files.
-- Most `.c` files define private structs and static helpers near the top.
-- Public API belongs in headers under `src/`; internal-only helpers stay `static` in the `.c` file.
-
-## Error Handling Conventions
-
-- Library-style functions typically return `NULL`, `false`, or negative error codes on failure.
-- CLI-facing code prints diagnostics with `perror` or `fprintf(stderr, ...)` and returns non-zero.
-- Parser code centralizes user-facing parse errors in `ParseState` via `parse_error()` / `_error_at()`.
-- Do not hide failures with fallback behavior unless the existing code already does that intentionally.
-- Clean up owned resources on error paths; this codebase usually frees explicitly before returning.
-- Follow existing sentinel conventions such as `0` meaning unset action and negative values for special errors.
-
-## Testing Style
-
-- Tests are plain C executables under `test/`.
-- Common pattern: `#define TEST(name) static void name(void)` and `RUN(name)` in `main`.
-- Assertions use standard `assert()` heavily.
-- Prefer adding or updating the smallest test binary covering your change.
-- If you touch a generator, test both structure and generated text where practical.
-
-## Project-Specific Notes
-
-- The generated lexer function signature is `(i32 state, i32 codepoint) -> {i32 new_state, i32 action_id}` and is widened to `i64` pairs for the C ABI.
-- Special codepoints are `BOF = -1` and `EOF = -2`.
-- Regex conflict resolution uses MIN-RULE semantics for action IDs.
-- On macOS/Linux, `kissat` is built automatically; on Windows, `coloring.c` falls back to DSatur.
-- Some older docs or agent notes may mention `lex.c` / `ulex.c`; current CLI entry point is `src/nest.c`.
-
-## Agent Checklist
-
-- Read the relevant spec before editing a subsystem.
-- Build the smallest relevant target first.
-- Run the narrowest relevant test binary, then broader tests if needed.
-- Format touched C/C header files.
-- Avoid changing unrelated files or rewriting large generated/derived sections without need.
-
-## External Agent Rules
-
-- No `.cursor/rules/`, `.cursorrules`, or `.github/copilot-instructions.md` files exist in this repository at the time of writing.
+Good code: `tag_size`, `token_bytesize`, `tag_size_in_i32`, `tag_size_in_i64`

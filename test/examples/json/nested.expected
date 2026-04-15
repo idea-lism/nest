@@ -17,3 +17,6 @@
 @rbrace "}"
 @rbrace "}"
 ------
+main
+  value
+    @number

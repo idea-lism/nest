@@ -77,6 +77,8 @@ A first pre-processing is to create actions table:
 typedef struct {
   int32_t action_id; // map to index in Acitons array, start from 1
   VpaActionUnits action_units; // from VpaUnit, not owned
+  const char* end_scope_name;  // if action contains .end, scope name for parse_{name}
+  int32_t begin_scope_id;      // if action contains .begin, target scope_id; -1 otherwise
 } Action;
 
 typedef Action* Actions; // darray, prefill actions[0] with an empty entry
@@ -228,3 +230,7 @@ void _print_upper(HeaderWriter hw, const char* s) {
   }
 }
 ```
+
+### Testing
+
+- test should check if token tree is created when there are multiple scopes, not a flatten token stream.

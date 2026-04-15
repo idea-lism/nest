@@ -148,6 +148,7 @@ static void _emit_dbg_suffix(IrWriter* w, int id) {
 
 void irwriter_define_startf(IrWriter* w, const char* name, const char* sig_fmt, ...) {
   _validate_name(name, "function_name");
+  symtab_intern(&w->decls, name);
   if (!w->dbg_flags_emitted) {
     w->dbg_flags_emitted = 1;
     w->dbg_next_id = 5;

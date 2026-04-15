@@ -1,0 +1,53 @@
+------
+@ident "x"
+@assign "="
+@number "1"
+@semi ";"
+@lit.if "if"
+@lparen "("
+@ident "y"
+@rparen ")"
+  @lbrace "{"
+  @ident "z"
+  @assign "="
+  @number "2"
+  @semi ";"
+  @rbrace "}"
+------
+main
+  stmt
+    assign_stmt
+      @ident
+      @assign
+      expr
+        cmp
+          arith
+            term
+              factor
+                @number
+      @semi
+  stmt
+    if_stmt
+      @lit.if
+      @lparen
+      expr
+        cmp
+          arith
+            term
+              factor
+                @ident
+      @rparen
+      block
+        @lbrace
+        stmt
+          assign_stmt
+            @ident
+            @assign
+            expr
+              cmp
+                arith
+                  term
+                    factor
+                      @number
+            @semi
+        @rbrace

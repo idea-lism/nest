@@ -179,8 +179,6 @@ static void _lex_scope(LexCtx* ctx, ScopeId scope_id) {
   ScopeConfig cfg = configs[scope_id];
 
   tt_push(ctx->tree, scope_id);
-  int32_t chunk_idx = (int32_t)(darray_size(ctx->tree->table) - 1);
-  int32_t scope_cp_start = ctx->it.cp_idx;
 
   int64_t state = 0;
   int32_t last_action = 0;
@@ -265,10 +263,7 @@ static void _lex_scope(LexCtx* ctx, ScopeId scope_id) {
   }
 
   TokenChunk* chunk = ctx->tree->current;
-  tt_pop(ctx->tree);
-  if (ctx->tree->current->scope_id != SCOPE_START) {
-    tt_add(ctx->tree, scope_id, scope_cp_start, ctx->it.cp_idx - scope_cp_start, chunk_idx);
-  }
+  tt_pop(ctx->tree, ctx->it.cp_idx);
   if (cfg.parse_fn) {
     cfg.parse_fn(ctx->ps, chunk);
   }

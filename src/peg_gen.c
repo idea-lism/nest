@@ -71,7 +71,7 @@ static void _gen_header_types(HeaderWriter* hw) {
   hw_raw(hw, "#ifndef _NEST_PEGREF\n#define _NEST_PEGREF\n");
   hw_raw(hw, "typedef struct { TokenChunk* tc; int64_t col; int64_t row; } PegRef;\n");
   hw_raw(hw, "#endif\n\n");
-  hw_raw(hw, "typedef struct {\n  int64_t rhs_row;\n  int64_t col_size_in_i32;\n  PegRef elem;\n} PegLink;\n");
+  hw_raw(hw, "typedef struct { TokenChunk* tc; int64_t col; int64_t row; } PegLink;\n");
   hw_blank(hw);
 }
 
@@ -188,20 +188,18 @@ static void _gen_loader(HeaderWriter* hw, const char* rule_name, RuleScopeEntry*
       NodeField* nf = &sr->node_fields[fi];
       if (nf->is_link) {
         if (nf->is_scope) {
-          hw_fmt(hw, "    n.%s.elem.tc = &((TokenTree*)ref.tc->aux_value)->table[ref.tc->tokens[_cur].chunk_id];\n",
+          hw_fmt(hw, "    n.%s.tc = &((TokenTree*)ref.tc->aux_value)->table[ref.tc->tokens[_cur].chunk_id];\n",
                  nf->name);
-          hw_fmt(hw, "    n.%s.elem.col = 0;\n", nf->name);
+          hw_fmt(hw, "    n.%s.col = 0;\n", nf->name);
         } else {
-          hw_fmt(hw, "    n.%s.elem.tc = ref.tc;\n    n.%s.elem.col = _cur;\n", nf->name, nf->name);
+          hw_fmt(hw, "    n.%s.tc = ref.tc;\n    n.%s.col = _cur;\n", nf->name, nf->name);
         }
-        hw_fmt(hw, "    n.%s.elem.row = %d;\n", nf->name, nf->ref_row);
-        hw_fmt(hw, "    n.%s.col_size_in_i32 = %lld;\n", nf->name, (long long)col_size_in_i32);
-        hw_fmt(hw, "    n.%s.rhs_row = %d;\n", nf->name, nf->rhs_row);
+        hw_fmt(hw, "    n.%s.row = %d;\n", nf->name, nf->ref_row);
       } else {
         if (nf->is_scope) {
           hw_fmt(hw, "    n.%s.tc = &((TokenTree*)ref.tc->aux_value)->table[ref.tc->tokens[_cur].chunk_id];\n",
                  nf->name);
-          hw_fmt(hw, "    n.%s.col = 0;\n    n.%s.row = 0;\n", nf->name, nf->name);
+          hw_fmt(hw, "    n.%s.col = 0;\n    n.%s.row = %d;\n", nf->name, nf->name, nf->ref_row);
         } else {
           hw_fmt(hw, "    n.%s.tc = ref.tc;\n    n.%s.col = _cur;\n    n.%s.row = %d;\n", nf->name, nf->name, nf->name,
                  nf->ref_row);
@@ -228,38 +226,138 @@ static void _gen_loader(HeaderWriter* hw, const char* rule_name, RuleScopeEntry*
   hw_blank(hw);
 }
 
-static void _gen_has_next(HeaderWriter* hw, const char* prefix) {
-  hw_fmt(hw, "static inline bool %s_has_next(PegLink l) {\n", prefix);
-  hw_raw(hw, "  int32_t* col = (int32_t*)l.elem.tc->value + l.col_size_in_i32 * l.elem.col;\n");
-  hw_raw(hw, "  int32_t lhs_slot = col[l.elem.row];\n");
-  hw_raw(hw, "  if (lhs_slot < 0) return false;\n");
-  hw_raw(hw, "  if (l.rhs_row >= 0) {\n");
-  hw_raw(hw, "    int32_t* rhs_col = col + l.col_size_in_i32 * lhs_slot;\n");
-  hw_raw(hw, "    int32_t rhs_slot = rhs_col[l.rhs_row];\n");
-  hw_raw(hw, "    if (rhs_slot < 0) return false;\n");
-  hw_raw(hw, "  }\n");
-  hw_raw(hw, "  return true;\n}\n");
+// Forward-declare darray_size since iteration helpers appear before runtime
+static void _gen_iter_preamble(HeaderWriter* hw) {
+  hw_raw(hw, "#ifndef _NEST_DARRAY_SIZE_DECL\n#define _NEST_DARRAY_SIZE_DECL\n");
+  hw_raw(hw, "extern size_t darray_size(void*);\n");
+  hw_raw(hw, "#endif\n\n");
+}
+static void _gen_has_elem(HeaderWriter* hw, ScopeClosure* closures, int32_t closure_size, const char* prefix,
+                          int memoize_mode) {
+  hw_fmt(hw, "static inline bool %s_has_elem(PegLink l) {\n", prefix);
+  hw_raw(hw, "  if (l.col >= (int64_t)darray_size(l.tc->tokens)) return false;\n");
+  hw_raw(hw, "  switch (l.tc->scope_id) {\n");
+  for (int32_t c = 0; c < closure_size; c++) {
+    ScopeClosure* cl = &closures[c];
+    if (!cl->link_infos || darray_size(cl->link_infos) == 0) {
+      continue;
+    }
+    hw_fmt(hw, "  case %d: switch (l.row) {\n", cl->scope_id);
+    for (size_t i = 0; i < darray_size(cl->link_infos); i++) {
+      LinkInfo* li = &cl->link_infos[i];
+      hw_fmt(hw, "    case %d: {\n", li->wrapper_row);
+      if (li->lhs_is_term) {
+        hw_fmt(hw, "      return l.tc->tokens[l.col].term_id == %d;\n", li->lhs_term_id);
+      } else {
+        hw_fmt(hw, "      int32_t* c_ = (int32_t*)l.tc->value + %lld * l.col;\n", (long long)li->col_size_in_i32);
+        if (memoize_mode == MEMOIZE_SHARED) {
+          hw_fmt(hw, "      uint64_t seg = *(uint64_t*)(c_ + %llu * 2);\n", (unsigned long long)li->lhs_bit_index);
+          hw_fmt(hw, "      return (seg & 0x%llxULL) && c_[%d] >= 0;\n", (unsigned long long)li->lhs_bit_mask,
+                 li->lhs_row);
+        } else {
+          hw_fmt(hw, "      return c_[%d] >= 0;\n", li->lhs_row);
+        }
+      }
+      hw_raw(hw, "    }\n");
+    }
+    hw_raw(hw, "    default: return false;\n    }\n");
+  }
+  hw_raw(hw, "  default: return false;\n  }\n}\n");
   hw_blank(hw);
 }
-
-static void _gen_get_next(HeaderWriter* hw, const char* prefix) {
+static void _gen_get_next(HeaderWriter* hw, ScopeClosure* closures, int32_t closure_size, const char* prefix,
+                          int memoize_mode) {
   hw_fmt(hw, "static inline PegLink %s_get_next(PegLink l) {\n", prefix);
-  hw_raw(hw, "  int32_t* col = (int32_t*)l.elem.tc->value + l.col_size_in_i32 * l.elem.col;\n");
-  hw_raw(hw, "  int32_t lhs_slot = col[l.elem.row];\n");
-  hw_raw(hw, "  if (l.rhs_row >= 0) {\n");
-  hw_raw(hw, "    int32_t* rhs_col = col + l.col_size_in_i32 * lhs_slot;\n");
-  hw_raw(hw, "    int32_t rhs_slot = rhs_col[l.rhs_row];\n");
-  hw_raw(hw, "    l.elem.col += lhs_slot + rhs_slot;\n");
-  hw_raw(hw, "  } else {\n");
-  hw_raw(hw, "    l.elem.col += lhs_slot;\n");
-  hw_raw(hw, "  }\n");
-  hw_raw(hw, "  return l;\n}\n");
+  hw_raw(hw, "  switch (l.tc->scope_id) {\n");
+  for (int32_t c = 0; c < closure_size; c++) {
+    ScopeClosure* cl = &closures[c];
+    if (!cl->link_infos || darray_size(cl->link_infos) == 0) {
+      continue;
+    }
+    hw_fmt(hw, "  case %d: switch (l.row) {\n", cl->scope_id);
+    for (size_t i = 0; i < darray_size(cl->link_infos); i++) {
+      LinkInfo* li = &cl->link_infos[i];
+      hw_fmt(hw, "    case %d: {\n", li->wrapper_row);
+      if (li->lhs_is_term) {
+        hw_raw(hw, "      l.col += 1;\n");
+      } else {
+        hw_fmt(hw, "      int32_t* c_ = (int32_t*)l.tc->value + %lld * l.col;\n", (long long)li->col_size_in_i32);
+        hw_fmt(hw, "      l.col += c_[%d];\n", li->lhs_row);
+      }
+      if (li->rhs_row >= 0) {
+        hw_fmt(hw, "      if (l.col < (int64_t)darray_size(l.tc->tokens)) {\n");
+        hw_fmt(hw, "        int32_t* rc = (int32_t*)l.tc->value + %lld * l.col;\n", (long long)li->col_size_in_i32);
+        if (memoize_mode == MEMOIZE_SHARED) {
+          hw_fmt(hw, "        uint64_t rs = *(uint64_t*)(rc + %llu * 2);\n", (unsigned long long)li->rhs_bit_index);
+          hw_fmt(hw, "        if ((rs & 0x%llxULL) && rc[%d] > 0) l.col += rc[%d]; }\n",
+                 (unsigned long long)li->rhs_bit_mask, li->rhs_row, li->rhs_row);
+        } else {
+          hw_fmt(hw, "        if (rc[%d] > 0) l.col += rc[%d]; }\n", li->rhs_row, li->rhs_row);
+        }
+      }
+      hw_raw(hw, "      break;\n    }\n");
+    }
+    hw_raw(hw, "    default: break;\n    }\n    break;\n");
+  }
+  hw_raw(hw, "  }\n  return l;\n}\n");
+  hw_blank(hw);
+}
+static void _gen_get_lhs(HeaderWriter* hw, ScopeClosure* closures, int32_t closure_size, const char* prefix) {
+  hw_fmt(hw, "static inline PegRef %s_get_lhs(PegLink l) {\n", prefix);
+  hw_raw(hw, "  switch (l.tc->scope_id) {\n");
+  for (int32_t c = 0; c < closure_size; c++) {
+    ScopeClosure* cl = &closures[c];
+    if (!cl->link_infos || darray_size(cl->link_infos) == 0) {
+      continue;
+    }
+    hw_fmt(hw, "  case %d: switch (l.row) {\n", cl->scope_id);
+    for (size_t i = 0; i < darray_size(cl->link_infos); i++) {
+      LinkInfo* li = &cl->link_infos[i];
+      hw_fmt(hw, "    case %d:\n", li->wrapper_row);
+      if (li->lhs_is_term) {
+        hw_raw(hw, "      return (PegRef){l.tc, l.col, 0};\n");
+      } else {
+        hw_fmt(hw, "      return (PegRef){l.tc, l.col, %d};\n", li->lhs_row);
+      }
+    }
+    hw_raw(hw, "    default: break;\n    }\n    break;\n");
+  }
+  hw_raw(hw, "  }\n  return (PegRef){0};\n}\n");
+  hw_blank(hw);
+}
+static void _gen_get_rhs(HeaderWriter* hw, ScopeClosure* closures, int32_t closure_size, const char* prefix) {
+  hw_fmt(hw, "static inline PegRef %s_get_rhs(PegLink l) {\n", prefix);
+  hw_raw(hw, "  switch (l.tc->scope_id) {\n");
+  for (int32_t c = 0; c < closure_size; c++) {
+    ScopeClosure* cl = &closures[c];
+    if (!cl->link_infos || darray_size(cl->link_infos) == 0) {
+      continue;
+    }
+    hw_fmt(hw, "  case %d: switch (l.row) {\n", cl->scope_id);
+    for (size_t i = 0; i < darray_size(cl->link_infos); i++) {
+      LinkInfo* li = &cl->link_infos[i];
+      if (li->rhs_row < 0) {
+        continue;
+      }
+      hw_fmt(hw, "    case %d: {\n", li->wrapper_row);
+      if (li->lhs_is_term) {
+        hw_fmt(hw, "      return (PegRef){l.tc, l.col + 1, %d};\n", li->rhs_row);
+      } else {
+        hw_fmt(hw, "      int32_t* c_ = (int32_t*)l.tc->value + %lld * l.col;\n", (long long)li->col_size_in_i32);
+        hw_fmt(hw, "      return (PegRef){l.tc, l.col + c_[%d], %d};\n", li->lhs_row, li->rhs_row);
+      }
+      hw_raw(hw, "    }\n");
+    }
+    hw_raw(hw, "    default: break;\n    }\n    break;\n");
+  }
+  hw_raw(hw, "  }\n  return (PegRef){0};\n}\n");
   hw_blank(hw);
 }
 
 static void _gen_peg_size(HeaderWriter* hw, ScopeClosure* closures, int32_t closure_size, const char* prefix) {
   hw_fmt(hw, "static inline int64_t %s_peg_size(PegRef ref) {\n", prefix);
   hw_raw(hw, "  if (!ref.tc || !ref.tc->value) return -1;\n");
+  hw_raw(hw, "  if (ref.col >= (int64_t)darray_size(ref.tc->tokens)) return -1;\n");
   hw_raw(hw, "  switch (ref.tc->scope_id) {\n");
   for (int32_t c = 0; c < closure_size; c++) {
     ScopeClosure* cl = &closures[c];
@@ -290,8 +388,11 @@ static void _gen_header(PegGenInput* input, HeaderWriter* hw, RuleScopeMap* scop
     _gen_loader(hw, rule_name, scope_map->entries[gid], scope_map->counts[gid], prefix);
   }
 
-  _gen_has_next(hw, prefix);
-  _gen_get_next(hw, prefix);
+  _gen_iter_preamble(hw);
+  _gen_has_elem(hw, closures, closure_size, prefix, input->memoize_mode);
+  _gen_get_next(hw, closures, closure_size, prefix, input->memoize_mode);
+  _gen_get_lhs(hw, closures, closure_size, prefix);
+  _gen_get_rhs(hw, closures, closure_size, prefix);
   _gen_peg_size(hw, closures, closure_size, prefix);
 }
 
@@ -366,6 +467,12 @@ static void _gen_scope_ir(IrWriter* w, ScopeClosure* cl, int memoize_mode) {
       irwriter_br(w, material_parse);
     } else if (memoize_mode == MEMOIZE_SHARED) {
       IrVal col_val = irwriter_load(w, "i64", col_ptr);
+      // bounds check: skip memoize lookup if col >= token_size
+      IrVal n_tok_i64 = irwriter_sext(w, "i32", token_size, "i64");
+      IrVal in_range = irwriter_icmp(w, "slt", "i64", col_val, n_tok_i64);
+      IrLabel memo_ok = irwriter_label(w);
+      irwriter_br_cond(w, in_range, memo_ok, material_parse);
+      irwriter_bb_at(w, memo_ok);
       IrVal row_off = irwriter_binop(w, "mul", "i64", col_val, irwriter_imm_int(w, (int)sizeof_col));
       IrVal slot_byte = irwriter_binop(
           w, "add", "i64", row_off, irwriter_imm_int(w, (int)(cl->bits_bucket_size * 8 + (int64_t)sr->slot_index * 4)));
@@ -392,6 +499,12 @@ static void _gen_scope_ir(IrWriter* w, ScopeClosure* cl, int memoize_mode) {
       irwriter_br(w, done_bb);
     } else {
       IrVal col_val = irwriter_load(w, "i64", col_ptr);
+      // bounds check: skip memoize lookup if col >= token_size
+      IrVal n_tok_i64_n = irwriter_sext(w, "i32", token_size, "i64");
+      IrVal in_range_n = irwriter_icmp(w, "slt", "i64", col_val, n_tok_i64_n);
+      IrLabel memo_ok_n = irwriter_label(w);
+      irwriter_br_cond(w, in_range_n, memo_ok_n, material_parse);
+      irwriter_bb_at(w, memo_ok_n);
       IrVal row_off = irwriter_binop(w, "mul", "i64", col_val, irwriter_imm_int(w, (int)sizeof_col));
       IrVal slot_byte = irwriter_binop(
           w, "add", "i64", row_off, irwriter_imm_int(w, (int)(cl->bits_bucket_size * 8 + (int64_t)sr->slot_index * 4)));

@@ -112,8 +112,8 @@ if (mode == NONE) {
 
 ### Idiomatic C: unified naming
 
-Naming should be consistent, clearly represents what it does, and honest to spec, no re-inventing new variable/function names when specs has already named them.
+Naming is important for readable code, should clearly represents what it does, and honest to spec, no re-inventing new variable/function names when specs has already named them.
 
 Bad code: `n_tags`, `n_tokens`
 
-Good code: `tag_size`, `token_count`
+Good code: `tag_size`, `token_bytesize`, `tag_size_in_i32`, `tag_size_in_i64`

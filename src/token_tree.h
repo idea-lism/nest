@@ -51,7 +51,11 @@ void tt_add(TokenTree* tree, int32_t tok_id, int32_t cp_start, int32_t cp_size, 
 TokenChunk* tt_push(TokenTree* tree, int32_t scope_id);
 // generated parser only: also set the token_chunk.aux_value = token_tree
 TokenChunk* tt_push_assoc(TokenTree* tree, int32_t scope_id);
-TokenChunk* tt_pop(TokenTree* tree);
+// Pop current chunk. Add scope-ref token to parent chunk.
+// cp_end = cp_start + cp_size of the closing token.
+// scope-ref: term_id = child scope_id, chunk_id = child index in table,
+//   cp_start = child's first token's cp_start, cp_size = cp_end - cp_start.
+TokenChunk* tt_pop(TokenTree* tree, int32_t cp_end);
 
 // current chunk token count
 int32_t tt_current_size(TokenTree* tree);

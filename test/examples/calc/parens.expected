@@ -7,3 +7,18 @@
 @star "*"
 @number "3"
 ------
+main
+  expr
+    term
+      factor
+        @lparen
+        expr
+          term
+            factor
+              @number
+          term
+            factor
+              @number
+        @rparen
+      factor
+        @number

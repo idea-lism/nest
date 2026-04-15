@@ -1,4 +1,6 @@
 ------
+@ident "x"
+@assign "="
 @ident "a"
 @plus "+"
 @ident "b"
@@ -8,4 +10,27 @@
 @ident "d"
 @slash "/"
 @ident "e"
+@semi ";"
 ------
+main
+  stmt
+    assign_stmt
+      @ident
+      @assign
+      expr
+        cmp
+          arith
+            term
+              factor
+                @ident
+            term
+              factor
+                @ident
+              factor
+                @ident
+            term
+              factor
+                @ident
+              factor
+                @ident
+      @semi

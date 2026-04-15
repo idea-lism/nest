@@ -251,14 +251,14 @@ static void _gen_print_children(FILE* f, const char* prefix, PegUnit* children, 
         int32_t rid = symtab_find(rule_names, tname);
         if (rid >= 0) {
           if (is_link) {
-            fprintf(f, "    for (PegLink _l = _n.%s; %s_has_next(_l); _l = %s_get_next(_l))\n", fname, prefix, prefix);
-            fprintf(f, "      print_%s(_l.elem, depth + 1);\n", tname);
+            fprintf(f, "    for (PegLink _l = _n.%s; %s_has_elem(_l); _l = %s_get_next(_l))\n", fname, prefix, prefix);
+            fprintf(f, "      print_%s(%s_get_lhs(_l), depth + 1);\n", tname, prefix);
           } else {
             fprintf(f, "    print_%s(_n.%s, depth + 1);\n", tname, fname);
           }
         }
       } else if (is_link) {
-        fprintf(f, "    for (PegLink _l = _n.%s; %s_has_next(_l); _l = %s_get_next(_l)) {\n", fname, prefix, prefix);
+        fprintf(f, "    for (PegLink _l = _n.%s; %s_has_elem(_l); _l = %s_get_next(_l)) {\n", fname, prefix, prefix);
         fprintf(f, "      _indent(depth + 1); printf(\"%s\\n\");\n", tname);
         fprintf(f, "    }\n");
       } else {
@@ -270,8 +270,8 @@ static void _gen_print_children(FILE* f, const char* prefix, PegUnit* children, 
       const char* callee = symtab_get(rule_names, u->id);
       char* fname = _exd_next(fd, callee);
       if (is_link) {
-        fprintf(f, "    for (PegLink _l = _n.%s; %s_has_next(_l); _l = %s_get_next(_l))\n", fname, prefix, prefix);
-        fprintf(f, "      print_%s(_l.elem, depth + 1);\n", callee);
+        fprintf(f, "    for (PegLink _l = _n.%s; %s_has_elem(_l); _l = %s_get_next(_l))\n", fname, prefix, prefix);
+        fprintf(f, "      print_%s(%s_get_lhs(_l), depth + 1);\n", callee, prefix);
       } else if (is_opt) {
         fprintf(f, "    if (%s_peg_size(_n.%s) > 0)\n", prefix, fname);
         fprintf(f, "      print_%s(_n.%s, depth + 1);\n", callee, fname);
@@ -306,9 +306,6 @@ static void _gen_example_c(FILE* f, const char* prefix, ParseState* ps) {
   for (int32_t i = 0; i < n_tokens; i++) {
     int32_t tok_id = i + tokens->start_num;
     const char* name = symtab_get(tokens, tok_id);
-    if (strncmp(name, "@lit.", 5) == 0) {
-      continue;
-    }
     fprintf(f, "  case TOK_");
     for (const char* s = name + 1; *s; s++) {
       char c = toupper((unsigned char)*s);
@@ -415,14 +412,14 @@ static void _gen_example_c(FILE* f, const char* prefix, ParseState* ps) {
         int32_t rid = symtab_find(rule_names, tname);
         if (rid >= 0) {
           if (is_link) {
-            fprintf(f, "  for (PegLink _l = _n.%s; %s_has_next(_l); _l = %s_get_next(_l))\n", san, prefix, prefix);
-            fprintf(f, "    print_%s(_l.elem, depth + 1);\n", tname);
+            fprintf(f, "  for (PegLink _l = _n.%s; %s_has_elem(_l); _l = %s_get_next(_l))\n", san, prefix, prefix);
+            fprintf(f, "    print_%s(%s_get_lhs(_l), depth + 1);\n", tname, prefix);
           } else {
             fprintf(f, "  print_%s(_n.%s, depth + 1);\n", tname, san);
           }
         }
       } else if (is_link) {
-        fprintf(f, "  for (PegLink _l = _n.%s; %s_has_next(_l); _l = %s_get_next(_l)) {\n", san, prefix, prefix);
+        fprintf(f, "  for (PegLink _l = _n.%s; %s_has_elem(_l); _l = %s_get_next(_l)) {\n", san, prefix, prefix);
         fprintf(f, "    _indent(depth + 1); printf(\"%s\\n\");\n", tname);
         fprintf(f, "  }\n");
       } else {
@@ -434,8 +431,8 @@ static void _gen_example_c(FILE* f, const char* prefix, ParseState* ps) {
       bool is_link = (body->multiplier == '*' || body->multiplier == '+');
       bool is_opt = (body->multiplier == '?');
       if (is_link) {
-        fprintf(f, "  for (PegLink _l = _n.%s; %s_has_next(_l); _l = %s_get_next(_l))\n", callee, prefix, prefix);
-        fprintf(f, "    print_%s(_l.elem, depth + 1);\n", callee);
+        fprintf(f, "  for (PegLink _l = _n.%s; %s_has_elem(_l); _l = %s_get_next(_l))\n", callee, prefix, prefix);
+        fprintf(f, "    print_%s(%s_get_lhs(_l), depth + 1);\n", callee, prefix);
       } else if (is_opt) {
         fprintf(f, "  if (%s_peg_size(_n.%s) > 0)\n", prefix, callee);
         fprintf(f, "    print_%s(_n.%s, depth + 1);\n", callee, callee);
@@ -447,7 +444,7 @@ static void _gen_example_c(FILE* f, const char* prefix, ParseState* ps) {
     fprintf(f, "}\n\n");
   }
 
-  // main: lex+parse via vpa_lex (which calls PEG parsers on scope .end)
+  // main: lex+parse via <prefix>_parse
   fprintf(f, "int main(int argc, char** argv) {\n");
   fprintf(f, "  if (argc < 2) {\n");
   fprintf(f, "    fprintf(stderr, \"usage: %%s <input>\\n\", argv[0]);\n");
@@ -456,15 +453,14 @@ static void _gen_example_c(FILE* f, const char* prefix, ParseState* ps) {
   fprintf(f, "  const char* input = argv[1];\n");
   fprintf(f, "  int32_t len = (int32_t)strlen(input);\n");
   fprintf(f, "  char* ustr = ustr_new(len, input);\n");
-  fprintf(f, "  TokenTree* tt = tt_tree_new(ustr);\n");
   fprintf(f, "  ParseContext ctx = {0};\n");
-  fprintf(f, "  vpa_lex((void*)ustr, ustr_size(ustr), tt, NULL, &ctx);\n\n");
+  fprintf(f, "  ParseResult res = %s_parse(ctx, ustr);\n", prefix);
+  fprintf(f, "  TokenTree* tt = res.tt;\n\n");
   fprintf(f, "  printf(\"------\\n\");\n");
   fprintf(f, "  print_tokens(tt, tt->root, 0);\n");
   fprintf(f, "  printf(\"------\\n\");\n");
-  fprintf(f, "  PegRef main_ref = {.tc = tt->root, .col = 0, .row = 0};\n");
-  fprintf(f, "  if (tt->root->value) print_main(main_ref, 0);\n\n");
-  fprintf(f, "  tt_tree_del(tt, false);\n");
+  fprintf(f, "  if (%s_peg_size(res.main) > 0) print_main(res.main, 0);\n\n", prefix);
+  fprintf(f, "  %s_cleanup(res);\n", prefix);
   fprintf(f, "  ustr_del(ustr);\n");
   fprintf(f, "  return 0;\n");
   fprintf(f, "}\n");
@@ -606,6 +602,14 @@ static int32_t _cmd_compile(int32_t argc, char** argv) {
   if (verbose) {
     fprintf(stderr, "[nest] vpa_gen\n");
   }
+  // compute main rule row for PegRef
+  int32_t main_rule_row = 0;
+  if (darray_size(gen_input.scope_closures) > 0) {
+    ScopeClosure* cl0 = &gen_input.scope_closures[0];
+    if (darray_size(cl0->scoped_rules) > 0) {
+      main_rule_row = (int32_t)(cl0->bits_bucket_size * 2 + cl0->scoped_rules[0].slot_index);
+    }
+  }
   vpa_gen(
       &(VpaGenInput){
           .scopes = ps->vpa_scopes,
@@ -613,7 +617,7 @@ static int32_t _cmd_compile(int32_t argc, char** argv) {
           .tokens = ps->tokens,
           .hooks = ps->hooks,
       },
-      hw, w, prefix);
+      hw, w, prefix, main_rule_row);
 
   {
     FILE* fc = fopen(c_path, "w");

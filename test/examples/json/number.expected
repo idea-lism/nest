@@ -1,3 +1,6 @@
 ------
 @number "42"
 ------
+main
+  value
+    @number

@@ -9,3 +9,8 @@
 @space " "
 @number "2"
 ------
+main
+  expr
+    term
+      factor
+        @number

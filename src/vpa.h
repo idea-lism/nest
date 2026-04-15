@@ -72,4 +72,4 @@ typedef struct {
   Symtab hooks;             // owned by ParseState, can be used to lookup hook name, start from 0
 } VpaGenInput;
 
-void vpa_gen(VpaGenInput* input, HeaderWriter* hw, IrWriter* w, const char* prefix);
+void vpa_gen(VpaGenInput* input, HeaderWriter* hw, IrWriter* w, const char* prefix, int32_t main_rule_row);

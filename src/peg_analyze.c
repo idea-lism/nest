@@ -141,8 +141,11 @@ static ScopedUnit _breakdown_single(GatherCtx* gctx, PegUnit* unit) {
     int32_t idx = _intern_rule(gctx->closure, gctx->closure->scope_name, callee_name, unit->id);
     if (!gctx->closure->scoped_rules[idx].scoped_rule_name) {
       gctx->closure->scoped_rules[idx].scoped_rule_name = (const char*)1;
+      int32_t saved_mult_num = gctx->multiplier_num;
+      gctx->multiplier_num = 0;
       ScopedUnit body = _breakdown(gctx, &callee->body, callee_name);
       gctx->closure->scoped_rules[idx].body = body;
+      gctx->multiplier_num = saved_mult_num;
     }
     su.kind = SCOPED_UNIT_CALL;
     su.as.callee = (const char*)(intptr_t)(idx + gctx->closure->scoped_rule_names.start_num);
@@ -566,45 +569,9 @@ static bool _is_unit_nullable(ScopeClosure* cl, ScopedUnit* unit) {
   return false;
 }
 
-static void _compute_first_set(ScopeClosure* cl, ScopedUnit* unit, Bitset* set) {
-  switch (unit->kind) {
-  case SCOPED_UNIT_TERM:
-    bitset_add_bit(set, (uint32_t)unit->as.term_id);
-    break;
-  case SCOPED_UNIT_CALL: {
-    int32_t cid = symtab_find(&cl->scoped_rule_names, unit->as.callee);
-    if (cid >= 0) {
-      int32_t idx = cid - cl->scoped_rule_names.start_num;
-      if (cl->scoped_rules[idx].first_set) {
-        bitset_or_into(set, cl->scoped_rules[idx].first_set);
-      }
-    }
-    break;
-  }
-  case SCOPED_UNIT_SEQ:
-    for (size_t i = 0; i < darray_size(unit->as.children); i++) {
-      _compute_first_set(cl, &unit->as.children[i], set);
-      if (!_is_unit_nullable(cl, &unit->as.children[i])) {
-        break;
-      }
-    }
-    break;
-  case SCOPED_UNIT_BRANCHES:
-    for (size_t i = 0; i < darray_size(unit->as.children); i++) {
-      _compute_first_set(cl, &unit->as.children[i], set);
-    }
-    break;
-  case SCOPED_UNIT_MAYBE:
-    _compute_first_set(cl, unit->as.base, set);
-    break;
-  case SCOPED_UNIT_STAR:
-  case SCOPED_UNIT_PLUS:
-    _compute_first_set(cl, unit->as.interlace.lhs, set);
-    break;
-  }
-}
+typedef enum { SET_FIRST, SET_LAST } _SetDir;
 
-static void _compute_last_set(ScopeClosure* cl, ScopedUnit* unit, Bitset* set) {
+static void _compute_set(ScopeClosure* cl, ScopedUnit* unit, Bitset* set, _SetDir dir) {
   switch (unit->kind) {
   case SCOPED_UNIT_TERM:
     bitset_add_bit(set, (uint32_t)unit->as.term_id);
@@ -613,16 +580,19 @@ static void _compute_last_set(ScopeClosure* cl, ScopedUnit* unit, Bitset* set) {
     int32_t cid = symtab_find(&cl->scoped_rule_names, unit->as.callee);
     if (cid >= 0) {
       int32_t idx = cid - cl->scoped_rule_names.start_num;
-      if (cl->scoped_rules[idx].last_set) {
-        bitset_or_into(set, cl->scoped_rules[idx].last_set);
+      Bitset* src = (dir == SET_FIRST) ? cl->scoped_rules[idx].first_set : cl->scoped_rules[idx].last_set;
+      if (src) {
+        bitset_or_into(set, src);
       }
     }
     break;
   }
   case SCOPED_UNIT_SEQ: {
     int32_t n = (int32_t)darray_size(unit->as.children);
-    for (int32_t i = n - 1; i >= 0; i--) {
-      _compute_last_set(cl, &unit->as.children[i], set);
+    int32_t start = (dir == SET_FIRST) ? 0 : n - 1;
+    int32_t step = (dir == SET_FIRST) ? 1 : -1;
+    for (int32_t i = start; i >= 0 && i < n; i += step) {
+      _compute_set(cl, &unit->as.children[i], set, dir);
       if (!_is_unit_nullable(cl, &unit->as.children[i])) {
         break;
       }
@@ -631,15 +601,15 @@ static void _compute_last_set(ScopeClosure* cl, ScopedUnit* unit, Bitset* set) {
   }
   case SCOPED_UNIT_BRANCHES:
     for (size_t i = 0; i < darray_size(unit->as.children); i++) {
-      _compute_last_set(cl, &unit->as.children[i], set);
+      _compute_set(cl, &unit->as.children[i], set, dir);
     }
     break;
   case SCOPED_UNIT_MAYBE:
-    _compute_last_set(cl, unit->as.base, set);
+    _compute_set(cl, unit->as.base, set, dir);
     break;
   case SCOPED_UNIT_STAR:
   case SCOPED_UNIT_PLUS:
-    _compute_last_set(cl, unit->as.interlace.lhs, set);
+    _compute_set(cl, unit->as.interlace.lhs, set, dir);
     break;
   }
 }
@@ -707,8 +677,8 @@ static void _analyze_rules(ScopeClosure* cl) {
       Bitset* old_last = cl->scoped_rules[i].last_set;
       cl->scoped_rules[i].first_set = bitset_new();
       cl->scoped_rules[i].last_set = bitset_new();
-      _compute_first_set(cl, &cl->scoped_rules[i].body, cl->scoped_rules[i].first_set);
-      _compute_last_set(cl, &cl->scoped_rules[i].body, cl->scoped_rules[i].last_set);
+      _compute_set(cl, &cl->scoped_rules[i].body, cl->scoped_rules[i].first_set, SET_FIRST);
+      _compute_set(cl, &cl->scoped_rules[i].body, cl->scoped_rules[i].last_set, SET_LAST);
       if (!bitset_equal(cl->scoped_rules[i].first_set, old_first) ||
           !bitset_equal(cl->scoped_rules[i].last_set, old_last)) {
         changed = true;
@@ -909,138 +879,116 @@ static int32_t _slot_row(ScopeClosure* cl, ScopedRule* sr) {
   return (int32_t)(cl->bits_bucket_size * 2 + (int64_t)sr->slot_index);
 }
 
-static void _build_child_fields(PegAnalyzeInput* input, ScopeClosure* cl, PegUnit* children, int32_t child_size,
-                                FieldDedup* fd, const char* parent_rule_name, int32_t* multiplier_num_ptr,
-                                NodeFields* out) {
-  int64_t col_size_in_i32 = cl->bits_bucket_size * 2 + cl->slots_size;
-  (void)col_size_in_i32;
+// find entry rule row in target scope (entry rule name = scope name)
+static int32_t _scope_entry_row(PegAnalyzeInput* input, ScopeClosure* all_closures, int32_t n_closures,
+                                int32_t scope_id) {
+  const char* scope_name = symtab_get(&input->scope_names, scope_id);
+  for (int32_t c = 0; c < n_closures; c++) {
+    ScopeClosure* tcl = &all_closures[c];
+    if (strcmp(tcl->scope_name, scope_name) != 0) {
+      continue;
+    }
+    int32_t entry_id = symtab_find_f(&tcl->scoped_rule_names, "%s$%s", scope_name, scope_name);
+    ScopedRule* entry_sr = _find_scoped_rule(tcl, entry_id);
+    return entry_sr ? _slot_row(tcl, entry_sr) : 0;
+  }
+  return 0;
+}
 
+// term: sanitize name, dedup, set advance based on is_link/in_branch context
+static NodeField _make_term_nf(PegAnalyzeInput* input, ScopeClosure* cl, ScopeClosure* all_closures, int32_t n_closures,
+                               FieldDedup* fd, int32_t term_id, bool is_link, bool in_branch,
+                               const char* parent_rule_name, int32_t* mult_num) {
+  char* san = _sanitize_field_name(_term_name(input, term_id));
+  char* dedup = _field_dedup_next(fd, san);
+  bool scope = _is_scope_term(input, term_id);
+  NodeField nf = {
+      .name = dedup,
+      .is_link = is_link,
+      .is_scope = scope,
+      .ref_row = scope ? _scope_entry_row(input, all_closures, n_closures, term_id) : 0,
+      .rhs_row = -1,
+      .advance = (is_link || in_branch) ? NODE_ADVANCE_NONE : NODE_ADVANCE_ONE,
+      .advance_slot_row = 0,
+  };
+  if (is_link) {
+    (*mult_num)++;
+    ScopedRule* wrapper = _find_scoped_rule(
+        cl, symtab_find_f(&cl->scoped_rule_names, "%s$%s$%d", cl->scope_name, parent_rule_name, *mult_num));
+    nf.ref_row = wrapper ? _slot_row(cl, wrapper) : 0;
+  }
+  free(san);
+  return nf;
+}
+
+// call: dedup name, resolve callee/wrapper row, interlace rhs if applicable
+static NodeField _make_call_nf(PegAnalyzeInput* input, ScopeClosure* cl, FieldDedup* fd, int32_t call_id, bool is_link,
+                               bool in_branch, PegUnit* u, const char* parent_rule_name, int32_t* mult_num) {
+  const char* callee_name = symtab_get(&input->rule_names, call_id);
+  char* dedup = _field_dedup_next(fd, callee_name);
+  NodeField nf = {
+      .name = dedup,
+      .is_link = is_link,
+      .is_scope = false,
+      .ref_row = 0,
+      .rhs_row = -1,
+      .advance = NODE_ADVANCE_NONE,
+      .advance_slot_row = 0,
+  };
+  if (is_link) {
+    (*mult_num)++;
+    ScopedRule* wrapper = _find_scoped_rule(
+        cl, symtab_find_f(&cl->scoped_rule_names, "%s$%s$%d", cl->scope_name, parent_rule_name, *mult_num));
+    nf.ref_row = wrapper ? _slot_row(cl, wrapper) : 0;
+    if (u && u->interlace_rhs_kind == PEG_CALL) {
+      const char* rhs_name = symtab_get(&input->rule_names, u->interlace_rhs_id);
+      ScopedRule* rhs_sr =
+          _find_scoped_rule(cl, symtab_find_f(&cl->scoped_rule_names, "%s$%s", cl->scope_name, rhs_name));
+      if (rhs_sr) {
+        nf.rhs_row = _slot_row(cl, rhs_sr);
+      }
+    }
+  } else {
+    ScopedRule* callee_sr =
+        _find_scoped_rule(cl, symtab_find_f(&cl->scoped_rule_names, "%s$%s", cl->scope_name, callee_name));
+    int32_t callee_row = callee_sr ? _slot_row(cl, callee_sr) : 0;
+    nf.ref_row = callee_row;
+    if (!in_branch) {
+      nf.advance = NODE_ADVANCE_SLOT;
+      nf.advance_slot_row = callee_row;
+    }
+  }
+  return nf;
+}
+static void _build_child_fields(PegAnalyzeInput* input, ScopeClosure* cl, ScopeClosure* all_closures,
+                                int32_t n_closures, PegUnit* children, int32_t child_size, FieldDedup* fd,
+                                const char* parent_rule_name, int32_t* multiplier_num_ptr, NodeFields* out) {
   for (int32_t i = 0; i < child_size; i++) {
     PegUnit* u = &children[i];
     bool is_link = (u->multiplier == '*' || u->multiplier == '+');
-
     if (u->kind == PEG_TERM) {
-      char* san = _sanitize_field_name(_term_name(input, u->id));
-      char* dedup = _field_dedup_next(fd, san);
-      bool is_scope = _is_scope_term(input, u->id);
-      NodeField nf = {
-          .name = dedup,
-          .is_link = is_link,
-          .is_scope = is_scope,
-          .ref_row = 0,
-          .rhs_row = -1,
-          .advance = NODE_ADVANCE_ONE,
-          .advance_slot_row = 0,
-      };
-      if (is_link) {
-        (*multiplier_num_ptr)++;
-        ScopedRule* wrapper = _find_scoped_rule(cl, symtab_find_f(&cl->scoped_rule_names, "%s$%s$%d", cl->scope_name,
-                                                                  parent_rule_name, *multiplier_num_ptr));
-        nf.ref_row = wrapper ? _slot_row(cl, wrapper) : 0;
-        nf.advance = NODE_ADVANCE_NONE;
-      }
-      darray_push(*out, nf);
-      free(san);
+      darray_push(*out, _make_term_nf(input, cl, all_closures, n_closures, fd, u->id, is_link, false, parent_rule_name,
+                                      multiplier_num_ptr));
     } else if (u->kind == PEG_CALL) {
-      const char* callee_name = symtab_get(&input->rule_names, u->id);
-      char* dedup = _field_dedup_next(fd, callee_name);
-      NodeField nf = {
-          .name = dedup,
-          .is_link = is_link,
-          .is_scope = false,
-          .ref_row = 0,
-          .rhs_row = -1,
-          .advance = NODE_ADVANCE_NONE,
-          .advance_slot_row = 0,
-      };
-      if (is_link) {
-        (*multiplier_num_ptr)++;
-        ScopedRule* wrapper = _find_scoped_rule(cl, symtab_find_f(&cl->scoped_rule_names, "%s$%s$%d", cl->scope_name,
-                                                                  parent_rule_name, *multiplier_num_ptr));
-        nf.ref_row = wrapper ? _slot_row(cl, wrapper) : 0;
-        if (u->interlace_rhs_kind == PEG_CALL) {
-          const char* rhs_name = symtab_get(&input->rule_names, u->interlace_rhs_id);
-          ScopedRule* rhs_sr =
-              _find_scoped_rule(cl, symtab_find_f(&cl->scoped_rule_names, "%s$%s", cl->scope_name, rhs_name));
-          if (rhs_sr) {
-            nf.rhs_row = _slot_row(cl, rhs_sr);
-          }
-        }
-      } else {
-        ScopedRule* callee_sr =
-            _find_scoped_rule(cl, symtab_find_f(&cl->scoped_rule_names, "%s$%s", cl->scope_name, callee_name));
-        int32_t callee_row = callee_sr ? _slot_row(cl, callee_sr) : 0;
-        nf.ref_row = callee_row;
-        nf.advance = NODE_ADVANCE_SLOT;
-        nf.advance_slot_row = callee_row;
-      }
-      darray_push(*out, nf);
+      darray_push(*out, _make_call_nf(input, cl, fd, u->id, is_link, false, u, parent_rule_name, multiplier_num_ptr));
     } else if (u->kind == PEG_BRANCHES) {
       for (size_t j = 0; j < darray_size(u->children); j++) {
         PegUnit* branch = &u->children[j];
         if (branch->kind == PEG_TERM) {
-          char* san = _sanitize_field_name(_term_name(input, branch->id));
-          char* dedup = _field_dedup_next(fd, san);
-          NodeField nf = {
-              .name = dedup,
-              .is_link = false,
-              .is_scope = _is_scope_term(input, branch->id),
-              .ref_row = 0,
-              .rhs_row = -1,
-              .advance = NODE_ADVANCE_NONE,
-              .advance_slot_row = 0,
-          };
-          darray_push(*out, nf);
-          free(san);
+          darray_push(*out, _make_term_nf(input, cl, all_closures, n_closures, fd, branch->id, false, true,
+                                          parent_rule_name, multiplier_num_ptr));
         } else if (branch->kind == PEG_CALL) {
-          const char* callee_name = symtab_get(&input->rule_names, branch->id);
-          char* dedup = _field_dedup_next(fd, callee_name);
-          ScopedRule* callee_sr =
-              _find_scoped_rule(cl, symtab_find_f(&cl->scoped_rule_names, "%s$%s", cl->scope_name, callee_name));
-          int32_t callee_row = callee_sr ? _slot_row(cl, callee_sr) : 0;
-          NodeField nf = {
-              .name = dedup,
-              .is_link = false,
-              .is_scope = false,
-              .ref_row = callee_row,
-              .rhs_row = -1,
-              .advance = NODE_ADVANCE_NONE,
-              .advance_slot_row = 0,
-          };
-          darray_push(*out, nf);
+          darray_push(
+              *out, _make_call_nf(input, cl, fd, branch->id, false, true, NULL, parent_rule_name, multiplier_num_ptr));
         } else if (branch->kind == PEG_SEQ) {
           for (size_t k = 0; k < darray_size(branch->children); k++) {
             PegUnit* bc = &branch->children[k];
             if (bc->kind == PEG_TERM) {
-              char* san = _sanitize_field_name(_term_name(input, bc->id));
-              char* dedup = _field_dedup_next(fd, san);
-              NodeField nf = {
-                  .name = dedup,
-                  .is_link = false,
-                  .is_scope = _is_scope_term(input, bc->id),
-                  .ref_row = 0,
-                  .rhs_row = -1,
-                  .advance = NODE_ADVANCE_NONE,
-                  .advance_slot_row = 0,
-              };
-              darray_push(*out, nf);
-              free(san);
+              darray_push(*out, _make_term_nf(input, cl, all_closures, n_closures, fd, bc->id, false, true,
+                                              parent_rule_name, multiplier_num_ptr));
             } else if (bc->kind == PEG_CALL) {
-              const char* cn = symtab_get(&input->rule_names, bc->id);
-              char* dedup = _field_dedup_next(fd, cn);
-              ScopedRule* csr =
-                  _find_scoped_rule(cl, symtab_find_f(&cl->scoped_rule_names, "%s$%s", cl->scope_name, cn));
-              int32_t crow = csr ? _slot_row(cl, csr) : 0;
-              NodeField nf = {
-                  .name = dedup,
-                  .is_link = false,
-                  .is_scope = false,
-                  .ref_row = crow,
-                  .rhs_row = -1,
-                  .advance = NODE_ADVANCE_NONE,
-                  .advance_slot_row = 0,
-              };
-              darray_push(*out, nf);
+              darray_push(
+                  *out, _make_call_nf(input, cl, fd, bc->id, false, true, NULL, parent_rule_name, multiplier_num_ptr));
             }
           }
         }
@@ -1050,8 +998,6 @@ static void _build_child_fields(PegAnalyzeInput* input, ScopeClosure* cl, PegUni
       ScopedRule* wrapper = _find_scoped_rule(
           cl, symtab_find_f(&cl->scoped_rule_names, "%s$%s$%d", cl->scope_name, parent_rule_name, *multiplier_num_ptr));
       if (wrapper && darray_size(*out) > 0) {
-        // attach advance to the last field added by this branch group
-        // (the branch as a whole advances past all alternatives)
         NodeField* last = &(*out)[darray_size(*out) - 1];
         if (last->advance == NODE_ADVANCE_NONE) {
           last->advance = NODE_ADVANCE_SLOT;
@@ -1061,10 +1007,8 @@ static void _build_child_fields(PegAnalyzeInput* input, ScopeClosure* cl, PegUni
     }
   }
 }
-
-static void _build_node_fields(PegAnalyzeInput* input, RuleLookup* lu, ScopeClosure* cl) {
-  const char* rule_name = cl->scope_name;
-
+static void _build_node_fields(PegAnalyzeInput* input, RuleLookup* lu, ScopeClosure* cl, ScopeClosure* all_closures,
+                               int32_t n_closures) {
   for (size_t i = 0; i < darray_size(cl->scoped_rules); i++) {
     ScopedRule* sr = &cl->scoped_rules[i];
     if (sr->original_global_id < 0) {
@@ -1077,79 +1021,127 @@ static void _build_node_fields(PegAnalyzeInput* input, RuleLookup* lu, ScopeClos
       continue;
     }
 
-    // determine the rule_name for this scoped rule (strip scope prefix)
     const char* orig_name = symtab_get(&input->rule_names, sr->original_global_id);
-    (void)rule_name;
-
     sr->node_fields = darray_new(sizeof(NodeField), 0);
     FieldDedup fd;
     _field_dedup_init(&fd);
     int32_t multiplier_num = 0;
-
     if (orig->body.kind == PEG_SEQ) {
-      _build_child_fields(input, cl, orig->body.children, (int32_t)darray_size(orig->body.children), &fd, orig_name,
-                          &multiplier_num, &sr->node_fields);
+      _build_child_fields(input, cl, all_closures, n_closures, orig->body.children,
+                          (int32_t)darray_size(orig->body.children), &fd, orig_name, &multiplier_num, &sr->node_fields);
     } else if (orig->body.kind == PEG_BRANCHES) {
       for (size_t j = 0; j < darray_size(orig->body.children); j++) {
         PegUnit* branch = &orig->body.children[j];
         multiplier_num = 0;
         if (branch->kind == PEG_SEQ) {
-          _build_child_fields(input, cl, branch->children, (int32_t)darray_size(branch->children), &fd, orig_name,
-                              &multiplier_num, &sr->node_fields);
-        } else if (branch->kind == PEG_TERM || branch->kind == PEG_CALL) {
-          _build_child_fields(input, cl, branch, 1, &fd, orig_name, &multiplier_num, &sr->node_fields);
+          _build_child_fields(input, cl, all_closures, n_closures, branch->children,
+                              (int32_t)darray_size(branch->children), &fd, orig_name, &multiplier_num,
+                              &sr->node_fields);
+        } else if (branch->kind == PEG_TERM) {
+          darray_push(sr->node_fields, _make_term_nf(input, cl, all_closures, n_closures, &fd, branch->id, false, true,
+                                                     orig_name, &multiplier_num));
+        } else if (branch->kind == PEG_CALL) {
+          darray_push(sr->node_fields,
+                      _make_call_nf(input, cl, &fd, branch->id, false, true, NULL, orig_name, &multiplier_num));
         }
       }
     } else if (orig->body.kind == PEG_TERM) {
       bool is_link = (orig->body.multiplier == '*' || orig->body.multiplier == '+');
-      char* san = _sanitize_field_name(_term_name(input, orig->body.id));
-      bool is_scope = _is_scope_term(input, orig->body.id);
-      NodeField nf = {
-          .name = san,
-          .is_link = is_link,
-          .is_scope = is_scope,
-          .ref_row = 0,
-          .rhs_row = -1,
-          .advance = is_link ? NODE_ADVANCE_NONE : NODE_ADVANCE_ONE,
-          .advance_slot_row = 0,
-      };
-      if (is_link) {
-        ScopedRule* wrapper =
-            _find_scoped_rule(cl, symtab_find_f(&cl->scoped_rule_names, "%s$%s$%d", cl->scope_name, orig_name, 1));
-        nf.ref_row = wrapper ? _slot_row(cl, wrapper) : 0;
-      }
-      darray_push(sr->node_fields, nf);
+      darray_push(sr->node_fields, _make_term_nf(input, cl, all_closures, n_closures, &fd, orig->body.id, is_link,
+                                                 false, orig_name, &multiplier_num));
     } else if (orig->body.kind == PEG_CALL) {
       bool is_link = (orig->body.multiplier == '*' || orig->body.multiplier == '+');
-      const char* fn = symtab_get(&input->rule_names, orig->body.id);
-      NodeField nf = {
-          .name = strdup(fn),
-          .is_link = is_link,
-          .is_scope = false,
-          .ref_row = 0,
-          .rhs_row = -1,
-          .advance = NODE_ADVANCE_NONE,
-          .advance_slot_row = 0,
-      };
-      if (is_link) {
-        ScopedRule* wrapper =
-            _find_scoped_rule(cl, symtab_find_f(&cl->scoped_rule_names, "%s$%s$%d", cl->scope_name, orig_name, 1));
-        nf.ref_row = wrapper ? _slot_row(cl, wrapper) : 0;
-      } else {
-        ScopedRule* callee_sr =
-            _find_scoped_rule(cl, symtab_find_f(&cl->scoped_rule_names, "%s$%s", cl->scope_name, fn));
-        int32_t callee_row = callee_sr ? _slot_row(cl, callee_sr) : 0;
-        nf.ref_row = callee_row;
-        nf.advance = NODE_ADVANCE_SLOT;
-        nf.advance_slot_row = callee_row;
-      }
-      darray_push(sr->node_fields, nf);
+      darray_push(sr->node_fields, _make_call_nf(input, cl, &fd, orig->body.id, is_link, false, &orig->body, orig_name,
+                                                 &multiplier_num));
     }
-
     _field_dedup_free(&fd);
   }
 }
 
+// ============================================================
+// Link info collection for iteration helpers
+// ============================================================
+
+static void _build_link_infos(ScopeClosure* cl) {
+  cl->link_infos = NULL;
+  int64_t col_size_in_i32 = cl->bits_bucket_size * 2 + cl->slots_size;
+  for (size_t i = 0; i < darray_size(cl->scoped_rules); i++) {
+    ScopedRule* sr = &cl->scoped_rules[i];
+    if (!sr->node_fields) {
+      continue;
+    }
+    for (size_t fi = 0; fi < darray_size(sr->node_fields); fi++) {
+      NodeField* nf = &sr->node_fields[fi];
+      if (!nf->is_link) {
+        continue;
+      }
+      // find the wrapper scoped rule by its row
+      int32_t wrapper_row = nf->ref_row;
+      // check if this row already has a LinkInfo
+      bool found = false;
+      if (cl->link_infos) {
+        for (size_t li = 0; li < darray_size(cl->link_infos); li++) {
+          if (cl->link_infos[li].wrapper_row == wrapper_row) {
+            found = true;
+            break;
+          }
+        }
+      }
+      if (found) {
+        continue;
+      }
+      // find the wrapper rule to inspect its body
+      ScopedRule* wrapper = NULL;
+      for (size_t ri = 0; ri < darray_size(cl->scoped_rules); ri++) {
+        if (_slot_row(cl, &cl->scoped_rules[ri]) == wrapper_row) {
+          wrapper = &cl->scoped_rules[ri];
+          break;
+        }
+      }
+      if (!wrapper) {
+        continue;
+      }
+      // extract LHS info from wrapper body (star/plus body has interlace.lhs)
+      ScopedUnit* body = &wrapper->body;
+      ScopedUnit* lhs = NULL;
+      if (body->kind == SCOPED_UNIT_STAR || body->kind == SCOPED_UNIT_PLUS) {
+        lhs = body->as.interlace.lhs;
+      } else if (body->kind == SCOPED_UNIT_MAYBE) {
+        lhs = body->as.base;
+      }
+      if (!lhs) {
+        continue;
+      }
+      LinkInfo li = {.wrapper_row = wrapper_row, .col_size_in_i32 = col_size_in_i32, .rhs_row = nf->rhs_row};
+      if (lhs->kind == SCOPED_UNIT_TERM) {
+        li.lhs_is_term = true;
+        li.lhs_term_id = lhs->as.term_id;
+        li.lhs_row = -1;
+      } else if (lhs->kind == SCOPED_UNIT_CALL) {
+        li.lhs_is_term = false;
+        ScopedRule* callee = _find_scoped_rule(cl, symtab_find(&cl->scoped_rule_names, lhs->as.callee));
+        li.lhs_row = callee ? _slot_row(cl, callee) : 0;
+        li.lhs_bit_index = callee ? callee->segment_index : 0;
+        li.lhs_bit_mask = callee ? callee->rule_bit_mask : 0;
+      }
+      // extract RHS bit info for interlaced wrappers
+      if (li.rhs_row >= 0 && (body->kind == SCOPED_UNIT_STAR || body->kind == SCOPED_UNIT_PLUS)) {
+        ScopedUnit* rhs = body->as.interlace.rhs;
+        if (rhs && rhs->kind == SCOPED_UNIT_CALL) {
+          ScopedRule* rhs_sr = _find_scoped_rule(cl, symtab_find(&cl->scoped_rule_names, rhs->as.callee));
+          li.rhs_bit_index = rhs_sr ? rhs_sr->segment_index : 0;
+          li.rhs_bit_mask = rhs_sr ? rhs_sr->rule_bit_mask : 0;
+        } else {
+          li.rhs_bit_mask = 0;
+        }
+      }
+      if (!cl->link_infos) {
+        cl->link_infos = darray_new(sizeof(LinkInfo), 0);
+      }
+      darray_push(cl->link_infos, li);
+    }
+  }
+}
 // ============================================================
 // Cleanup
 // ============================================================
@@ -1211,6 +1203,9 @@ static void _free_closure(ScopeClosure* cl) {
   }
   darray_del(cl->scoped_rules);
   symtab_free(&cl->scoped_rule_names);
+  if (cl->link_infos) {
+    darray_del(cl->link_infos);
+  }
 }
 
 // ============================================================
@@ -1267,7 +1262,11 @@ PegGenInput peg_analyze(PegAnalyzeInput* input, int memoize_mode, const char* pr
   }
 
   for (int32_t c = 0; c < closure_size; c++) {
-    _build_node_fields(input, &lu, &closures[c]);
+    _build_node_fields(input, &lu, &closures[c], closures, closure_size);
+  }
+
+  for (int32_t c = 0; c < closure_size; c++) {
+    _build_link_infos(&closures[c]);
   }
 
   _free_rule_lookup(&lu);

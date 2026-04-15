@@ -32,9 +32,8 @@ for dir in test/examples/*/; do
 
     # Move generated files to tmpdir
     mv "${name}.c" "${name}.h" "${name}.ll" "$TMPDIR/" 2>/dev/null
-
-    # Compile
-    if ! $CC $CFLAGS "$TMPDIR/${name}.c" "$TMPDIR/${name}.ll" -o "$TMPDIR/${name}" 2>"$TMPDIR/cc_err"; then
+    # Compile (use mode-specific binary name to avoid macOS dyld caching issues)
+    if ! $CC $CFLAGS "$TMPDIR/${name}.c" "$TMPDIR/${name}.ll" -o "$TMPDIR/${name}_${mode}" 2>"$TMPDIR/cc_err"; then
       echo "FAIL $name ($mode): compile failed"
       cat "$TMPDIR/cc_err" >&2
       fail=$((fail + 1))
@@ -49,7 +48,7 @@ for dir in test/examples/*/; do
       [ -f "$expected" ] || continue
 
       input_text=$(cat "$input_file")
-      actual=$("$TMPDIR/$name" "$input_text" 2>"$TMPDIR/stderr" || true)
+      actual=$("$TMPDIR/${name}_${mode}" "$input_text" 2>"$TMPDIR/stderr" || true)
       stderr=$(cat "$TMPDIR/stderr")
       if [ -n "$stderr" ]; then
         combined=$(printf '%s\n%s' "$stderr" "$actual")

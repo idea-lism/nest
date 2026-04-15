@@ -501,9 +501,11 @@ TEST(test_iteration_helpers) {
   _build_json_fixture(&input, &cl);
   GenResult g = _gen(&input);
 
-  assert(strstr(g.hdr_buf, "json_has_next") != NULL);
+  assert(strstr(g.hdr_buf, "json_has_elem") != NULL);
   assert(strstr(g.hdr_buf, "json_get_next") != NULL);
-  assert(strstr(g.hdr_buf, "l.elem.tc->value") != NULL);
+  assert(strstr(g.hdr_buf, "json_get_lhs") != NULL);
+  assert(strstr(g.hdr_buf, "json_get_rhs") != NULL);
+  assert(strstr(g.hdr_buf, "darray_size(l.tc->tokens)") != NULL);
 
   _free_gen(&g);
   _free_json_fixture(&input, &cl);
@@ -855,8 +857,7 @@ TEST(test_interlaced_link_rhs_row) {
   memcpy(body, loader, span);
   body[span] = '\0';
 
-  assert(strstr(body, "n.items.rhs_row = 3") != NULL);
-  assert(strstr(body, "n.items.elem.row = 2") != NULL);
+  assert(strstr(body, "n.items.row = 2") != NULL);
 
   free(body);
   _free_gen(&g);
@@ -925,7 +926,7 @@ TEST(test_scope_link_field) {
   body[span] = '\0';
 
   // must use aux_value for scope dereference with elem.tc (not just .tc)
-  assert(strstr(body, "n.inner.elem.tc") != NULL);
+  assert(strstr(body, "n.inner.tc") != NULL);
   assert(strstr(body, "aux_value") != NULL);
 
   free(body);

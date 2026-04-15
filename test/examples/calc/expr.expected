@@ -5,3 +5,13 @@
 @star "*"
 @number "3"
 ------
+main
+  expr
+    term
+      factor
+        @number
+    term
+      factor
+        @number
+      factor
+        @number

@@ -1,5 +1,27 @@
 ------
 @ident "x"
-@eq "=="
+@assign "="
 @ident "y"
+@eq "=="
+@ident "z"
+@semi ";"
 ------
+main
+  stmt
+    assign_stmt
+      @ident
+      @assign
+      expr
+        cmp
+          arith
+            term
+              factor
+                @ident
+          cmp_tail
+            cmpop
+              @eq
+            arith
+              term
+                factor
+                  @ident
+      @semi

@@ -7,3 +7,6 @@
 @number "3"
 @rbracket "]"
 ------
+main
+  value
+    @number

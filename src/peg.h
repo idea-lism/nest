@@ -104,13 +104,28 @@ typedef struct {
   char* name;               // sanitized, deduped (owned)
   bool is_link;             // PegLink vs PegRef
   bool is_scope;            // term refers to a scope
-  int32_t ref_row;          // PegRef.row or PegLink.elem.row
+  int32_t ref_row;          // PegRef.row or PegLink row (wrapper row)
   int32_t rhs_row;          // PegLink interlace rhs row (-1 for none)
   NodeAdvanceKind advance;  // how to advance cursor after this field
   int32_t advance_slot_row; // valid when advance == NODE_ADVANCE_SLOT
 } NodeField;
-
 typedef NodeField* NodeFields; // darray
+
+// Per-link dispatch info for has_elem/get_next/get_lhs/get_rhs switch cases
+typedef struct {
+  int32_t wrapper_row;     // _slot_row of wrapper rule — the switch case value
+  int64_t col_size_in_i32; // scope's col size
+  bool lhs_is_term;        // true if LHS is a bare TERM
+  int32_t lhs_term_id;     // valid when lhs_is_term
+  int32_t lhs_row;         // callee slot row (CALL) or -1 (TERM)
+  uint64_t lhs_bit_index;  // callee's bit index (shared mode)
+  uint64_t lhs_bit_mask;   // callee's bit mask (shared mode)
+  int32_t rhs_row;         // interlace rhs row (-1 if none)
+  uint64_t rhs_bit_index;  // rhs bit index (shared mode)
+  uint64_t rhs_bit_mask;   // rhs bit mask (shared mode)
+} LinkInfo;
+
+typedef LinkInfo* LinkInfos; // darray
 
 typedef struct {
   const char* scoped_rule_name; // not owned
@@ -152,6 +167,7 @@ typedef struct {
 
   int64_t bits_bucket_size;
   int64_t slots_size;
+  LinkInfos link_infos; // per-link dispatch info for iteration helpers
 } ScopeClosure;
 
 // --- Memoize modes (from cli.md) ---

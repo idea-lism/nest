@@ -70,9 +70,9 @@ fail_bb:
 done_bb:
   { peg_ir_emit_ret(ctx) } ; pops stack
 
-; next rule
+; a multiplier rule
 {scope_name}$foo$1:
-  ...
+  ... same as defined rule
 
 ...
 
@@ -108,11 +108,11 @@ typedef struct {
   int64_t row; // absolute i32 row in { i64 bits[]; i32 slots[] }
 } PegRef;
 
-// for multiplier/interlaced rules
+// for multiplier/interlaced rules, similar to
 typedef struct {
-  int64_t rhs_row;
-  int64_t col_size_in_i32; // per-scope setting
-  PegRef elem;
+  TokenChunk* tc;
+  int64_t col;
+  int64_t row; // container row
 } PegLink;
 
 typedef Node_{rule_name} {
@@ -163,24 +163,61 @@ Note if rule name is a scope, we have to expand the child token chunk first, and
 Generic link iterating functions should be defined as:
 
 ```c
-bool {prefix}_has_next(PegLink l) {
-  int32_t* col = (int32_t*)l.elem.tc->value + l.col_size_in_i32 * l.elem.col;
-  int32_t lhs_slot = col[l.elem.row];
-  if (lhs_slot < 0) {
+// NOTE: for `term` lhs / naive mode that's much simpler & trivial,
+//       but the `call` lhs is more difficult so we only list what will happen for `call` case here
+
+bool {prefix}_has_elem(PegLink l) {
+  if (l.col >= darray_size(l.tc->tokens)) {
     return false;
   }
-  if (l.rhs_row >= 0) { // interlaced, also need to check rhs
-    int32_t* rhs_col = col + l.col_size_in_i32 * lhs_slot;
-    int32_t rhs_slot = rhs_col[l.rhs_row];
-    if (rhs_slot < 0) {
-      return false;
+  switch (l.row) {
+    case some_scoped_row1: {
+      int32_t* $col = (int32_t*)l.tc->value + {col_size_in_i32} * l.col;
+      uint64_t* $bits = (uint64_t*)$col;
+      return ($bits[{lhs_bit_index}] & {lhs_bit_mask}) && $col[{lhs_row}] >= 0;
+    }
+    case some_scoped_row2: {
+      ...
     }
   }
-  return true;
 }
 
 PegLink {prefix}_get_next(PegLink l) {
-  // increment l.elem.col by the slot size
+  switch (l.row) {
+    case some_scoped_row1: {
+      PegLink $res = l;
+      int32_t lhs_size = ...
+      int32_t rhs_size = ...
+      $res.col += lhs_size + rhs_size
+      return $res;
+    }
+    case some_scoped_row2: {
+      ...
+    }
+  }
+}
+
+PegRef {prefix}_get_lhs(PegLink l) {
+  switch (l.row) {
+    case some_scoped_row1: {
+      return (PegRef){l.tc, l.col, {the lhs row}}
+    }
+    case some_scoped_row2: {
+      ...
+    }
+  }
+}
+
+PegRef {prefix}_get_rhs(PegLink l) {
+  switch (l.row) {
+    case some_scoped_row1: {
+      int32_t lhs_size = ...
+      return (PegRef){l.tc, l.col + lhs_size, {the rhs row}};
+    }
+    case some_scoped_row2: {
+      ...
+    }
+  }
 }
 ```
 
@@ -194,8 +231,8 @@ Node_foo foo = {prefix}_load_foo(ref);
 //   baz bar : tag2
 // ]
 if (foo.is.tag1) {
-  for (PegLink l = foo.bar; {prefix}_has_next(l); l = {prefix}_get_next(l)) {
-    Node_bar bar = {prefix}_load_bar(l.elem);
+  for (PegLink l = foo.bar; {prefix}_has_elem(l); l = {prefix}_get_next(l)) {
+    Node_bar bar = {prefix}_load_bar({prefix}_get_lhs(l));
     ...
   }
 } else if (foo.is.tag2) {

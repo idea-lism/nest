@@ -97,10 +97,12 @@ TEST(test_pop) {
   TokenTree* tree = tt_tree_new(s);
   tt_push(tree, 0);
   assert(tree->current != tree->root);
-  TokenChunk* popped = tt_pop(tree);
+  TokenChunk* popped = tt_pop(tree, 0);
   assert(popped == tree->current);
   assert(tree->current == &tree->table[0]);
   assert(tree->current->parent_id == -1);
+  assert(darray_size(tree->root->tokens) == 1); // scope-ref added by tt_pop
+  assert(tree->root->tokens[0].chunk_id == 1);
   tt_tree_del(tree, false);
   ustr_del(s);
 }
@@ -110,26 +112,21 @@ TEST(test_pop) {
 TEST(test_push_pop_sequence) {
   char* s = ustr_new(6, "abcdef");
   TokenTree* tree = tt_tree_new(s);
-
-  // add token to root
   tt_add(tree, 10, 0, 1, -1);
-
-  // push child, add token there
   tt_push(tree, 0);
   tt_add(tree, 20, 1, 2, -1);
-
-  // pop back to root, add another token
-  tt_pop(tree);
+  tt_pop(tree, 3); // cp_end=3
   tt_add(tree, 11, 3, 1, -1);
-
-  // root has 2 tokens, child has 1
-  assert(darray_size(tree->table[0].tokens) == 2);
+  // root: [tok(10), scope-ref, tok(11)]
+  assert(darray_size(tree->table[0].tokens) == 3);
   assert(tree->table[0].tokens[0].term_id == 10);
-  assert(tree->table[0].tokens[1].term_id == 11);
+  assert(tree->table[0].tokens[1].chunk_id == 1); // scope-ref
+  assert(tree->table[0].tokens[1].cp_start == 1);
+  assert(tree->table[0].tokens[1].cp_size == 2);
+  assert(tree->table[0].tokens[2].term_id == 11);
+  // child has 1 token
   assert(darray_size(tree->table[1].tokens) == 1);
   assert(tree->table[1].tokens[0].term_id == 20);
-
-  tt_tree_del(tree, false);
   ustr_del(s);
 }
 
@@ -209,35 +206,30 @@ TEST(test_tree_structure) {
 
   // root: add a token
   tt_add(tree, 1, 0, 2, -1);
-
-  // push child1, add token, pop
   tt_push(tree, 0);
   tt_add(tree, 2, 2, 3, -1);
-  tt_pop(tree);
+  tt_pop(tree, 5);
 
-  // push child2, add token, pop
   tt_push(tree, 0);
   tt_add(tree, 3, 5, 5, -1);
-  tt_pop(tree);
+  tt_pop(tree, 10);
 
   assert(darray_size(tree->table) == 3);
 
-  // root chunk (index 0)
-  assert(darray_size(tree->table[0].tokens) == 1);
+  // root: [tok(1), scope-ref-1, scope-ref-2]
+  assert(darray_size(tree->table[0].tokens) == 3);
   assert(tree->table[0].tokens[0].term_id == 1);
+  assert(tree->table[0].tokens[1].chunk_id == 1);
+  assert(tree->table[0].tokens[1].cp_start == 2);
+  assert(tree->table[0].tokens[1].cp_size == 3);
+  assert(tree->table[0].tokens[2].chunk_id == 2);
+  assert(tree->table[0].tokens[2].cp_start == 5);
+  assert(tree->table[0].tokens[2].cp_size == 5);
   assert(tree->table[0].parent_id == -1);
-
-  // child1 (index 1)
-  assert(darray_size(tree->table[1].tokens) == 1);
   assert(tree->table[1].tokens[0].term_id == 2);
   assert(tree->table[1].parent_id == 0);
-
-  // child2 (index 2)
-  assert(darray_size(tree->table[2].tokens) == 1);
   assert(tree->table[2].tokens[0].term_id == 3);
   assert(tree->table[2].parent_id == 0);
-
-  tt_tree_del(tree, false);
   ustr_del(s);
 }
 

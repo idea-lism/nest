@@ -65,7 +65,7 @@ TEST(test_tree_push_pop) {
   tt_add(tree, TOK_VPA_ID, 0, 2, -1);
   assert(darray_size(child->tokens) == 1);
 
-  TokenChunk* popped = tt_pop(tree);
+  TokenChunk* popped = tt_pop(tree, 0);
   assert(popped != NULL);
   assert(tree->current == root);
 
@@ -85,10 +85,10 @@ TEST(test_tree_nested_push_pop) {
   TokenChunk* l2 = tt_push(tree, 0);
   assert(tree->current == l2);
 
-  tt_pop(tree);
+  tt_pop(tree, 0);
   assert(tree->current == l1);
 
-  tt_pop(tree);
+  tt_pop(tree, 0);
   assert(tree->current == root);
 
   tt_tree_del(tree, false);
@@ -196,10 +196,10 @@ TEST(test_chunk_scope_ids) {
   tt_push(tree, SCOPE_RE);
   assert(tree->current->scope_id == SCOPE_RE);
 
-  tt_pop(tree);
+  tt_pop(tree, 0);
   assert(tree->current->scope_id == SCOPE_VPA);
 
-  tt_pop(tree);
+  tt_pop(tree, 0);
   assert(tree->current->scope_id == SCOPE_MAIN);
 
   tt_tree_del(tree, false);
@@ -211,18 +211,17 @@ TEST(test_token_scope_reference) {
   TokenTree* tree = tt_tree_new(ustr);
 
   tt_push(tree, SCOPE_VPA);
-  int32_t child_chunk_id = (int32_t)(darray_size(tree->table) - 1);
+  tt_add(tree, 1, 0, 1, -1); // add a token so child has content
+  tt_pop(tree, 3);           // cp_end=3 covers "abc"
 
-  tt_pop(tree);
-
-  tt_add(tree, SCOPE_VPA, 0, 3, child_chunk_id);
-
+  // tt_pop added scope-ref token to root
   assert(darray_size(tree->root->tokens) == 1);
   Token stored = tree->root->tokens[0];
   assert(stored.term_id == SCOPE_VPA);
   assert(stored.term_id < SCOPE_COUNT);
-  assert(stored.chunk_id == child_chunk_id);
-
+  assert(stored.chunk_id == 1); // child is table[1]
+  assert(stored.cp_start == 0);
+  assert(stored.cp_size == 3);
   assert(tree->table[stored.chunk_id].scope_id == SCOPE_VPA);
 
   tt_tree_del(tree, false);
@@ -291,7 +290,7 @@ static void _run_vpa_gen(VpaGenInput* input, const char* h_path, const char* ir_
   IrWriter* w = irwriter_new(irf, NULL);
 
   irwriter_start(w, "test_vpa.c", ".");
-  vpa_gen(input, hw, w, NULL);
+  vpa_gen(input, hw, w, NULL, 0);
   irwriter_end(w);
 
   hw_del(hw);
@@ -623,7 +622,7 @@ static void _run_vpa_gen_prefixed(VpaGenInput* input, const char* h_path, const 
   IrWriter* w = irwriter_new(irf, NULL);
 
   irwriter_start(w, "test_vpa.c", ".");
-  vpa_gen(input, hw, w, prefix);
+  vpa_gen(input, hw, w, prefix, 0);
   irwriter_end(w);
 
   hw_del(hw);
@@ -807,31 +806,23 @@ TEST(test_vpa_gen_parse_returns_parse_result) {
 
 // === Review finding 5: keyword literal tokens must be excluded from TOK_ defines ===
 
-TEST(test_vpa_gen_literal_tokens_excluded) {
+TEST(test_vpa_gen_literal_tokens_included) {
   VpaGenInput input = _empty_input();
-
-  // normal token
   int32_t tok_id_id = symtab_intern(&input.tokens, "@ident");
-  // keyword literal token — the parser interns these as "@lit.xxx"
   symtab_intern(&input.tokens, "@lit.if");
   symtab_intern(&input.tokens, "@lit.else");
-
   VpaScope main_scope = {.scope_id = 0, .name = strdup("main"), .leader = {0}};
   main_scope.children = darray_new(sizeof(VpaUnit), 0);
   VpaUnit u = {.kind = VPA_RE, .re = re_ir_new(), .action_units = _make_au_tok(tok_id_id)};
   u.re = re_ir_emit_ch(u.re, 'i');
   darray_push(main_scope.children, u);
   darray_push(input.scopes, main_scope);
-
-  _run_vpa_gen(&input, BUILD_DIR "/test_vpa_litexcl.h", BUILD_DIR "/test_vpa_litexcl.ll");
-
-  char* h_buf = _read_file(BUILD_DIR "/test_vpa_litexcl.h");
-  // normal token should appear
+  _run_vpa_gen(&input, BUILD_DIR "/test_vpa_litincl.h", BUILD_DIR "/test_vpa_litincl.ll");
+  char* h_buf = _read_file(BUILD_DIR "/test_vpa_litincl.h");
   assert(strstr(h_buf, "TOK_IDENT") != NULL);
-  // literal tokens must NOT produce TOK_ defines (they contain '.' which is invalid in macros)
-  assert(strstr(h_buf, "TOK_LIT") == NULL);
+  assert(strstr(h_buf, "TOK_LIT_IF") != NULL);
+  assert(strstr(h_buf, "TOK_LIT_ELSE") != NULL);
   free(h_buf);
-
   _free_gen_input(&input);
 }
 
@@ -861,6 +852,130 @@ TEST(test_vpa_gen_builtin_hook_defines) {
   _free_gen_input(&input);
 }
 
+// === Scope switching: VPA must switch DFA when entering/leaving subscopes ===
+// Grammar model:
+//   main = { /a/ @tok_a   block   }
+//   block = /{/ .begin @lbrace { /b/ @tok_b   /}/ @rbrace .end }
+// Input: "a{bb}a"
+// Expected token tree:
+//   root (scope_id=main): [@tok_a, <scope_ref to block chunk>, @tok_a]
+//   block chunk (scope_id=block): [@lbrace, @tok_b, @tok_b, @rbrace]
+
+TEST(test_vpa_scope_switch_exec) {
+  VpaGenInput input = _empty_input();
+
+  int32_t tok_a_id = symtab_intern(&input.tokens, "@tok_a");
+  int32_t tok_b_id = symtab_intern(&input.tokens, "@tok_b");
+  int32_t tok_lbrace_id = symtab_intern(&input.tokens, "@lbrace");
+  int32_t tok_rbrace_id = symtab_intern(&input.tokens, "@rbrace");
+
+  // --- main scope (scope_id=0): matches 'a' and calls block ---
+  VpaScope main_scope = {.scope_id = 0, .name = strdup("main"), .leader = {0}};
+  main_scope.children = darray_new(sizeof(VpaUnit), 0);
+
+  VpaUnit u_a = {.kind = VPA_RE, .re = re_ir_new(), .action_units = _make_au_tok(tok_a_id)};
+  u_a.re = re_ir_emit_ch(u_a.re, 'a');
+  darray_push(main_scope.children, u_a);
+
+  // VPA_CALL to block — no action on the call itself (leader carries .begin)
+  VpaUnit call_block = {.kind = VPA_CALL, .call_scope_id = 1, .action_units = NULL};
+  darray_push(main_scope.children, call_block);
+
+  darray_push(input.scopes, main_scope);
+
+  // --- block scope (scope_id=1): leader = /{/ with .begin @lbrace ---
+  VpaScope block_scope = {.scope_id = 1, .name = strdup("block"), .has_parser = false};
+  block_scope.leader = (VpaUnit){.kind = VPA_RE, .re = re_ir_new()};
+  block_scope.leader.re = re_ir_emit_ch(block_scope.leader.re, '{');
+  // leader action: .begin then @lbrace
+  block_scope.leader.action_units = darray_new(sizeof(int32_t), 0);
+  int32_t begin_hook = -HOOK_ID_BEGIN;
+  darray_push(block_scope.leader.action_units, begin_hook);
+  darray_push(block_scope.leader.action_units, tok_lbrace_id);
+
+  block_scope.children = darray_new(sizeof(VpaUnit), 0);
+
+  // child pattern: /b/ @tok_b
+  VpaUnit u_b = {.kind = VPA_RE, .re = re_ir_new(), .action_units = _make_au_tok(tok_b_id)};
+  u_b.re = re_ir_emit_ch(u_b.re, 'b');
+  darray_push(block_scope.children, u_b);
+
+  // child pattern: /}/ @rbrace .end
+  VpaActionUnits end_au = darray_new(sizeof(int32_t), 0);
+  darray_push(end_au, tok_rbrace_id);
+  int32_t end_hook = -HOOK_ID_END;
+  darray_push(end_au, end_hook);
+  VpaUnit u_close = {.kind = VPA_RE, .re = re_ir_new(), .action_units = end_au};
+  u_close.re = re_ir_emit_ch(u_close.re, '}');
+  darray_push(block_scope.children, u_close);
+
+  darray_push(input.scopes, block_scope);
+
+  // --- generate ---
+  _run_vpa_gen(&input, BUILD_DIR "/test_vpa_scope_switch.h", BUILD_DIR "/test_vpa_scope_switch.ll");
+
+  // --- compile driver that lexes "a{bb}a" and checks the token tree ---
+  const char* driver_path = BUILD_DIR "/test_vpa_scope_switch_driver.c";
+  FILE* df = fopen(driver_path, "w");
+  assert(df);
+  fprintf(
+      df,
+      "#include <assert.h>\n"
+      "#include <stdint.h>\n"
+      "#include <string.h>\n"
+      "#include \"test_vpa_scope_switch.h\"\n"
+      "\n"
+      "int32_t vpa_rt_read_cp(void* src, int32_t cp_off) {\n"
+      "  return ((const unsigned char*)src)[cp_off];\n"
+      "}\n"
+      "int32_t tt_depth(void* tt) { return 1; }\n"
+      "struct { int64_t a; int64_t b; } parse_block(void* tt, void* sp) { return (typeof(parse_block(0,0))){0,0}; }\n"
+      "\n"
+      "int main(void) {\n"
+      "  const char* input = \"a{bb}a\";\n"
+      "  int32_t len = 6;\n"
+      "  char* us = ustr_new(len, input);\n"
+      "  TokenTree* tt = tt_tree_new(us);\n"
+      "  vpa_lex((void*)input, len, (void*)tt, (void*)0, (void*)0);\n"
+      "  /* root chunk: @tok_a, <scope ref>, @tok_a */\n"
+      "  int32_t rn = (int32_t)darray_size(tt->root->tokens);\n"
+      "  assert(rn == 3);\n"
+      "  assert(tt->root->tokens[0].term_id == TOK_TOK_A);\n"
+      "  assert(tt->root->tokens[0].cp_start == 0);\n"
+      "  /* token[1] is a scope ref to the block chunk */\n"
+      "  assert(tt->root->tokens[1].term_id == SCOPE_BLOCK);\n"
+      "  int32_t cid = tt->root->tokens[1].chunk_id;\n"
+      "  assert(cid >= 0);\n"
+      "  /* last token after block */\n"
+      "  assert(tt->root->tokens[2].term_id == TOK_TOK_A);\n"
+      "  assert(tt->root->tokens[2].cp_start == 5);\n"
+      "  /* block chunk: @lbrace @tok_b @tok_b @rbrace */\n"
+      "  TokenChunk* bc = &tt->table[cid];\n"
+      "  int32_t bn = (int32_t)darray_size(bc->tokens);\n"
+      "  assert(bn == 4);\n"
+      "  assert(bc->tokens[0].term_id == TOK_LBRACE);\n"
+      "  assert(bc->tokens[1].term_id == TOK_TOK_B);\n"
+      "  assert(bc->tokens[2].term_id == TOK_TOK_B);\n"
+      "  assert(bc->tokens[3].term_id == TOK_RBRACE);\n"
+      "  assert(bc->scope_id == SCOPE_BLOCK);\n"
+      "  tt_tree_del(tt, false);\n"
+      "  ustr_del(us);\n"
+      "  return 0;\n"
+      "}\n");
+  fclose(df);
+
+  char cmd[1024];
+  snprintf(cmd, sizeof(cmd), "%s %s %s -o %s 2>&1", compat_llvm_cc(), driver_path,
+           BUILD_DIR "/test_vpa_scope_switch.ll", BUILD_DIR "/test_vpa_pop_exec_bin");
+  int ret = system(cmd);
+  assert(ret == 0);
+
+  snprintf(cmd, sizeof(cmd), "%s", BUILD_DIR "/test_vpa_pop_exec_bin");
+  ret = system(cmd);
+  assert(ret == 0);
+
+  _free_gen_input(&input);
+}
 int main(void) {
   printf("test_vpa:\n");
 
@@ -893,11 +1008,14 @@ int main(void) {
   RUN(test_vpa_gen_begin_end_push_pop);
   RUN(test_vpa_gen_effect_dispatch);
   RUN(test_vpa_gen_header_types);
-  RUN(test_vpa_gen_literal_tokens_excluded);
+  RUN(test_vpa_gen_literal_tokens_included);
   RUN(test_vpa_gen_builtin_hook_defines);
 
   // spec conformance tests
   RUN(test_vpa_gen_parse_returns_parse_result);
+
+  // scope switching tests
+  RUN(test_vpa_scope_switch_exec);
 
   printf("all ok\n");
   return 0;

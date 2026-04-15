@@ -82,12 +82,18 @@ TokenChunk* tt_push_assoc(TokenTree* tree, int32_t scope_id) {
   return chunk;
 }
 
-TokenChunk* tt_pop(TokenTree* tree) {
+TokenChunk* tt_pop(TokenTree* tree, int32_t cp_end) {
   if (tree->current->parent_id == -1) {
     fprintf(stderr, "Error: Attempting to pop root chunk, which is not allowed.\n");
-    abort(); // trying to pop root chunk, which is not allowed
+    abort();
   }
+  TokenChunk* child = tree->current;
+  int32_t child_idx = (int32_t)(child - tree->table);
+  int32_t scope_id = child->scope_id;
+  int32_t scope_cp_start = darray_size(child->tokens) > 0 ? child->tokens[0].cp_start : cp_end;
+  int32_t scope_cp_size = cp_end - scope_cp_start;
   tree->current = &tree->table[tree->current->parent_id];
+  tt_add(tree, scope_id, scope_cp_start, scope_cp_size, child_idx);
   return tree->current;
 }
 
@@ -96,7 +102,7 @@ int32_t tt_current_size(TokenTree* tree) { return darray_size(tree->current->tok
 TokenChunk* tt_current(TokenTree* tree) { return tree->current; }
 
 void* tt_alloc_memoize_table(TokenChunk* chunk, int64_t sizeof_col) {
-   // alloc sizeof_col * col_token_size
+  // alloc sizeof_col * col_token_size
   size_t bytesize = darray_size(chunk->tokens) * sizeof_col;
   void* v = malloc(bytesize);
   memset(v, -1, bytesize);

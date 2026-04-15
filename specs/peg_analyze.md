@@ -85,8 +85,11 @@ It also transforms `PegUnit` into `ScopedUnit`
 
 It breaks down multiplier rules so we can use "linked-list" in memoize table to represent them.
 - if a rule contains maybe/star/plus, a child rule named `{scope_name}${rule_name}${multiplier_num}` is created
-  - so the maybe/star/plus can have a cache slot, to chain the elements
-  - check the `has_next` and `get_next` functions defined below to get how the linked-list works.
+  - so the maybe/star/plus can have a bit (like defined rules) like other user defined rules and have the total parsed size cached
+  - state after parsing:
+    - if the bit is not set, or the first elem doesn't match, it means `has_elem() = false`
+    - else `has_elem() = true`
+  - check [PEG IR](peg_ir.md) and the `has_elem` and `get_next` functions in [PEG GEN](peg_gen.md) for more details about the single-bit linking works.
 - analysis don't need to consider nested case, because by syntax, there won't be any multiplier inside multiplier -- we won't have labels like `foo$bar$1$2`.
 
 Then we will have this info:
@@ -161,15 +164,10 @@ struct ScopeClosure {
 Defined rules can be memoized to make the parsing O(n).
 
 What to memoize:
-- for maybe/star/plus rules:
-  - element token size (so we can iterate to next element)
-  - element token size --(after size)-> next element token size --(after size)-> ... -> -1 (end of match)
-  - for interlaced stat/plus rules, `element` token size means `lhs` token size
-- for other rules:
-  - matched token size
-- tags, so we know which branches are chosen, it can also be assigned to resulting node
+- matched token size for all rules (defined & multipliers)
+- tags for defined rules, so we know which branches are chosen, it can also be assigned to resulting node
 
-To map tags to bits, create function `_alloc_tag_bits()` to assign tag bits to each rule:
+To map tags to bits, create function `_alloc_tag_bits()` to assign tag bits to each defined rule:
 - For each scope closure
   - For each `body` in `PegAnalyzeInput.rules`
     - create symtab `ScopedRule.tags` and give a number to all its tags
@@ -217,7 +215,7 @@ Basic idea: rules can share a slot & tagbits storage when they do not co-exist a
 
 We need some extra bits to denote what the slot & tagbits position means. And these bits can be packed together with tagbits.
 
-Create function `_alloc_slot_bits()`, to finish the following analysis.
+Create function `_alloc_slot_bits()`, to finish the following analysis for all defined rules / multiplier rules.
 
 ### Exclusiveness analysis
 

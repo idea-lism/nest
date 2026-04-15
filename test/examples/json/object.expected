@@ -9,3 +9,6 @@
 @number "2"
 @rbrace "}"
 ------
+main
+  value
+    @number

@@ -159,7 +159,9 @@ static int _cmp_int32(const void* a, const void* b) {
 static int _cmp_dfa_trans(const void* a, const void* b) {
   const DfaTrans* x = (const DfaTrans*)a;
   const DfaTrans* y = (const DfaTrans*)b;
-  if (x->from != y->from) return (x->from > y->from) - (x->from < y->from);
+  if (x->from != y->from) {
+    return (x->from > y->from) - (x->from < y->from);
+  }
   return (x->cp_start > y->cp_start) - (x->cp_start < y->cp_start);
 }
 

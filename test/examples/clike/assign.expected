@@ -4,3 +4,15 @@
 @number "42"
 @semi ";"
 ------
+main
+  stmt
+    assign_stmt
+      @ident
+      @assign
+      expr
+        cmp
+          arith
+            term
+              factor
+                @number
+      @semi
