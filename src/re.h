@@ -44,6 +44,7 @@ void re_lparen(Re* re);
 void re_fork(Re* re);
 void re_rparen(Re* re);
 void re_action(Re* re, int32_t action_id);
+void re_loop_back(Re* re);
 int32_t re_cur_state(Re* re);
 
 typedef struct ReLex ReLex;

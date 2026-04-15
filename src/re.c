@@ -301,6 +301,11 @@ void re_action(Re* re, int32_t action_id) {
   f->cur_state = s;
 }
 
+void re_loop_back(Re* re) {
+  GroupFrame* f = _top(re);
+  aut_epsilon(re->aut, f->cur_state, f->start_state);
+}
+
 int32_t re_cur_state(Re* re) {
   GroupFrame* f = _top(re);
   return f->cur_state;

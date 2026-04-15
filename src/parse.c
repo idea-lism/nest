@@ -469,26 +469,25 @@ static ReIr _parse_re_quantified(ParseState* ps, TokenChunk* chunk, int32_t* tpo
   }
 
   if (q->term_id == LIT_QUESTION) {
+    // a? = (a | ε)
     _next(chunk, tpos);
     ReIrOp op = {RE_IR_LPAREN, 0, 0};
     ir = darray_insert(ir, (size_t)s, &op);
     ir = re_ir_emit(ir, RE_IR_FORK, 0, 0);
     ir = re_ir_emit(ir, RE_IR_RPAREN, 0, 0);
   } else if (q->term_id == LIT_PLUS) {
-    _next(chunk, tpos);
-    ir = re_ir_emit(ir, RE_IR_LPAREN, 0, 0);
-    for (int32_t i = s; i < e; i++) {
-      darray_push(ir, ir[i]);
-    }
-    ir = re_ir_emit(ir, RE_IR_FORK, 0, 0);
-    ir = re_ir_emit(ir, RE_IR_RPAREN, 0, 0);
-  } else if (q->term_id == LIT_STAR) {
+    // a+ = (a LOOP_BACK)
     _next(chunk, tpos);
     ReIrOp op = {RE_IR_LPAREN, 0, 0};
     ir = darray_insert(ir, (size_t)s, &op);
-    for (int32_t i = s + 1; i <= e; i++) {
-      darray_push(ir, ir[i]);
-    }
+    ir = re_ir_emit(ir, RE_IR_LOOP_BACK, 0, 0);
+    ir = re_ir_emit(ir, RE_IR_RPAREN, 0, 0);
+  } else if (q->term_id == LIT_STAR) {
+    // a* = (a LOOP_BACK | ε)
+    _next(chunk, tpos);
+    ReIrOp op = {RE_IR_LPAREN, 0, 0};
+    ir = darray_insert(ir, (size_t)s, &op);
+    ir = re_ir_emit(ir, RE_IR_LOOP_BACK, 0, 0);
     ir = re_ir_emit(ir, RE_IR_FORK, 0, 0);
     ir = re_ir_emit(ir, RE_IR_RPAREN, 0, 0);
   }

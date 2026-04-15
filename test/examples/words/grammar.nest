@@ -1,0 +1,8 @@
+[[vpa]]
+%ignore @space
+main = {
+  /[a-zA-Z]+/ @word
+  /\s+/ @space
+}
+[[peg]]
+main = @word*

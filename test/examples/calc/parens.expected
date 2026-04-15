@@ -1,0 +1,9 @@
+------
+@lparen "("
+@number "1"
+@plus "+"
+@number "2"
+@rparen ")"
+@star "*"
+@number "3"
+------

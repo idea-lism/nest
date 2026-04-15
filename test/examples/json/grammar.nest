@@ -1,0 +1,24 @@
+[[vpa]]
+%ignore @space
+main = {
+  /[0-9]+/ @number
+  /[a-zA-Z_]\w*/ @ident
+  /\s+/ @space
+  /,/ @comma
+  /:/ @colon
+  /\[/ @lbracket
+  /\]/ @rbracket
+  /[{]/ @lbrace
+  /[}]/ @rbrace
+}
+[[peg]]
+main = value
+value = [
+  @number
+  @ident
+  object
+  array
+]
+object = @lbrace pair*<@comma> @rbrace
+pair = @ident @colon value
+array = @lbracket value*<@comma> @rbracket

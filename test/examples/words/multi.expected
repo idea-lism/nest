@@ -1,0 +1,7 @@
+------
+@word "hello"
+@space " "
+@word "world"
+@space " "
+@word "foo"
+------

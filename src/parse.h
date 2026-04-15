@@ -75,10 +75,7 @@ typedef enum {
   TOK_USER_HOOK_ID,
   TOK_RE_FRAG_ID,
 
-  TOK_CODEPOINT,
-  TOK_C_ESCAPE,
-  TOK_PLAIN_ESCAPE,
-  TOK_CHAR,
+  TOK_RANGE_SEP,
 
   TOK_RE_DOT,
   TOK_RE_SPACE_CLASS,
@@ -90,11 +87,16 @@ typedef enum {
 
   TOK_RE_REF,
 
-  TOK_RANGE_SEP,
-
   TOK_PEG_ID,
   TOK_PEG_TOK_ID,
   TOK_TAG_ID,
+
+  // *chars tokens must come last: MIN-RULE picks smallest action_id on conflict,
+  // so specific tokens above must have lower values than these catch-all patterns.
+  TOK_CODEPOINT,
+  TOK_C_ESCAPE,
+  TOK_PLAIN_ESCAPE,
+  TOK_CHAR,
 
   TOK_COUNT
 } TokenId;

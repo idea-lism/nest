@@ -1,0 +1,11 @@
+------
+@ident "a"
+@plus "+"
+@ident "b"
+@star "*"
+@ident "c"
+@minus "-"
+@ident "d"
+@slash "/"
+@ident "e"
+------

@@ -1,0 +1,11 @@
+------
+@number "10"
+@space " "
+@minus "-"
+@space " "
+@number "3"
+@space " "
+@slash "/"
+@space " "
+@number "2"
+------

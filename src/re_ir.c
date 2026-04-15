@@ -118,6 +118,9 @@ void re_ir_exec(Re* re, ReIr ir, DebugInfo di) {
     case RE_IR_FORK:
       re_fork(re);
       break;
+    case RE_IR_LOOP_BACK:
+      re_loop_back(re);
+      break;
     case RE_IR_ACTION:
       re_action(re, op->start);
       break;

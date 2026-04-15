@@ -1,0 +1,11 @@
+------
+@lbrace "{"
+@ident "x"
+@colon ":"
+@number "1"
+@comma ","
+@ident "y"
+@colon ":"
+@number "2"
+@rbrace "}"
+------

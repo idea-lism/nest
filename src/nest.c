@@ -328,11 +328,12 @@ static void _gen_example_c(FILE* f, const char* prefix, ParseState* ps) {
   fprintf(f, "}\n\n");
 
   // Token list printer: walk chunks recursively, scope tokens recurse with depth+1
+  int32_t total_scope_ids = symtab_count(scope_names) + scope_names->start_num;
   fprintf(f, "static void print_tokens(TokenTree* tt, TokenChunk* chunk, int depth) {\n");
   fprintf(f, "  int32_t n = (int32_t)darray_size(chunk->tokens);\n");
   fprintf(f, "  for (int32_t i = 0; i < n; i++) {\n");
   fprintf(f, "    Token* tok = &chunk->tokens[i];\n");
-  fprintf(f, "    if (tok->term_id < SCOPE_COUNT) {\n");
+  fprintf(f, "    if (tok->term_id < %d) {\n", total_scope_ids);
   fprintf(f, "      print_tokens(tt, &tt->table[tok->chunk_id], depth + 1);\n");
   fprintf(f, "    } else {\n");
   fprintf(f, "      _indent(depth);\n");

@@ -1,0 +1,9 @@
+------
+@lbracket "["
+@number "1"
+@comma ","
+@number "2"
+@comma ","
+@number "3"
+@rbracket "]"
+------
