@@ -306,15 +306,15 @@ static void _gen_example_c(FILE* f, const char* prefix, ParseState* ps) {
   for (int32_t i = 0; i < n_tokens; i++) {
     int32_t tok_id = i + tokens->start_num;
     const char* name = symtab_get(tokens, tok_id);
-    fprintf(f, "  case TOK_");
-    for (const char* s = name + 1; *s; s++) {
-      char c = toupper((unsigned char)*s);
-      if (!isalnum((unsigned char)*s)) {
-        c = '_';
+    if (strncmp(name, "@lit.", 5) == 0) {
+      fprintf(f, "  case %d: return \"%s\";\n", tok_id, name);
+    } else {
+      fprintf(f, "  case TOK_");
+      for (const char* s = name + 1; *s; s++) {
+        fputc(toupper((unsigned char)*s), f);
       }
-      fputc(c, f);
+      fprintf(f, ": return \"%s\";\n", name);
     }
-    fprintf(f, ": return \"%s\";\n", name);
   }
   fprintf(f, "  default: return \"?\";\n");
   fprintf(f, "  }\n");
@@ -543,7 +543,7 @@ static int32_t _cmd_compile(int32_t argc, char** argv) {
 
   IrWriter* w = irwriter_new(fout, triple);
   irwriter_start(w, input, ".");
-  HeaderWriter* hw = hw_new(fhdr);
+  HeaderWriter* hw = hdwriter_new(fhdr);
   ParseState* ps = parse_state_new();
 
   int verbose = arg_v ? atoi(arg_v) : 0;
@@ -616,6 +616,7 @@ static int32_t _cmd_compile(int32_t argc, char** argv) {
           .effect_decls = ps->effect_decls,
           .tokens = ps->tokens,
           .hooks = ps->hooks,
+          .source_file_name = input,
       },
       hw, w, prefix, main_rule_row);
 
@@ -635,7 +636,7 @@ static int32_t _cmd_compile(int32_t argc, char** argv) {
 cleanup:
   irwriter_end(w);
   irwriter_del(w);
-  hw_del(hw);
+  hdwriter_del(hw);
   fclose(fout);
   fclose(fhdr);
   ustr_del(src);

@@ -65,6 +65,11 @@ IrWriter
 // typical use of irwriter.h
 ```
 
+HeaderWriter
+```c
+// typical use of header_writer.h, especially the begin / end indentation management
+```
+
 TokenTree
 ```c
 // typical use of token_tree.h

@@ -70,6 +70,7 @@ typedef struct {
   EffectDecls effect_decls; // owned by ParseState
   Symtab tokens;            // owned by ParseState, can be used to lookup token name, start from 1
   Symtab hooks;             // owned by ParseState, can be used to lookup hook name, start from 0
+  const char* source_file_name;
 } VpaGenInput;
 
 void vpa_gen(VpaGenInput* input, HeaderWriter* hw, IrWriter* w, const char* prefix, int32_t main_rule_row);

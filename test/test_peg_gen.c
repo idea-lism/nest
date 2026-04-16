@@ -18,6 +18,21 @@
     printf(" OK\n");                                                                                                   \
   } while (0)
 
+// Find matching '}' accounting for nesting.
+static const char* _find_matching_brace(const char* open) {
+  int depth = 1;
+  for (const char* p = open + 1; *p; p++) {
+    if (*p == '{') {
+      depth++;
+    } else if (*p == '}') {
+      depth--;
+      if (depth == 0) {
+        return p;
+      }
+    }
+  }
+  return NULL;
+}
 // ============================================================
 // Fixture helpers: build PegGenInput directly (no peg_analyze)
 // ============================================================
@@ -83,14 +98,14 @@ static GenResult _gen(PegGenInput* input) {
   IrWriter* w = irwriter_new(ir_f, NULL);
   irwriter_start(w, "test.c", ".");
   FILE* hdr_f = compat_open_memstream(&r.hdr_buf, &r.hdr_len);
-  HeaderWriter* hw = hw_new(hdr_f);
+  HeaderWriter* hw = hdwriter_new(hdr_f);
 
   peg_gen(input, hw, w);
 
   irwriter_end(w);
   irwriter_del(w);
   fclose(ir_f);
-  hw_del(hw);
+  hdwriter_del(hw);
   fclose(hdr_f);
   return r;
 }
@@ -433,7 +448,7 @@ TEST(test_loader_decodes_from_table) {
   assert(loader != NULL);
   const char* body_start = strchr(loader, '{');
   assert(body_start != NULL);
-  const char* body_end = strchr(body_start + 1, '}');
+  const char* body_end = _find_matching_brace(body_start);
   assert(body_end != NULL);
 
   size_t body_len = (size_t)(body_end - body_start);
@@ -481,13 +496,13 @@ TEST(test_loader_sets_tag_bits) {
   const char* loader = strstr(g.hdr_buf, "json_load_value(PegRef ref)");
   assert(loader != NULL);
   const char* body_start = strchr(loader, '{');
-  const char* body_end = strchr(body_start + 1, '}');
+  const char* body_end = _find_matching_brace(body_start);
   size_t body_len = (size_t)(body_end - body_start);
   char* body = malloc(body_len + 1);
   memcpy(body, body_start, body_len);
   body[body_len] = '\0';
 
-  bool sets_is = (strstr(body, "&n.is)") != NULL);
+  bool sets_is = (strstr(body, "&$1.is)") != NULL);
   assert(sets_is);
   free(body);
 
@@ -756,7 +771,7 @@ TEST(test_loader_cursor_advance) {
   // array loader should have _cur++ (for terms) and slot-based advance (for call)
   const char* loader = strstr(g.hdr_buf, "json_load_array(PegRef ref)");
   assert(loader != NULL);
-  const char* body_end = strstr(loader, "return n;");
+  const char* body_end = strstr(loader, "return $1;");
   assert(body_end != NULL);
   size_t span = (size_t)(body_end - loader);
   char* body = malloc(span + 1);
@@ -764,7 +779,7 @@ TEST(test_loader_cursor_advance) {
   body[span] = '\0';
 
   // should have _cur++ for term fields
-  assert(strstr(body, "_cur++") != NULL);
+  assert(strstr(body, "ref.col++") != NULL);
   // should have slot-based advance for value_list call
   assert(strstr(body, "((int32_t*)ref.tc->value)") != NULL);
 
@@ -850,14 +865,14 @@ TEST(test_interlaced_link_rhs_row) {
   // loader for foo must emit rhs_row = 3
   const char* loader = strstr(g.hdr_buf, "il_load_foo(PegRef ref)");
   assert(loader != NULL);
-  const char* body_end = strstr(loader, "return n;");
+  const char* body_end = strstr(loader, "return $1;");
   assert(body_end != NULL);
   size_t span = (size_t)(body_end - loader);
   char* body = malloc(span + 1);
   memcpy(body, loader, span);
   body[span] = '\0';
 
-  assert(strstr(body, "n.items.row = 2") != NULL);
+  assert(strstr(body, "$1.items.row = 2") != NULL);
 
   free(body);
   _free_gen(&g);
@@ -918,7 +933,7 @@ TEST(test_scope_link_field) {
   // loader for bar: scope+link -> elem.tc via aux_value
   const char* loader = strstr(g.hdr_buf, "sl_load_bar(PegRef ref)");
   assert(loader != NULL);
-  const char* body_end = strstr(loader, "return n;");
+  const char* body_end = strstr(loader, "return $1;");
   assert(body_end != NULL);
   size_t span = (size_t)(body_end - loader);
   char* body = malloc(span + 1);
@@ -926,7 +941,7 @@ TEST(test_scope_link_field) {
   body[span] = '\0';
 
   // must use aux_value for scope dereference with elem.tc (not just .tc)
-  assert(strstr(body, "n.inner.tc") != NULL);
+  assert(strstr(body, "$1.inner.tc") != NULL);
   assert(strstr(body, "aux_value") != NULL);
 
   free(body);
@@ -1039,22 +1054,22 @@ TEST(test_multi_bucket_tags) {
   // r1 loader should read col[0] (tag_bit_index=0)
   const char* loader_r1 = strstr(g.hdr_buf, "mb_load_r1(PegRef ref)");
   assert(loader_r1 != NULL);
-  const char* r1_end = strstr(loader_r1, "return n;");
+  const char* r1_end = strstr(loader_r1, "return $1;");
   size_t r1_span = (size_t)(r1_end - loader_r1);
   char* r1_body = malloc(r1_span + 1);
   memcpy(r1_body, loader_r1, r1_span);
   r1_body[r1_span] = '\0';
-  assert(strstr(r1_body, "col[0]") != NULL);
+  assert(strstr(r1_body, "$col[0]") != NULL);
 
   // r2 loader should read col[1] (tag_bit_index=1)
   const char* loader_r2 = strstr(g.hdr_buf, "mb_load_r2(PegRef ref)");
   assert(loader_r2 != NULL);
-  const char* r2_end = strstr(loader_r2, "return n;");
+  const char* r2_end = strstr(loader_r2, "return $1;");
   size_t r2_span = (size_t)(r2_end - loader_r2);
   char* r2_body = malloc(r2_span + 1);
   memcpy(r2_body, loader_r2, r2_span);
   r2_body[r2_span] = '\0';
-  assert(strstr(r2_body, "col[1]") != NULL);
+  assert(strstr(r2_body, "$col[1]") != NULL);
 
   free(r1_body);
   free(r2_body);

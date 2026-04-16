@@ -68,6 +68,7 @@ typedef struct {
   EffectDecls effect_decls; // owned by ParseState
   Symtab tokens; // owned by ParseState, can be used to lookup token name, start from 1
   Symtab hooks;  // owned by ParseState, can be used to lookup hook name, start from 0
+  const char* source_file_name;
 } VpaGenInput;
 ```
 
@@ -216,7 +217,7 @@ Resulting parser needs:
   - but don't include the token ids for keyword literals (the ids in the form of `@lit.xxx`) because we have no way to upcase them.
 - primitive hook ids: `HOOK_XXX` numbered in the system of action_unit_id.
 - declare entrance and cleanup functions (impl in LLVM-IR)
-  - `ParseResult {prefix}_parse(ParseContext lc, UStr src)`
+  - `ParseResult {prefix}_parse(ParseContext, UStr)`
   - `void {prefix}_cleanup(ParseResult r)`
 
 ### Misc

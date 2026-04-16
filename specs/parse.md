@@ -24,9 +24,8 @@ File format:
 
 The overall handling with this syntax:
 
-1. Create `src/header_writer.c` to make C header generating a bit easier.
-2. implement a manual pushdown automata in `src/parse.c`, utilizing lexers defined by `src/parse_gen.c`.
-3. implement recursive descend parsers in `src/parse.c` to:
+1. implement a manual pushdown automata in `src/parse.c`, utilizing lexers defined by `src/parse_gen.c`.
+2. implement recursive descend parsers in `src/parse.c` to:
    - recursive descend parse the whole source
    - utilize [token chunk](src/token_chunk.h)
 

@@ -5,26 +5,23 @@
 
 typedef struct HeaderWriter HeaderWriter;
 
-HeaderWriter* hw_new(FILE* out);
-void hw_del(HeaderWriter* hw);
+// Allocate + zero-init. Store out.
+HeaderWriter* hdwriter_new(FILE* out);
 
-void hw_pragma_once(HeaderWriter* hw);
-void hw_include(HeaderWriter* hw, const char* header);
-void hw_include_sys(HeaderWriter* hw, const char* header);
-void hw_blank(HeaderWriter* hw);
-void hw_comment(HeaderWriter* hw, const char* text);
-void hw_define(HeaderWriter* hw, const char* name, int32_t value);
-void hw_define_str(HeaderWriter* hw, const char* name, const char* value);
-void hw_raw(HeaderWriter* hw, const char* text);
-void hw_rawc(HeaderWriter* hw, char c);
-void hw_fmt(HeaderWriter* hw, const char* fmt, ...) __attribute__((format(printf, 2, 3)));
+// Free if non-NULL.
+void hdwriter_del(HeaderWriter* hw);
 
-void hw_struct_begin(HeaderWriter* hw, const char* name);
-void hw_struct_end(HeaderWriter* hw);
-void hw_field(HeaderWriter* hw, const char* type, const char* name);
-void hw_bitfield(HeaderWriter* hw, const char* type, const char* name, int32_t bits);
+// Emit indentation (2 spaces x indent), then fputs(text, out).
+void hdwriter_puts(HeaderWriter* hw, const char* text);
 
-void hw_typedef(HeaderWriter* hw, const char* type, const char* name);
-void hw_enum_begin(HeaderWriter* hw, const char* name);
-void hw_enum_value(HeaderWriter* hw, const char* name, int32_t value);
-void hw_enum_end(HeaderWriter* hw);
+// Emit single char via fputc. No indentation.
+void hdwriter_putc(HeaderWriter* hw, char c);
+
+// Emit indentation, then vfprintf.
+void hdwriter_printf(HeaderWriter* hw, const char* fmt, ...) __attribute__((format(printf, 2, 3)));
+
+// Emit " {\n" (space, open brace, newline), then increment indent.
+// Use for pure { } blocks (function bodies, switch, if). Not for structs/typedefs
+// where the closing brace has a suffix (e.g. "} Name;").
+void hdwriter_begin(HeaderWriter* hw);
+void hdwriter_end(HeaderWriter* hw);

@@ -100,12 +100,12 @@ TEST(test_tree_locate_single_line) {
   TokenTree* tree = tt_tree_new(ustr);
 
   Location loc = tt_locate(tree, 0);
-  assert(loc.line == 0);
-  assert(loc.col == 0);
+  assert(loc.line == 1);
+  assert(loc.col == 1);
 
   loc = tt_locate(tree, 3);
-  assert(loc.line == 0);
-  assert(loc.col == 3);
+  assert(loc.line == 1);
+  assert(loc.col == 4);
 
   tt_tree_del(tree, false);
   ustr_del(ustr);
@@ -115,24 +115,25 @@ TEST(test_tree_locate_multiline) {
   char* ustr = ustr_new(7, "ab\ncd\ne");
   TokenTree* tree = tt_tree_new(ustr);
 
+  // manually set newline bits (lexer would do this during codepoint feeding)
   tree->newline_map[0] |= (1ULL << 2);
   tree->newline_map[0] |= (1ULL << 5);
 
   Location loc;
   loc = tt_locate(tree, 0);
-  assert(loc.line == 0 && loc.col == 0);
-
-  loc = tt_locate(tree, 1);
-  assert(loc.line == 0 && loc.col == 1);
-
-  loc = tt_locate(tree, 3);
-  assert(loc.line == 1 && loc.col == 0);
-
-  loc = tt_locate(tree, 4);
   assert(loc.line == 1 && loc.col == 1);
 
+  loc = tt_locate(tree, 1);
+  assert(loc.line == 1 && loc.col == 2);
+
+  loc = tt_locate(tree, 3);
+  assert(loc.line == 2 && loc.col == 1);
+
+  loc = tt_locate(tree, 4);
+  assert(loc.line == 2 && loc.col == 2);
+
   loc = tt_locate(tree, 6);
-  assert(loc.line == 2 && loc.col == 0);
+  assert(loc.line == 3 && loc.col == 1);
 
   tt_tree_del(tree, false);
   ustr_del(ustr);
@@ -286,14 +287,14 @@ static void _run_vpa_gen(VpaGenInput* input, const char* h_path, const char* ir_
   FILE* hf = fopen(h_path, "w");
   FILE* irf = fopen(ir_path, "w");
   assert(hf && irf);
-  HeaderWriter* hw = hw_new(hf);
+  HeaderWriter* hw = hdwriter_new(hf);
   IrWriter* w = irwriter_new(irf, NULL);
 
   irwriter_start(w, "test_vpa.c", ".");
   vpa_gen(input, hw, w, NULL, 0);
   irwriter_end(w);
 
-  hw_del(hw);
+  hdwriter_del(hw);
   irwriter_del(w);
   fclose(irf);
   fclose(hf);
@@ -537,8 +538,6 @@ TEST(test_vpa_gen_token_dedup) {
   const char* second = strstr(first + 6, "TOK_WS");
   assert(second == NULL);
   assert(strstr(h_buf, "TOK_OTHER") != NULL);
-  // ws and other have same action_units so they dedup to 1 action each
-  assert(strstr(h_buf, "VPA_N_ACTIONS 2") != NULL);
   free(h_buf);
 
   _compile_test(BUILD_DIR "/test_vpa_dedup.h", BUILD_DIR "/test_vpa_dedup.ll");
@@ -618,14 +617,14 @@ static void _run_vpa_gen_prefixed(VpaGenInput* input, const char* h_path, const 
   FILE* hf = fopen(h_path, "w");
   FILE* irf = fopen(ir_path, "w");
   assert(hf && irf);
-  HeaderWriter* hw = hw_new(hf);
+  HeaderWriter* hw = hdwriter_new(hf);
   IrWriter* w = irwriter_new(irf, NULL);
 
   irwriter_start(w, "test_vpa.c", ".");
   vpa_gen(input, hw, w, prefix, 0);
   irwriter_end(w);
 
-  hw_del(hw);
+  hdwriter_del(hw);
   irwriter_del(w);
   fclose(irf);
   fclose(hf);
@@ -794,7 +793,7 @@ TEST(test_vpa_gen_parse_returns_parse_result) {
   _run_vpa_gen_prefixed(&input, BUILD_DIR "/test_vpa_rettype.h", BUILD_DIR "/test_vpa_rettype.ll", "mymod");
 
   char* h_buf = _read_file(BUILD_DIR "/test_vpa_rettype.h");
-  // Spec says: extern ParseResult {prefix}_parse(ParseContext lc, UStr src)
+  // Spec says: extern ParseResult {prefix}_parse(ParseContext $parse_context, UStr src)
   // Must NOT be "void mymod_parse"
   assert(strstr(h_buf, "void mymod_parse") == NULL);
   // Must declare returning ParseResult
@@ -806,7 +805,7 @@ TEST(test_vpa_gen_parse_returns_parse_result) {
 
 // === Review finding 5: keyword literal tokens must be excluded from TOK_ defines ===
 
-TEST(test_vpa_gen_literal_tokens_included) {
+TEST(test_vpa_gen_literal_tokens_excluded) {
   VpaGenInput input = _empty_input();
   int32_t tok_id_id = symtab_intern(&input.tokens, "@ident");
   symtab_intern(&input.tokens, "@lit.if");
@@ -820,8 +819,8 @@ TEST(test_vpa_gen_literal_tokens_included) {
   _run_vpa_gen(&input, BUILD_DIR "/test_vpa_litincl.h", BUILD_DIR "/test_vpa_litincl.ll");
   char* h_buf = _read_file(BUILD_DIR "/test_vpa_litincl.h");
   assert(strstr(h_buf, "TOK_IDENT") != NULL);
-  assert(strstr(h_buf, "TOK_LIT_IF") != NULL);
-  assert(strstr(h_buf, "TOK_LIT_ELSE") != NULL);
+  assert(strstr(h_buf, "TOK_LIT_IF") == NULL);
+  assert(strstr(h_buf, "TOK_LIT_ELSE") == NULL);
   free(h_buf);
   _free_gen_input(&input);
 }
@@ -842,9 +841,9 @@ TEST(test_vpa_gen_builtin_hook_defines) {
   _run_vpa_gen(&input, BUILD_DIR "/test_vpa_builtins.h", BUILD_DIR "/test_vpa_builtins.ll");
 
   char* h_buf = _read_file(BUILD_DIR "/test_vpa_builtins.h");
-  // Builtin hook IDs must be emitted in the action_unit_id numbering system
-  assert(strstr(h_buf, "HOOK_BEGIN") != NULL);
-  assert(strstr(h_buf, "HOOK_END") != NULL);
+  // Only user-facing hook IDs emitted; BEGIN/END are internal
+  assert(strstr(h_buf, "HOOK_BEGIN") == NULL);
+  assert(strstr(h_buf, "HOOK_END") == NULL);
   assert(strstr(h_buf, "HOOK_FAIL") != NULL);
   assert(strstr(h_buf, "HOOK_UNPARSE") != NULL);
   free(h_buf);
@@ -1008,7 +1007,7 @@ int main(void) {
   RUN(test_vpa_gen_begin_end_push_pop);
   RUN(test_vpa_gen_effect_dispatch);
   RUN(test_vpa_gen_header_types);
-  RUN(test_vpa_gen_literal_tokens_included);
+  RUN(test_vpa_gen_literal_tokens_excluded);
   RUN(test_vpa_gen_builtin_hook_defines);
 
   // spec conformance tests

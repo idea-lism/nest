@@ -135,11 +135,11 @@ TEST(test_push_pop_sequence) {
 TEST(test_locate_no_newlines) {
   char* s = ustr_new(5, "hello");
   TokenTree* tree = tt_tree_new(s);
-  // no newlines set in map, everything is line 0
+  // no newlines, everything is line 1
   Location loc0 = tt_locate(tree, 0);
-  assert(loc0.line == 0 && loc0.col == 0);
+  assert(loc0.line == 1 && loc0.col == 1);
   Location loc3 = tt_locate(tree, 3);
-  assert(loc3.line == 0 && loc3.col == 3);
+  assert(loc3.line == 1 && loc3.col == 4);
   tt_tree_del(tree, false);
   ustr_del(s);
 }
@@ -148,37 +148,37 @@ TEST(test_locate_with_newlines) {
   // "ab\ncd\ne" = 7 codepoints, newlines at cp index 2 and 5
   char* s = ustr_new(7, "ab\ncd\ne");
   TokenTree* tree = tt_tree_new(s);
-  // set newline bits at positions 2 and 5
+  // manually set newline bits (lexer would do this during codepoint feeding)
   tree->newline_map[0] |= (1ULL << 2);
   tree->newline_map[0] |= (1ULL << 5);
 
-  // 'a' at cp 0 => line 0, col 0
+  // 'a' at cp 0 => line 1, col 1
   Location loc = tt_locate(tree, 0);
-  assert(loc.line == 0 && loc.col == 0);
-
-  // 'b' at cp 1 => line 0, col 1
-  loc = tt_locate(tree, 1);
-  assert(loc.line == 0 && loc.col == 1);
-
-  // '\n' at cp 2 => line 0, col 2
-  loc = tt_locate(tree, 2);
-  assert(loc.line == 0 && loc.col == 2);
-
-  // 'c' at cp 3 => line 1, col 0
-  loc = tt_locate(tree, 3);
-  assert(loc.line == 1 && loc.col == 0);
-
-  // 'd' at cp 4 => line 1, col 1
-  loc = tt_locate(tree, 4);
   assert(loc.line == 1 && loc.col == 1);
 
-  // '\n' at cp 5 => line 1, col 2
-  loc = tt_locate(tree, 5);
+  // 'b' at cp 1 => line 1, col 2
+  loc = tt_locate(tree, 1);
   assert(loc.line == 1 && loc.col == 2);
 
-  // 'e' at cp 6 => line 2, col 0
+  // '\n' at cp 2 => line 1, col 3
+  loc = tt_locate(tree, 2);
+  assert(loc.line == 1 && loc.col == 3);
+
+  // 'c' at cp 3 => line 2, col 1
+  loc = tt_locate(tree, 3);
+  assert(loc.line == 2 && loc.col == 1);
+
+  // 'd' at cp 4 => line 2, col 2
+  loc = tt_locate(tree, 4);
+  assert(loc.line == 2 && loc.col == 2);
+
+  // '\n' at cp 5 => line 2, col 3
+  loc = tt_locate(tree, 5);
+  assert(loc.line == 2 && loc.col == 3);
+
+  // 'e' at cp 6 => line 3, col 1
   loc = tt_locate(tree, 6);
-  assert(loc.line == 2 && loc.col == 0);
+  assert(loc.line == 3 && loc.col == 1);
 
   tt_tree_del(tree, false);
   ustr_del(s);
@@ -188,11 +188,12 @@ TEST(test_locate_at_start_of_line) {
   // "x\ny" = newline at cp 1
   char* s = ustr_new(3, "x\ny");
   TokenTree* tree = tt_tree_new(s);
+  // manually set newline bit (lexer would do this during codepoint feeding)
   tree->newline_map[0] |= (1ULL << 1);
 
-  // 'y' at cp 2 => line 1, col 0
+  // 'y' at cp 2 => line 2, col 1
   Location loc = tt_locate(tree, 2);
-  assert(loc.line == 1 && loc.col == 0);
+  assert(loc.line == 2 && loc.col == 1);
 
   tt_tree_del(tree, false);
   ustr_del(s);

@@ -70,15 +70,14 @@ static void _gen_scope_dfa(VpaGenInput* input, IrWriter* w, VpaScope* scope, Act
   char* func_name = malloc((size_t)func_name_len + 1);
   snprintf(func_name, (size_t)func_name_len + 1, "_dfa_%s", scope->name);
 
-  Aut* aut = aut_new(func_name, "vpa");
+  Aut* aut = aut_new(func_name, input->source_file_name);
   Re* re = re_new(aut);
 
-  int32_t n_children = scope->children ? (int32_t)darray_size(scope->children) : 0;
   bool started = false;
 
   re_lparen(re);
 
-  for (int32_t i = 0; i < n_children; i++) {
+  for (size_t i = 0; i < darray_size(scope->children); i++) {
     VpaUnit* u = &scope->children[i];
     // For VPA_CALL, use the called scope's leader actions (spec: "Sub-scope calls inlines the leader regexp")
     VpaActionUnits action_au = u->action_units;
@@ -339,6 +338,7 @@ static void _gen_vpa_lex(VpaGenInput* input, IrWriter* w, const char* prefix) {
   irwriter_declare(w, "i32", read_cp_name, "i8*, i32");
   irwriter_declare(w, "i32", "tt_depth", "i8*");
   irwriter_declare(w, "void", "tt_add", "i8*, i32, i32, i32, i32");
+  irwriter_declare(w, "void", "tt_mark_newline", "i8*, i32");
 
   irwriter_define_startf(w, "vpa_lex", "void @vpa_lex(i8* %%src, i64 %%len_i64, i8* %%tt, i8* %%errors, i8* %%ctx)");
 
@@ -389,6 +389,16 @@ static void _gen_vpa_lex(VpaGenInput* input, IrWriter* w, const char* prefix) {
   irwriter_bb_at(w, read_bb);
   IrVal cp_off2 = irwriter_load(w, "i32", cp_off_ptr);
   IrVal cp = irwriter_call_retf(w, "i32", read_cp_name, "i8* %%src, i32 %%r%d", (int)cp_off2);
+
+  // mark newline in bitmap
+  IrLabel nl_bb = irwriter_label(w);
+  IrLabel after_nl_bb = irwriter_label(w);
+  IrVal is_nl = irwriter_icmp(w, "eq", "i32", cp, irwriter_imm_int(w, 10));
+  irwriter_br_cond(w, is_nl, nl_bb, after_nl_bb);
+  irwriter_bb_at(w, nl_bb);
+  irwriter_call_void_fmtf(w, "tt_mark_newline", "i8* %%tt, i32 %%r%d", (int)cp_off2);
+  irwriter_br(w, after_nl_bb);
+  irwriter_bb_at(w, after_nl_bb);
   IrVal dfa_state = irwriter_load(w, "i32", dfa_state_ptr);
 
   if (n_scopes > 0) {
@@ -590,126 +600,106 @@ static void _gen_parse_entry(IrWriter* w, const char* prefix, int32_t main_rule_
 
 // --- Header generation ---
 
-static void _hw_upper(HeaderWriter* hw, const char* s) {
+static void _print_upper(HeaderWriter* hw, const char* s) {
   for (; *s; s++) {
-    char c = (char)toupper((unsigned char)*s);
-    if (!isalnum((unsigned char)*s)) {
-      c = '_';
-    }
-    hw_rawc(hw, c);
+    hdwriter_putc(hw, (char)toupper((unsigned char)*s));
   }
 }
 
-static void _gen_header(VpaGenInput* input, HeaderWriter* hw, int32_t n_actions, const char* prefix) {
-  hw_pragma_once(hw);
-  hw_blank(hw);
-  hw_include_sys(hw, "stdbool.h");
-  hw_blank(hw);
+static void _gen_header(VpaGenInput* input, HeaderWriter* hw, const char* prefix) {
+  hdwriter_puts(hw, "#pragma once\n");
+  hdwriter_putc(hw, '\n');
+  hdwriter_puts(hw, "#include <stdbool.h>\n");
+  hdwriter_putc(hw, '\n');
 
   // inline amalgamated runtime
-  hw_raw(hw, (const char*)NEST_RT);
-  hw_blank(hw);
+  hdwriter_puts(hw, (const char*)NEST_RT);
+  hdwriter_putc(hw, '\n');
 
   int32_t n_scopes = (int32_t)darray_size(input->scopes);
 
   // scope defines
   for (int32_t i = 0; i < n_scopes; i++) {
-    hw_raw(hw, "#define SCOPE_");
-    _hw_upper(hw, input->scopes[i].name);
-    hw_fmt(hw, " %d\n", input->scopes[i].scope_id);
+    hdwriter_puts(hw, "#define SCOPE_");
+    _print_upper(hw, input->scopes[i].name);
+    hdwriter_printf(hw, " %d\n", input->scopes[i].scope_id);
   }
-  hw_fmt(hw, "#define SCOPE_COUNT %d\n", n_scopes);
-  hw_blank(hw);
+  hdwriter_putc(hw, '\n');
 
   // token defines — skip keyword literals ("lit." prefix)
   int32_t n_tokens = symtab_count(&input->tokens);
   for (int32_t i = 0; i < n_tokens; i++) {
     int32_t tok_id = i + input->tokens.start_num;
     const char* name = symtab_get(&input->tokens, tok_id);
-    hw_raw(hw, "#define TOK_");
-    _hw_upper(hw, name + 1);
-    hw_fmt(hw, " %d\n", tok_id);
+    if (strncmp(name, "@lit.", 5) == 0) {
+      continue;
+    }
+    hdwriter_puts(hw, "#define TOK_");
+    _print_upper(hw, name + 1);
+    hdwriter_printf(hw, " %d\n", tok_id);
   }
-  hw_blank(hw);
+  hdwriter_putc(hw, '\n');
 
-  // builtin hook ID defines
-  hw_fmt(hw, "#define HOOK_BEGIN %d\n", -HOOK_ID_BEGIN);
-  hw_fmt(hw, "#define HOOK_END %d\n", -HOOK_ID_END);
-  hw_fmt(hw, "#define HOOK_FAIL %d\n", -HOOK_ID_FAIL);
-  hw_fmt(hw, "#define HOOK_UNPARSE %d\n", -HOOK_ID_UNPARSE);
-  hw_blank(hw);
+  // builtin hook ID defines (only user-facing ones)
+  hdwriter_printf(hw, "#define HOOK_FAIL %d\n", -HOOK_ID_FAIL);
+  hdwriter_printf(hw, "#define HOOK_UNPARSE %d\n", -HOOK_ID_UNPARSE);
+  hdwriter_putc(hw, '\n');
 
-  // user hook defines
   int32_t n_hooks = symtab_count(&input->hooks);
-  bool has_user_hooks = false;
-  for (int32_t i = HOOK_ID_BUILTIN_COUNT; i < n_hooks + input->hooks.start_num; i++) {
-    has_user_hooks = true;
-    const char* name = symtab_get(&input->hooks, i);
-    hw_raw(hw, "#define HOOK_");
-    _hw_upper(hw, name + 1);
-    hw_fmt(hw, " %d\n", -i);
-  }
-  if (has_user_hooks) {
-    hw_blank(hw);
-  }
-
-  // N_ACTIONS
-  hw_fmt(hw, "#define VPA_N_ACTIONS %d\n", n_actions - 1);
-  hw_blank(hw);
 
   // ParseErrorType enum
-  hw_raw(hw, "typedef enum {\n");
-  hw_raw(hw, "  PARSE_ERROR_INVALID_HOOK,\n");
-  hw_raw(hw, "  PARSE_ERROR_REQUIRE_MORE_INPUT,\n");
-  hw_raw(hw, "  PARSE_ERROR_TOKEN_ERR,\n");
-  hw_raw(hw, "  PARSE_ERROR_INVALID_SYNTAX,\n");
-  hw_raw(hw, "} ParseErrorType;\n");
-  hw_blank(hw);
+  hdwriter_puts(hw, "typedef enum {\n");
+  hdwriter_puts(hw, "  PARSE_ERROR_INVALID_HOOK,\n");
+  hdwriter_puts(hw, "  PARSE_ERROR_REQUIRE_MORE_INPUT,\n");
+  hdwriter_puts(hw, "  PARSE_ERROR_TOKEN_ERR,\n");
+  hdwriter_puts(hw, "  PARSE_ERROR_INVALID_SYNTAX,\n");
+  hdwriter_puts(hw, "} ParseErrorType;\n");
+  hdwriter_putc(hw, '\n');
 
   // ParseError
-  hw_raw(hw, "typedef struct {\n");
-  hw_raw(hw, "  const char* message;\n");
-  hw_raw(hw, "  ParseErrorType type;\n");
-  hw_raw(hw, "  int32_t cp_offset;\n");
-  hw_raw(hw, "  int32_t cp_size;\n");
-  hw_raw(hw, "} ParseError;\n");
-  hw_raw(hw, "typedef ParseError* ParseErrors;\n");
-  hw_blank(hw);
+  hdwriter_puts(hw, "typedef struct {\n");
+  hdwriter_puts(hw, "  const char* message;\n");
+  hdwriter_puts(hw, "  ParseErrorType type;\n");
+  hdwriter_puts(hw, "  int32_t cp_offset;\n");
+  hdwriter_puts(hw, "  int32_t cp_size;\n");
+  hdwriter_puts(hw, "} ParseError;\n");
+  hdwriter_puts(hw, "typedef ParseError* ParseErrors;\n");
+  hdwriter_putc(hw, '\n');
 
   // PegRef — already defined by PEG header when PEG rules are present; guarded to avoid redefinition.
-  hw_raw(hw, "#ifndef _NEST_PEGREF\n#define _NEST_PEGREF\n");
-  hw_raw(hw, "typedef struct {\n  TokenChunk* tc;\n  int64_t col;\n  int64_t row;\n} PegRef;\n");
-  hw_raw(hw, "#endif\n");
-  hw_blank(hw);
+  hdwriter_puts(hw, "#ifndef _NEST_PEGREF\n#define _NEST_PEGREF\n");
+  hdwriter_puts(hw, "typedef struct {\n  TokenChunk* tc;\n  int64_t col;\n  int64_t row;\n} PegRef;\n");
+  hdwriter_puts(hw, "#endif\n");
+  hdwriter_putc(hw, '\n');
 
   // ParseResult
-  hw_raw(hw, "typedef struct {\n");
-  hw_raw(hw, "  PegRef main;\n");
-  hw_raw(hw, "  TokenTree* tt;\n");
-  hw_raw(hw, "  ParseErrors errors;\n");
-  hw_raw(hw, "} ParseResult;\n");
-  hw_blank(hw);
+  hdwriter_puts(hw, "typedef struct {\n");
+  hdwriter_puts(hw, "  PegRef main;\n");
+  hdwriter_puts(hw, "  TokenTree* tt;\n");
+  hdwriter_puts(hw, "  ParseErrors errors;\n");
+  hdwriter_puts(hw, "} ParseResult;\n");
+  hdwriter_putc(hw, '\n');
 
   // LexHook typedef + ParseContext
-  hw_raw(hw, "typedef int32_t (*LexHook)(void* userdata, Token* token, const char* token_str_start);\n");
-  hw_blank(hw);
-  hw_raw(hw, "typedef struct {\n");
-  hw_raw(hw, "  void* userdata;\n");
+  hdwriter_puts(hw, "typedef int32_t (*LexHook)(void* userdata, Token* token, const char* token_str_start);\n");
+  hdwriter_putc(hw, '\n');
+  hdwriter_puts(hw, "typedef struct {\n");
+  hdwriter_puts(hw, "  void* userdata;\n");
   for (int32_t i = HOOK_ID_BUILTIN_COUNT; i < n_hooks + input->hooks.start_num; i++) {
     const char* name = symtab_get(&input->hooks, i);
-    hw_fmt(hw, "  LexHook %s;\n", name + 1);
+    hdwriter_printf(hw, "  LexHook %s;\n", name + 1);
   }
-  hw_raw(hw, "} ParseContext;\n");
-  hw_blank(hw);
+  hdwriter_puts(hw, "} ParseContext;\n");
+  hdwriter_putc(hw, '\n');
 
   // extern declarations
-  hw_raw(hw, "extern void vpa_lex(void* src, int64_t len, void* tt, void* errors, void* ctx);\n");
-  hw_blank(hw);
+  hdwriter_puts(hw, "extern void vpa_lex(void* src, int64_t len, void* tt, void* errors, void* ctx);\n");
+  hdwriter_putc(hw, '\n');
 
   if (prefix) {
-    hw_fmt(hw, "extern ParseResult %s_parse(ParseContext lc, char* src);\n", prefix);
-    hw_fmt(hw, "extern void %s_cleanup(ParseResult r);\n", prefix);
-    hw_blank(hw);
+    hdwriter_printf(hw, "extern ParseResult %s_parse(ParseContext $parse_context, char* src);\n", prefix);
+    hdwriter_printf(hw, "extern void %s_cleanup(ParseResult r);\n", prefix);
+    hdwriter_putc(hw, '\n');
   }
 }
 
@@ -729,9 +719,7 @@ void vpa_gen(VpaGenInput* input, HeaderWriter* hw, IrWriter* w, const char* pref
   _gen_dispatch(input, w, actions);
   _gen_vpa_lex(input, w, prefix);
   _gen_parse_entry(w, prefix, main_rule_row);
-
-  int32_t n_actions = (int32_t)darray_size(actions);
-  _gen_header(input, hw, n_actions, prefix);
+  _gen_header(input, hw, prefix);
 
   darray_del(actions);
 }

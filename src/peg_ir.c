@@ -528,7 +528,8 @@ void peg_ir_emit_gep_helpers(IrWriter* w) {
                            "internal void @tag_writeback(ptr %%table, i64 %%col, i64 %%sizeof_col, i64 "
                            "%%tag_byte_offset, i64 %%clear_mask, i64 %%tag_bits)");
     irwriter_bb(w);
-    IrVal p = irwriter_call_retf(w, "ptr", "gep_tag", "ptr %%table, i64 %%col, i64 %%sizeof_col, i64 %%tag_byte_offset");
+    IrVal p =
+        irwriter_call_retf(w, "ptr", "gep_tag", "ptr %%table, i64 %%col, i64 %%sizeof_col, i64 %%tag_byte_offset");
     IrVal old = irwriter_load(w, "i64", p);
     IrVal cleared = irwriter_binop(w, "and", "i64", old, irwriter_imm(w, "%clear_mask"));
     IrVal combined = irwriter_binop(w, "or", "i64", cleared, irwriter_imm(w, "%tag_bits"));

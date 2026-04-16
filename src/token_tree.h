@@ -39,14 +39,17 @@ typedef struct TokenTree {
 
 #endif // _NEST_TOKEN_TYPES
 
+// 1-based line and column from tt_locate
 typedef struct {
-  int32_t line;
-  int32_t col;
+  int32_t line; // 1-based
+  int32_t col;  // 1-based
 } Location;
 
 TokenTree* tt_tree_new(const char* ustr);
 void tt_tree_del(TokenTree* tree, bool free_values);
 Location tt_locate(TokenTree* tree, int32_t cp_offset);
+// mark codepoint at cp_offset as newline in the bitmap (called by lexer for each '\n')
+void tt_mark_newline(TokenTree* tree, int32_t cp_offset);
 void tt_add(TokenTree* tree, int32_t tok_id, int32_t cp_start, int32_t cp_size, int32_t chunk_id);
 TokenChunk* tt_push(TokenTree* tree, int32_t scope_id);
 // generated parser only: also set the token_chunk.aux_value = token_tree

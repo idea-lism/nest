@@ -51,7 +51,7 @@ static void _error_at(ParseState* ps, Token* t, const char* fmt, ...) {
   int32_t off = 0;
   if (t && ps->tree) {
     Location loc = tt_locate(ps->tree, t->cp_start);
-    off = snprintf(ps->error, sizeof(ps->error), "%d:%d: ", loc.line + 1, loc.col + 1);
+    off = snprintf(ps->error, sizeof(ps->error), "%d:%d: ", loc.line, loc.col);
   }
   va_list ap;
   va_start(ap, fmt);
@@ -153,7 +153,17 @@ typedef struct {
   SharedState shared;
 } LexCtx;
 
-static int32_t _next_cp(LexCtx* ctx) { return ctx->it.cp_idx >= ctx->cp_count ? -2 : ustr_iter_next(&ctx->it); }
+static int32_t _next_cp(LexCtx* ctx) {
+  if (ctx->it.cp_idx >= ctx->cp_count) {
+    return -2;
+  }
+  int32_t idx = ctx->it.cp_idx;
+  int32_t cp = ustr_iter_next(&ctx->it);
+  if (cp == '\n') {
+    ctx->tree->newline_map[idx / 64] |= (1ULL << (idx % 64));
+  }
+  return cp;
+}
 
 // forward-declare parse_fn functions for ScopeConfig
 static bool _parse_re(ParseState* ps, TokenChunk* chunk);

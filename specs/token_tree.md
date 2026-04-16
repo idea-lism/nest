@@ -10,7 +10,7 @@ Both bootstrap parser and resulting parser use this tree representation.
 
 The input is byte stream, with [ustr](ustr.md), we already have a bitmap to index the starting positions of codepoints.
 
-By feeding the chars one by one, the lexer construct another bitmap to index the newlines: each bit represents a codepoint, `1` represents the codepoint is a newline. With this index, given a cp_offset, we can quickly locate the line and column by popcnt instruction.
+By feeding the chars one by one, the lexer constructs another bitmap to index the newlines: each bit represents a codepoint, `1` represents the codepoint is a newline. With this index, given a cp_offset, `tt_locate` quickly computes 1-based line and column by popcnt instruction.
 
 So the data structures are:
 
@@ -56,7 +56,7 @@ current is always non-null.
 ```c
 TokenTree* tt_tree_new(ustr);
 void tt_tree_del(TokenTree*, bool free_values);
-struct {line, col} tt_locate(TokenTree* tree, int32_t cp_offset);
+struct {line, col} tt_locate(TokenTree* tree, int32_t cp_offset); // 1-based line and col
 tt_add(TokenTree* tree, int32_t tok_id, int32_t cp_start, int32_t cp_size, int32_t chunk_id);
 TokenChunk* tt_push(TokenTree* tree, int32_t scope_id);
 // generated parser only: also set the token_chunk.aux_value = token_tree

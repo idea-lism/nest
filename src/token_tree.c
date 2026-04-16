@@ -10,8 +10,7 @@ TokenTree* tt_tree_new(const char* ustr) {
 
   int32_t cp_count = ustr_size(ustr);
   size_t map_size = (cp_count + 63) / 64;
-  tree->newline_map = calloc(map_size, sizeof(uint64_t));
-
+  tree->newline_map = calloc(map_size > 0 ? map_size : 1, sizeof(uint64_t));
   tree->table = darray_new(sizeof(TokenChunk), 0);
 
   TokenChunk root = {.scope_id = 0, .parent_id = -1, .tokens = darray_new(sizeof(Token), 0)};
@@ -39,8 +38,8 @@ void tt_tree_del(TokenTree* tree, bool free_values) {
 }
 
 Location tt_locate(TokenTree* tree, int32_t cp_offset) {
-  int32_t line = 0;
-  int32_t col = cp_offset;
+  int32_t line = 1;
+  int32_t col = cp_offset + 1;
 
   int32_t full_words = cp_offset / 64;
   for (int32_t i = 0; i < full_words; i++) {
@@ -55,12 +54,16 @@ Location tt_locate(TokenTree* tree, int32_t cp_offset) {
     int32_t word_idx = i / 64;
     int32_t bit_idx = i % 64;
     if (tree->newline_map[word_idx] & (1ULL << bit_idx)) {
-      col = cp_offset - i - 1;
+      col = cp_offset - i;
       break;
     }
   }
 
   return (Location){.line = line, .col = col};
+}
+
+void tt_mark_newline(TokenTree* tree, int32_t cp_offset) {
+  tree->newline_map[cp_offset / 64] |= (1ULL << (cp_offset % 64));
 }
 
 void tt_add(TokenTree* tree, int32_t tok_id, int32_t cp_start, int32_t cp_size, int32_t chunk_id) {
