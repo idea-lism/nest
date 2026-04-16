@@ -1,0 +1,38 @@
+------
+  @dquote """
+  @str_char "a"
+  @str_char " "
+    @interp_open "#{"
+    @ident "x"
+    @space " "
+    @plus "+"
+    @space " "
+      @dquote """
+      @str_char "b"
+      @str_char " "
+        @interp_open "#{"
+        @ident "y"
+        @interp_close "}"
+      @str_char " "
+      @str_char "c"
+      @dquote """
+    @interp_close "}"
+  @str_char " "
+  @str_char "d"
+  @dquote """
+------
+main
+  value
+    str
+      @dquote
+      str_part
+        @str_char
+      str_part
+        @str_char
+      str_part
+        interp
+      str_part
+        @str_char
+      str_part
+        @str_char
+      @dquote

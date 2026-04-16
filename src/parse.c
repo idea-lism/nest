@@ -242,6 +242,7 @@ static void _lex_scope(LexCtx* ctx, ScopeId scope_id) {
       _lex_scope(ctx, SCOPE_CHARCLASS);
     } else if (last_action > 0 && last_action < SCOPE_COUNT) {
       _lex_scope(ctx, last_action);
+      saved = ctx->it.cp_idx;
     } else if (last_action >= LIT_START) {
       tt_add(ctx->tree, last_action, tok_start, saved - tok_start, -1);
     } else if (last_action == 0) {

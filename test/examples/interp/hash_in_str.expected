@@ -1,0 +1,24 @@
+------
+  @dquote """
+  @str_char "a"
+  @str_char " "
+  @str_char "#"
+  @str_char " "
+  @str_char "b"
+  @dquote """
+------
+main
+  value
+    str
+      @dquote
+      str_part
+        @str_char
+      str_part
+        @str_char
+      str_part
+        @str_char
+      str_part
+        @str_char
+      str_part
+        @str_char
+      @dquote

@@ -1,0 +1,17 @@
+------
+@lit.fn "fn"
+@space " "
+@ident "foo"
+@lparen "("
+@rparen ")"
+@space " "
+@lparen "("
+@lit.let "let"
+@space " "
+@ident "x"
+@space " "
+@assign "="
+@space " "
+@number "1"
+@semi ";"
+------

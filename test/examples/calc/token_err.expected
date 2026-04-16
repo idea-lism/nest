@@ -1,0 +1,9 @@
+------
+@number "1"
+@plus "+"
+------
+main
+  expr
+    term
+      factor
+        @number

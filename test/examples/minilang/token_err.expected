@@ -1,0 +1,8 @@
+------
+@lit.let "let"
+@space " "
+@ident "x"
+@space " "
+@assign "="
+@space " "
+------

@@ -1,0 +1,64 @@
+[[vpa]]
+%ignore @space @comment
+
+%define HEX /[0-9a-fA-F]/
+
+*keywords = @{
+  "let"
+  "fn"
+  "return"
+}
+
+main = {
+  *keywords
+  /\d+/ @number
+  /0x\{HEX}+/ @hex
+  i/true/ @true
+  i/false/ @false
+  /[a-zA-Z_]\w*/ @ident
+  /\s+/ @space
+  /#[^\n]*/ @comment
+  /\+/ @plus
+  /-/ @minus
+  /\*/ @star
+  /,/ @comma
+  /;/ @semi
+  /=/ @assign
+  /\(/ @lparen
+  /\)/ @rparen
+}
+
+[[peg]]
+main = decl+
+decl = [
+  fn_decl
+  let_decl
+]
+fn_decl = "fn" @ident @lparen param*<@comma> @rparen body
+param = @ident
+let_decl = "let" @ident @assign expr @semi
+body = @lparen stmt* @rparen
+stmt = [
+  ret_stmt
+  let_decl
+  expr_stmt
+]
+ret_stmt = "return" expr @semi
+expr_stmt = expr @semi
+expr = term+<addop>
+addop = [
+  @plus
+  @minus
+]
+term = factor+<mulop>
+mulop = @star
+factor = [
+  fn_call :fn_call
+  @number :num
+  @hex :hex
+  @true :is_true
+  @false :is_false
+  @ident :ident
+  @lparen expr @rparen :paren
+]
+fn_call = @ident @lparen expr*<@comma> @rparen

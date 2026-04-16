@@ -39,6 +39,10 @@ typedef struct {
   - `void @restore(ptr %stack_ptr, ptr %col)`
   - `i64 @top(ptr %stack_ptr)`: get the top stored col (but not update `%col`)
 - `peg_ir_emit_bit_helpers(irwriter)`: emit shared-mode bit helper definitions: `@bit_test`, `@bit_deny`, `@bit_exclude` as defined in [PEG](peg.md)
+- `peg_ir_emit_gep_helpers(irwriter)`: emit GEP and tag writeback helper definitions
+  - `ptr @gep_slot(ptr %table, i64 %col, i64 %sizeof_col, i64 %slot_byte_offset)`: compute pointer to memoize slot
+  - `ptr @gep_tag(ptr %table, i64 %col, i64 %sizeof_col, i64 %tag_byte_offset)`: compute pointer to tag bits bucket
+  - `void @tag_writeback(ptr %table, i64 %col, i64 %sizeof_col, i64 %tag_byte_offset, i64 %clear_mask, i64 %tag_bits)`: load old tag bits, clear with mask, OR in new tag_bits, store back
 
 One optimization idea is chained-slot-writes for multiplier matchings: if `a*` matches `a a a`, we can cache `a*=3, a*=2, a*=1` on all three positions. but that would need the IR book-keeping all parsed sizes and calculate accumulatives, which is too complex. So we keep things simple, memoize the whole parsed size as other rules.
 

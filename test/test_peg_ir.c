@@ -89,6 +89,7 @@ TEST(test_helpers_define_internal) {
   irwriter_start(w, "test.ll", ".");
   peg_ir_emit_helpers(w);
   peg_ir_emit_bit_helpers(w);
+  peg_ir_emit_gep_helpers(w);
   irwriter_del(w);
   compat_close_memstream(f, &buf, &len);
 
@@ -98,6 +99,9 @@ TEST(test_helpers_define_internal) {
   assert(strstr(buf, "define internal i1 @bit_test("));
   assert(strstr(buf, "define internal void @bit_deny("));
   assert(strstr(buf, "define internal void @bit_exclude("));
+  assert(strstr(buf, "define internal ptr @gep_slot("));
+  assert(strstr(buf, "define internal ptr @gep_tag("));
+  assert(strstr(buf, "define internal void @tag_writeback("));
   free(buf);
 }
 

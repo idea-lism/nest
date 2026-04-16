@@ -42,3 +42,5 @@ void peg_ir_emit_helpers(IrWriter* w);
 
 // emit shared-mode bit helper definitions: @bit_test, @bit_deny, @bit_exclude
 void peg_ir_emit_bit_helpers(IrWriter* w);
+// emit GEP + tag writeback helper definitions: @gep_slot, @gep_tag, @tag_writeback
+void peg_ir_emit_gep_helpers(IrWriter* w);

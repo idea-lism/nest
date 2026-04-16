@@ -1,0 +1,6 @@
+------
+@lit.if "if"
+@lparen "("
+@ident "x"
+@rparen ")"
+------

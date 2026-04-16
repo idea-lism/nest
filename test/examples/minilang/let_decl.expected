@@ -1,0 +1,10 @@
+------
+@lit.let "let"
+@space " "
+@ident "x"
+@space " "
+@assign "="
+@space " "
+@number "42"
+@semi ";"
+------

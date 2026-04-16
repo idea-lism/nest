@@ -1,0 +1,46 @@
+[[vpa]]
+%ignore @space
+
+main = {
+  /[a-zA-Z_]\w*/ @ident
+  /[0-9]+/ @number
+  /\s+/ @space
+  str
+}
+
+str = /"/ .begin @dquote {
+  /"/ @dquote .end
+  interp
+  /[^"#]/ @str_char
+  /#/ @str_char
+}
+
+interp = /\#[{]/ .begin @interp_open {
+  /[}]/ @interp_close .end
+  /[a-zA-Z_]\w*/ @ident
+  /[0-9]+/ @number
+  /\+/ @plus
+  /-/ @minus
+  /\s+/ @space
+  str
+}
+
+[[peg]]
+main = value*
+value = [
+  str
+  @ident
+  @number
+]
+str = @dquote str_part* @dquote
+str_part = [
+  interp
+  @str_char
+]
+interp = @interp_open expr @interp_close
+expr = atom+<addop>
+addop = [
+  @plus
+  @minus
+]
+atom = value

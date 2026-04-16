@@ -397,7 +397,187 @@ static void _gen_header(PegGenInput* input, HeaderWriter* hw, RuleScopeMap* scop
 }
 
 // ============================================================
-// LLVM IR generation
+// LLVM IR generation — per-scope context
+// ============================================================
+
+typedef struct {
+  IrVal peg_table;
+  int64_t sizeof_col;
+  int64_t bits_bucket_size;
+  int64_t slot_byte_offset; // precomputed: bits_bucket_size * 8 + slot_index * 4
+  int64_t tag_byte_offset;  // precomputed: tag_bit_index * 8
+} PegIrScopeCtx;
+
+// ============================================================
+// Memoize read strategies
+// ============================================================
+
+typedef struct {
+  IrLabel material_parse;
+  IrLabel fail_bb;
+  IrLabel done_bb;
+} MemoizeLabels;
+
+static void _memoize_read_none(PegIrCtx* ctx, PegIrScopeCtx* sc, ScopedRule* sr, MemoizeLabels* ml) {
+  (void)sc;
+  (void)sr;
+  irwriter_br(ctx->ir_writer, ml->material_parse);
+}
+
+static void _memoize_read_shared(PegIrCtx* ctx, PegIrScopeCtx* sc, ScopedRule* sr, MemoizeLabels* ml) {
+  IrWriter* w = ctx->ir_writer;
+  IrVal col_val = irwriter_load(w, "i64", ctx->col);
+  IrVal n_tok_i64 = irwriter_sext(w, "i32", ctx->token_size, "i64");
+  IrVal in_range = irwriter_icmp(w, "slt", "i64", col_val, n_tok_i64);
+  IrLabel memoize_ok = irwriter_label(w);
+  irwriter_br_cond(w, in_range, memoize_ok, ml->material_parse);
+  irwriter_bb_at(w, memoize_ok);
+
+  IrVal slot_ptr =
+      irwriter_call_retf(w, "ptr", "gep_slot", "ptr %%r%d, i64 %%r%d, i64 %lld, i64 %lld", (int)sc->peg_table,
+                         (int)col_val, (long long)sc->sizeof_col, (long long)sc->slot_byte_offset);
+  IrVal slot_val = irwriter_load(w, "i32", slot_ptr);
+  IrVal is_cached = irwriter_icmp(w, "ne", "i32", slot_val, irwriter_imm_int(w, -1));
+
+  uint64_t seg_off = sr->segment_index * 8;
+  IrVal bt = irwriter_call_retf(w, "i1", "bit_test", "ptr %%r%d, i64 %%r%d, i64 %lld, i64 %llu, i64 %llu",
+                                (int)sc->peg_table, (int)col_val, (long long)sc->sizeof_col,
+                                (unsigned long long)seg_off, (unsigned long long)sr->rule_bit_mask);
+  IrLabel bit_ok = irwriter_label(w);
+  irwriter_br_cond(w, bt, bit_ok, ml->fail_bb);
+
+  irwriter_bb_at(w, bit_ok);
+  IrLabel fast_ret = irwriter_label(w);
+  irwriter_br_cond(w, is_cached, fast_ret, ml->material_parse);
+  irwriter_bb_at(w, fast_ret);
+  IrVal cached = irwriter_sext(w, "i32", slot_val, "i64");
+  irwriter_store(w, "i64", cached, ctx->parsed_tokens);
+  irwriter_store(w, "i64", irwriter_binop(w, "add", "i64", col_val, cached), ctx->col);
+  irwriter_br(w, ml->done_bb);
+}
+
+static void _memoize_read_naive(PegIrCtx* ctx, PegIrScopeCtx* sc, ScopedRule* sr, MemoizeLabels* ml) {
+  (void)sr;
+  IrWriter* w = ctx->ir_writer;
+  IrVal col_val = irwriter_load(w, "i64", ctx->col);
+  IrVal n_tok_i64 = irwriter_sext(w, "i32", ctx->token_size, "i64");
+  IrVal in_range = irwriter_icmp(w, "slt", "i64", col_val, n_tok_i64);
+  IrLabel memoize_ok = irwriter_label(w);
+  irwriter_br_cond(w, in_range, memoize_ok, ml->material_parse);
+  irwriter_bb_at(w, memoize_ok);
+
+  IrVal slot_ptr =
+      irwriter_call_retf(w, "ptr", "gep_slot", "ptr %%r%d, i64 %%r%d, i64 %lld, i64 %lld", (int)sc->peg_table,
+                         (int)col_val, (long long)sc->sizeof_col, (long long)sc->slot_byte_offset);
+  IrVal slot_val = irwriter_load(w, "i32", slot_ptr);
+
+  IrVal is_success = irwriter_icmp(w, "sge", "i32", slot_val, irwriter_imm_int(w, 0));
+  IrLabel fast_ret = irwriter_label(w);
+  IrLabel not_success = irwriter_label(w);
+  irwriter_br_cond(w, is_success, fast_ret, not_success);
+
+  irwriter_bb_at(w, fast_ret);
+  IrVal cached = irwriter_sext(w, "i32", slot_val, "i64");
+  irwriter_store(w, "i64", cached, ctx->parsed_tokens);
+  irwriter_store(w, "i64", irwriter_binop(w, "add", "i64", col_val, cached), ctx->col);
+  irwriter_br(w, ml->done_bb);
+
+  irwriter_bb_at(w, not_success);
+  IrVal is_unknown = irwriter_icmp(w, "eq", "i32", slot_val, irwriter_imm_int(w, -1));
+  irwriter_br_cond(w, is_unknown, ml->material_parse, ml->fail_bb);
+}
+
+// ============================================================
+// Memoize write strategies (cache on success)
+// ============================================================
+
+static void _memoize_write_none(PegIrCtx* ctx, PegIrScopeCtx* sc, ScopedRule* sr, IrVal start_col) {
+  (void)ctx;
+  (void)sc;
+  (void)sr;
+  (void)start_col;
+}
+
+static void _memoize_write_shared(PegIrCtx* ctx, PegIrScopeCtx* sc, ScopedRule* sr, IrVal start_col) {
+  IrWriter* w = ctx->ir_writer;
+  IrVal pt = irwriter_load(w, "i64", ctx->parsed_tokens);
+  IrVal slot_ptr =
+      irwriter_call_retf(w, "ptr", "gep_slot", "ptr %%r%d, i64 %%r%d, i64 %lld, i64 %lld", (int)sc->peg_table,
+                         (int)start_col, (long long)sc->sizeof_col, (long long)sc->slot_byte_offset);
+  irwriter_rawf(w, "  %%r%d = trunc i64 %%r%d to i32\n", irwriter_next_reg(w), (int)pt);
+  irwriter_store(w, "i32", (IrVal)(irwriter_next_reg(w) - 1), slot_ptr);
+  irwriter_call_void_fmtf(w, "bit_exclude", "ptr %%r%d, i64 %%r%d, i64 %lld, i64 %llu, i64 %llu, i64 %llu",
+                          (int)sc->peg_table, (int)start_col, (long long)sc->sizeof_col,
+                          (unsigned long long)(sr->segment_index * 8), (unsigned long long)sr->segment_mask,
+                          (unsigned long long)sr->rule_bit_mask);
+}
+
+static void _memoize_write_naive(PegIrCtx* ctx, PegIrScopeCtx* sc, ScopedRule* sr, IrVal start_col) {
+  (void)sr;
+  IrWriter* w = ctx->ir_writer;
+  IrVal pt = irwriter_load(w, "i64", ctx->parsed_tokens);
+  IrVal slot_ptr =
+      irwriter_call_retf(w, "ptr", "gep_slot", "ptr %%r%d, i64 %%r%d, i64 %lld, i64 %lld", (int)sc->peg_table,
+                         (int)start_col, (long long)sc->sizeof_col, (long long)sc->slot_byte_offset);
+  irwriter_rawf(w, "  %%r%d = trunc i64 %%r%d to i32\n", irwriter_next_reg(w), (int)pt);
+  irwriter_store(w, "i32", (IrVal)(irwriter_next_reg(w) - 1), slot_ptr);
+}
+
+// ============================================================
+// Memoize deny strategies (cache on failure)
+// ============================================================
+
+static void _memoize_deny_none(PegIrCtx* ctx, PegIrScopeCtx* sc, ScopedRule* sr, IrVal fail_col) {
+  (void)ctx;
+  (void)sc;
+  (void)sr;
+  (void)fail_col;
+}
+
+static void _memoize_deny_shared(PegIrCtx* ctx, PegIrScopeCtx* sc, ScopedRule* sr, IrVal fail_col) {
+  IrWriter* w = ctx->ir_writer;
+  irwriter_call_void_fmtf(w, "bit_deny", "ptr %%r%d, i64 %%r%d, i64 %lld, i64 %llu, i64 %llu", (int)sc->peg_table,
+                          (int)fail_col, (long long)sc->sizeof_col, (unsigned long long)(sr->segment_index * 8),
+                          (unsigned long long)sr->rule_bit_mask);
+}
+
+static void _memoize_deny_naive(PegIrCtx* ctx, PegIrScopeCtx* sc, ScopedRule* sr, IrVal fail_col) {
+  (void)sr;
+  IrWriter* w = ctx->ir_writer;
+  IrVal slot_ptr =
+      irwriter_call_retf(w, "ptr", "gep_slot", "ptr %%r%d, i64 %%r%d, i64 %lld, i64 %lld", (int)sc->peg_table,
+                         (int)fail_col, (long long)sc->sizeof_col, (long long)sc->slot_byte_offset);
+  irwriter_store(w, "i32", irwriter_imm_int(w, -2), slot_ptr);
+}
+
+// ============================================================
+// Strategy dispatch tables
+// ============================================================
+
+typedef void (*MemoizeReadFn)(PegIrCtx*, PegIrScopeCtx*, ScopedRule*, MemoizeLabels*);
+typedef void (*MemoizeWriteFn)(PegIrCtx*, PegIrScopeCtx*, ScopedRule*, IrVal);
+typedef void (*MemoizeDenyFn)(PegIrCtx*, PegIrScopeCtx*, ScopedRule*, IrVal);
+
+static MemoizeReadFn _memoize_read_fns[] = {
+    [MEMOIZE_NONE] = _memoize_read_none,
+    [MEMOIZE_NAIVE] = _memoize_read_naive,
+    [MEMOIZE_SHARED] = _memoize_read_shared,
+};
+
+static MemoizeWriteFn _memoize_write_fns[] = {
+    [MEMOIZE_NONE] = _memoize_write_none,
+    [MEMOIZE_NAIVE] = _memoize_write_naive,
+    [MEMOIZE_SHARED] = _memoize_write_shared,
+};
+
+static MemoizeDenyFn _memoize_deny_fns[] = {
+    [MEMOIZE_NONE] = _memoize_deny_none,
+    [MEMOIZE_NAIVE] = _memoize_deny_naive,
+    [MEMOIZE_SHARED] = _memoize_deny_shared,
+};
+
+// ============================================================
+// _gen_scope_ir — main IR generation per scope
 // ============================================================
 
 static void _gen_scope_ir(IrWriter* w, ScopeClosure* cl, int memoize_mode) {
@@ -450,6 +630,10 @@ static void _gen_scope_ir(IrWriter* w, ScopeClosure* cl, int memoize_mode) {
       .ret_labels = darray_new(sizeof(IrLabel), 0),
   };
 
+  MemoizeReadFn memoize_read = _memoize_read_fns[memoize_mode];
+  MemoizeWriteFn memoize_write = _memoize_write_fns[memoize_mode];
+  MemoizeDenyFn memoize_deny = _memoize_deny_fns[memoize_mode];
+
   IrLabel final_ret = peg_ir_emit_call(&ctx, cl->scoped_rules[0].scoped_rule_name);
 
   for (int32_t i = 0; i < rule_size; i++) {
@@ -459,78 +643,25 @@ static void _gen_scope_ir(IrWriter* w, ScopeClosure* cl, int memoize_mode) {
     int32_t tag_size = symtab_count(&sr->tags);
     ctx.tag_bit_offset = (int64_t)sr->tag_bit_offset;
 
-    IrLabel done_bb = irwriter_label(w);
-    IrLabel fail_bb = irwriter_label(w);
-    IrLabel material_parse = irwriter_label(w);
+    PegIrScopeCtx sc = {
+        .peg_table = peg_table,
+        .sizeof_col = sizeof_col,
+        .bits_bucket_size = cl->bits_bucket_size,
+        .slot_byte_offset = cl->bits_bucket_size * 8 + (int64_t)sr->slot_index * 4,
+        .tag_byte_offset = (int64_t)sr->tag_bit_index * 8,
+    };
 
-    if (memoize_mode == MEMOIZE_NONE) {
-      irwriter_br(w, material_parse);
-    } else if (memoize_mode == MEMOIZE_SHARED) {
-      IrVal col_val = irwriter_load(w, "i64", col_ptr);
-      // bounds check: skip memoize lookup if col >= token_size
-      IrVal n_tok_i64 = irwriter_sext(w, "i32", token_size, "i64");
-      IrVal in_range = irwriter_icmp(w, "slt", "i64", col_val, n_tok_i64);
-      IrLabel memo_ok = irwriter_label(w);
-      irwriter_br_cond(w, in_range, memo_ok, material_parse);
-      irwriter_bb_at(w, memo_ok);
-      IrVal row_off = irwriter_binop(w, "mul", "i64", col_val, irwriter_imm_int(w, (int)sizeof_col));
-      IrVal slot_byte = irwriter_binop(
-          w, "add", "i64", row_off, irwriter_imm_int(w, (int)(cl->bits_bucket_size * 8 + (int64_t)sr->slot_index * 4)));
-      irwriter_rawf(w, "  %%r%d = getelementptr i8, ptr %%r%d, i64 %%r%d\n", irwriter_next_reg(w), (int)peg_table,
-                    (int)slot_byte);
-      IrVal slot_ptr = (IrVal)(irwriter_next_reg(w) - 1);
-      IrVal slot_val = irwriter_load(w, "i32", slot_ptr);
-      IrVal is_cached = irwriter_icmp(w, "ne", "i32", slot_val, irwriter_imm_int(w, -1));
+    MemoizeLabels ml = {
+        .done_bb = irwriter_label(w),
+        .fail_bb = irwriter_label(w),
+        .material_parse = irwriter_label(w),
+    };
 
-      uint64_t seg_off = sr->segment_index * 8;
-      IrVal bt = irwriter_call_retf(w, "i1", "bit_test", "ptr %%r%d, i64 %%r%d, i64 %lld, i64 %llu, i64 %llu",
-                                    (int)peg_table, (int)col_val, (long long)sizeof_col, (unsigned long long)seg_off,
-                                    (unsigned long long)sr->rule_bit_mask);
-      IrLabel bit_ok = irwriter_label(w);
-      irwriter_br_cond(w, bt, bit_ok, fail_bb);
+    // --- memoize read ---
+    memoize_read(&ctx, &sc, sr, &ml);
 
-      irwriter_bb_at(w, bit_ok);
-      IrLabel fast_ret = irwriter_label(w);
-      irwriter_br_cond(w, is_cached, fast_ret, material_parse);
-      irwriter_bb_at(w, fast_ret);
-      IrVal cached = irwriter_sext(w, "i32", slot_val, "i64");
-      irwriter_store(w, "i64", cached, parsed_tokens);
-      irwriter_store(w, "i64", irwriter_binop(w, "add", "i64", col_val, cached), col_ptr);
-      irwriter_br(w, done_bb);
-    } else {
-      IrVal col_val = irwriter_load(w, "i64", col_ptr);
-      // bounds check: skip memoize lookup if col >= token_size
-      IrVal n_tok_i64_n = irwriter_sext(w, "i32", token_size, "i64");
-      IrVal in_range_n = irwriter_icmp(w, "slt", "i64", col_val, n_tok_i64_n);
-      IrLabel memo_ok_n = irwriter_label(w);
-      irwriter_br_cond(w, in_range_n, memo_ok_n, material_parse);
-      irwriter_bb_at(w, memo_ok_n);
-      IrVal row_off = irwriter_binop(w, "mul", "i64", col_val, irwriter_imm_int(w, (int)sizeof_col));
-      IrVal slot_byte = irwriter_binop(
-          w, "add", "i64", row_off, irwriter_imm_int(w, (int)(cl->bits_bucket_size * 8 + (int64_t)sr->slot_index * 4)));
-      irwriter_rawf(w, "  %%r%d = getelementptr i8, ptr %%r%d, i64 %%r%d\n", irwriter_next_reg(w), (int)peg_table,
-                    (int)slot_byte);
-      IrVal slot_ptr = (IrVal)(irwriter_next_reg(w) - 1);
-      IrVal slot_val = irwriter_load(w, "i32", slot_ptr);
-
-      IrVal is_success = irwriter_icmp(w, "sge", "i32", slot_val, irwriter_imm_int(w, 0));
-      IrLabel fast_ret = irwriter_label(w);
-      IrLabel not_success = irwriter_label(w);
-      irwriter_br_cond(w, is_success, fast_ret, not_success);
-
-      irwriter_bb_at(w, fast_ret);
-      IrVal cached = irwriter_sext(w, "i32", slot_val, "i64");
-      irwriter_store(w, "i64", cached, parsed_tokens);
-      irwriter_store(w, "i64", irwriter_binop(w, "add", "i64", col_val, cached), col_ptr);
-      irwriter_br(w, done_bb);
-
-      irwriter_bb_at(w, not_success);
-      IrVal is_unknown = irwriter_icmp(w, "eq", "i32", slot_val, irwriter_imm_int(w, -1));
-      irwriter_br_cond(w, is_unknown, material_parse, fail_bb);
-    }
-
-    irwriter_bb_at(w, material_parse);
-
+    // --- material parse ---
+    irwriter_bb_at(w, ml.material_parse);
     if (tag_size > 0) {
       irwriter_store(w, "i64", irwriter_imm_int(w, 0), tag_bits);
     }
@@ -541,6 +672,7 @@ static void _gen_scope_ir(IrWriter* w, ScopeClosure* cl, int memoize_mode) {
     peg_ir_emit_parse(&ctx, &sr->body, parse_fail);
     irwriter_br(w, parse_success);
 
+    // --- parse success ---
     irwriter_bb_at(w, parse_success);
     IrVal start_col = irwriter_call_retf(w, "i64", "top", "ptr %%r%d", (int)stack_ptr);
     IrVal cur_col = irwriter_load(w, "i64", col_ptr);
@@ -548,68 +680,27 @@ static void _gen_scope_ir(IrWriter* w, ScopeClosure* cl, int memoize_mode) {
     irwriter_store(w, "i64", pt, parsed_tokens);
 
     if (tag_size > 0) {
-      IrVal bo = irwriter_binop(w, "mul", "i64", start_col, irwriter_imm_int(w, (int)sizeof_col));
-      IrVal tbo = irwriter_binop(w, "add", "i64", bo, irwriter_imm_int(w, (int)(sr->tag_bit_index * 8)));
-      irwriter_rawf(w, "  %%r%d = getelementptr i8, ptr %%r%d, i64 %%r%d\n", irwriter_next_reg(w), (int)peg_table,
-                    (int)tbo);
-      IrVal bp = (IrVal)(irwriter_next_reg(w) - 1);
-      IrVal old = irwriter_load(w, "i64", bp);
-      irwriter_rawf(w, "  %%r%d = and i64 %%r%d, %llu\n", irwriter_next_reg(w), (int)old,
-                    (unsigned long long)~sr->tag_bit_mask);
-      IrVal cleared = (IrVal)(irwriter_next_reg(w) - 1);
-      IrVal combined = irwriter_binop(w, "or", "i64", cleared, irwriter_load(w, "i64", tag_bits));
-      irwriter_store(w, "i64", combined, bp);
+      irwriter_call_void_fmtf(w, "tag_writeback", "ptr %%r%d, i64 %%r%d, i64 %lld, i64 %lld, i64 %llu, i64 %%r%d",
+                              (int)peg_table, (int)start_col, (long long)sizeof_col, (long long)sc.tag_byte_offset,
+                              (unsigned long long)~sr->tag_bit_mask, (int)irwriter_load(w, "i64", tag_bits));
     }
-    if (memoize_mode == MEMOIZE_SHARED) {
-      IrVal pt2 = irwriter_load(w, "i64", parsed_tokens);
-      IrVal so = irwriter_binop(w, "mul", "i64", start_col, irwriter_imm_int(w, (int)sizeof_col));
-      IrVal sbo = irwriter_binop(w, "add", "i64", so,
-                                 irwriter_imm_int(w, (int)(cl->bits_bucket_size * 8 + (int64_t)sr->slot_index * 4)));
-      irwriter_rawf(w, "  %%r%d = getelementptr i8, ptr %%r%d, i64 %%r%d\n", irwriter_next_reg(w), (int)peg_table,
-                    (int)sbo);
-      IrVal wp = (IrVal)(irwriter_next_reg(w) - 1);
-      irwriter_rawf(w, "  %%r%d = trunc i64 %%r%d to i32\n", irwriter_next_reg(w), (int)pt2);
-      irwriter_store(w, "i32", (IrVal)(irwriter_next_reg(w) - 1), wp);
-      irwriter_call_void_fmtf(w, "bit_exclude", "ptr %%r%d, i64 %%r%d, i64 %lld, i64 %llu, i64 %llu, i64 %llu",
-                              (int)peg_table, (int)start_col, (long long)sizeof_col,
-                              (unsigned long long)(sr->segment_index * 8), (unsigned long long)sr->segment_mask,
-                              (unsigned long long)sr->rule_bit_mask);
-    } else if (memoize_mode == MEMOIZE_NAIVE) {
-      IrVal pt2 = irwriter_load(w, "i64", parsed_tokens);
-      IrVal so = irwriter_binop(w, "mul", "i64", start_col, irwriter_imm_int(w, (int)sizeof_col));
-      IrVal sbo = irwriter_binop(w, "add", "i64", so,
-                                 irwriter_imm_int(w, (int)(cl->bits_bucket_size * 8 + (int64_t)sr->slot_index * 4)));
-      irwriter_rawf(w, "  %%r%d = getelementptr i8, ptr %%r%d, i64 %%r%d\n", irwriter_next_reg(w), (int)peg_table,
-                    (int)sbo);
-      IrVal wp = (IrVal)(irwriter_next_reg(w) - 1);
-      irwriter_rawf(w, "  %%r%d = trunc i64 %%r%d to i32\n", irwriter_next_reg(w), (int)pt2);
-      irwriter_store(w, "i32", (IrVal)(irwriter_next_reg(w) - 1), wp);
-    }
-    irwriter_br(w, done_bb);
+    memoize_write(&ctx, &sc, sr, start_col);
+    irwriter_br(w, ml.done_bb);
 
+    // --- parse fail ---
     irwriter_bb_at(w, parse_fail);
     IrVal fail_col = irwriter_call_retf(w, "i64", "top", "ptr %%r%d", (int)stack_ptr);
     irwriter_store(w, "i64", fail_col, col_ptr);
-    if (memoize_mode == MEMOIZE_SHARED) {
-      irwriter_call_void_fmtf(w, "bit_deny", "ptr %%r%d, i64 %%r%d, i64 %lld, i64 %llu, i64 %llu", (int)peg_table,
-                              (int)fail_col, (long long)sizeof_col, (unsigned long long)(sr->segment_index * 8),
-                              (unsigned long long)sr->rule_bit_mask);
-    } else if (memoize_mode == MEMOIZE_NAIVE) {
-      IrVal so = irwriter_binop(w, "mul", "i64", fail_col, irwriter_imm_int(w, (int)sizeof_col));
-      IrVal sbo = irwriter_binop(w, "add", "i64", so,
-                                 irwriter_imm_int(w, (int)(cl->bits_bucket_size * 8 + (int64_t)sr->slot_index * 4)));
-      irwriter_rawf(w, "  %%r%d = getelementptr i8, ptr %%r%d, i64 %%r%d\n", irwriter_next_reg(w), (int)peg_table,
-                    (int)sbo);
-      IrVal wp = (IrVal)(irwriter_next_reg(w) - 1);
-      irwriter_store(w, "i32", irwriter_imm_int(w, -2), wp);
-    }
-    irwriter_br(w, fail_bb);
+    memoize_deny(&ctx, &sc, sr, fail_col);
+    irwriter_br(w, ml.fail_bb);
 
-    irwriter_bb_at(w, fail_bb);
+    // --- fail_bb ---
+    irwriter_bb_at(w, ml.fail_bb);
     irwriter_store(w, "i64", irwriter_imm_int(w, -1), parsed_tokens);
-    irwriter_br(w, done_bb);
+    irwriter_br(w, ml.done_bb);
 
-    irwriter_bb_at(w, done_bb);
+    // --- done_bb ---
+    irwriter_bb_at(w, ml.done_bb);
     peg_ir_emit_ret(&ctx);
   }
 
@@ -636,6 +727,7 @@ void peg_gen(PegGenInput* input, HeaderWriter* hw, IrWriter* w) {
   }
 
   peg_ir_emit_helpers(w);
+  peg_ir_emit_gep_helpers(w);
   irwriter_type_def(w, "Token", "{i32, i32, i32, i32}");
   if (input->memoize_mode == MEMOIZE_SHARED) {
     peg_ir_emit_bit_helpers(w);

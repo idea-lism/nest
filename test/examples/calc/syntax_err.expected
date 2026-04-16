@@ -1,0 +1,6 @@
+------
+@lparen "("
+@number "1"
+@plus "+"
+@number "2"
+------

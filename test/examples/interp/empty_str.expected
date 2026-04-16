@@ -1,0 +1,9 @@
+------
+  @dquote """
+  @dquote """
+------
+main
+  value
+    str
+      @dquote
+      @dquote

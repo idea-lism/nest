@@ -1,0 +1,20 @@
+------
+  @dquote """
+    @interp_open "#{"
+    @ident "x"
+    @interp_close "}"
+  @dquote """
+------
+main
+  value
+    str
+      @dquote
+      str_part
+        interp
+          @interp_open
+          expr
+            atom
+              value
+                @ident
+          @interp_close
+      @dquote

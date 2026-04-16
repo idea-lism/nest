@@ -496,3 +496,44 @@ void peg_ir_emit_bit_helpers(IrWriter* w) {
     irwriter_define_end(w);
   }
 }
+
+void peg_ir_emit_gep_helpers(IrWriter* w) {
+  // @gep_slot(ptr %table, i64 %col, i64 %sizeof_col, i64 %slot_byte_offset) -> ptr
+  {
+    irwriter_define_startf(w, "gep_slot",
+                           "internal ptr @gep_slot(ptr %%table, i64 %%col, i64 %%sizeof_col, i64 %%slot_byte_offset)");
+    irwriter_bb(w);
+    IrVal row = irwriter_binop(w, "mul", "i64", irwriter_imm(w, "%col"), irwriter_imm(w, "%sizeof_col"));
+    IrVal off = irwriter_binop(w, "add", "i64", row, irwriter_imm(w, "%slot_byte_offset"));
+    irwriter_rawf(w, "  %%r%d = getelementptr i8, ptr %%table, i64 %%r%d\n", irwriter_next_reg(w), (int)off);
+    irwriter_ret(w, "ptr", (IrVal)(irwriter_next_reg(w) - 1));
+    irwriter_define_end(w);
+  }
+
+  // @gep_tag(ptr %table, i64 %col, i64 %sizeof_col, i64 %tag_byte_offset) -> ptr
+  {
+    irwriter_define_startf(w, "gep_tag",
+                           "internal ptr @gep_tag(ptr %%table, i64 %%col, i64 %%sizeof_col, i64 %%tag_byte_offset)");
+    irwriter_bb(w);
+    IrVal row = irwriter_binop(w, "mul", "i64", irwriter_imm(w, "%col"), irwriter_imm(w, "%sizeof_col"));
+    IrVal off = irwriter_binop(w, "add", "i64", row, irwriter_imm(w, "%tag_byte_offset"));
+    irwriter_rawf(w, "  %%r%d = getelementptr i8, ptr %%table, i64 %%r%d\n", irwriter_next_reg(w), (int)off);
+    irwriter_ret(w, "ptr", (IrVal)(irwriter_next_reg(w) - 1));
+    irwriter_define_end(w);
+  }
+
+  // @tag_writeback(ptr %table, i64 %col, i64 %sizeof_col, i64 %tag_byte_offset, i64 %clear_mask, i64 %tag_bits)
+  {
+    irwriter_define_startf(w, "tag_writeback",
+                           "internal void @tag_writeback(ptr %%table, i64 %%col, i64 %%sizeof_col, i64 "
+                           "%%tag_byte_offset, i64 %%clear_mask, i64 %%tag_bits)");
+    irwriter_bb(w);
+    IrVal p = irwriter_call_retf(w, "ptr", "gep_tag", "ptr %%table, i64 %%col, i64 %%sizeof_col, i64 %%tag_byte_offset");
+    IrVal old = irwriter_load(w, "i64", p);
+    IrVal cleared = irwriter_binop(w, "and", "i64", old, irwriter_imm(w, "%clear_mask"));
+    IrVal combined = irwriter_binop(w, "or", "i64", cleared, irwriter_imm(w, "%tag_bits"));
+    irwriter_store(w, "i64", combined, p);
+    irwriter_ret_void(w);
+    irwriter_define_end(w);
+  }
+}

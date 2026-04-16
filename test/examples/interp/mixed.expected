@@ -1,0 +1,14 @@
+------
+@ident "foo"
+@space " "
+  @dquote """
+  @str_char "b"
+  @str_char "a"
+  @str_char "r"
+  @dquote """
+@space " "
+@number "42"
+------
+main
+  value
+    @ident

@@ -1,0 +1,6 @@
+------
+@ident "foo"
+------
+main
+  value
+    @ident

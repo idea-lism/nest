@@ -1,0 +1,10 @@
+------
+@lit.fn "fn"
+@space " "
+@ident "foo"
+@lparen "("
+@rparen ")"
+@space " "
+@lparen "("
+@rparen ")"
+------
