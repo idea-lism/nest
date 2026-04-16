@@ -42,9 +42,9 @@ static void _build_single(Aut* a, IrWriter* w) {
 
 TEST(test_single_transition) {
   char* out = _gen_ir(_build_single);
-  assert(strstr(out, "define {i64, i64} @match(i64 %state_i64, i64 %cp_i64)"));
-  assert(strstr(out, "switch i32 %state, label %L"));
-  assert(strstr(out, "i32 65, label %L"));
+  assert(strstr(out, "define {i64, i64} @match(i64 %state, i64 %cp)"));
+  assert(strstr(out, "switch i64 %state, label %L"));
+  assert(strstr(out, "i64 65, label %L"));
   assert(strstr(out, "L"));
   free(out);
 }
@@ -60,8 +60,8 @@ static void _build_range(Aut* a, IrWriter* w) {
 
 TEST(test_range_transition) {
   char* out = _gen_ir(_build_range);
-  assert(strstr(out, "icmp sge i32 %cp"));
-  assert(strstr(out, "icmp sle i32 %cp"));
+  assert(strstr(out, "icmp sge i64 %cp"));
+  assert(strstr(out, "icmp sle i64 %cp"));
   free(out);
 }
 
@@ -79,10 +79,10 @@ static void _build_multi(Aut* a, IrWriter* w) {
 
 TEST(test_multi_transitions) {
   char* out = _gen_ir(_build_multi);
-  assert(strstr(out, "icmp sge i32 %cp"));
-  assert(strstr(out, "icmp sle i32 %cp"));
-  assert(strstr(out, "icmp sge i32 %cp"));
-  assert(strstr(out, "icmp sle i32 %cp"));
+  assert(strstr(out, "icmp sge i64 %cp"));
+  assert(strstr(out, "icmp sle i64 %cp"));
+  assert(strstr(out, "icmp sge i64 %cp"));
+  assert(strstr(out, "icmp sle i64 %cp"));
   free(out);
 }
 
@@ -98,7 +98,7 @@ static void _build_epsilon(Aut* a, IrWriter* w) {
 
 TEST(test_epsilon) {
   char* out = _gen_ir(_build_epsilon);
-  assert(strstr(out, "i32 120"));
+  assert(strstr(out, "i64 120"));
   free(out);
 }
 
@@ -144,7 +144,7 @@ static void _build_action_smallest(Aut* a, IrWriter* w) {
 
 TEST(test_action_smallest) {
   char* out = _gen_ir(_build_action_smallest);
-  assert(strstr(out, "i32 3, 1"));
+  assert(strstr(out, "i64 3, 1"));
   free(out);
 }
 
@@ -196,7 +196,7 @@ static void _build_redundant(Aut* a, IrWriter* w) {
 TEST(test_optimize) {
   char* out = _gen_ir(_build_redundant);
   assert(strstr(out, "define {i64, i64} @match"));
-  assert(strstr(out, "switch i32 %state, label %L"));
+  assert(strstr(out, "switch i64 %state, label %L"));
   free(out);
 }
 
@@ -235,7 +235,7 @@ static void _build_action_basic(Aut* a, IrWriter* w) {
 
 TEST(test_action_basic) {
   char* out = _gen_ir(_build_action_basic);
-  assert(strstr(out, "i32 7, 1"));
+  assert(strstr(out, "i64 7, 1"));
   free(out);
 }
 
@@ -251,7 +251,7 @@ static void _build_min_rule(Aut* a, IrWriter* w) {
 
 TEST(test_min_rule) {
   char* out = _gen_ir(_build_min_rule);
-  assert(strstr(out, "i32 3, 1"));
+  assert(strstr(out, "i64 3, 1"));
   free(out);
 }
 
@@ -275,8 +275,8 @@ static void _build_preserve(Aut* a, IrWriter* w) {
 
 TEST(test_preserving_rule) {
   char* out = _gen_ir(_build_preserve);
-  assert(strstr(out, "i32 2, 1"));
-  assert(strstr(out, "i32 5, 1"));
+  assert(strstr(out, "i64 2, 1"));
+  assert(strstr(out, "i64 5, 1"));
   free(out);
 }
 
@@ -301,7 +301,7 @@ static void _build_coalesce(Aut* a, IrWriter* w) {
 TEST(test_optimize_coalesces_ranges) {
   char* out = _gen_ir(_build_coalesce);
   // After coalescing, [a-z] = [97, 122] should appear as a single range check.
-  // 97 = 'a', 122 = 'z'. The IR should have "sge i32 %cp, 97" and "sle i32 %cp, 122".
+  // 97 = 'a', 122 = 'z'. The IR should have "sge i64 %cp, 97" and "sle i64 %cp, 122".
   assert(strstr(out, "97"));
   assert(strstr(out, "122"));
   // The split boundaries 109 ('m') and 110 ('n') should NOT appear — they were coalesced.
@@ -367,10 +367,10 @@ TEST(test_optimize_preserves_action) {
   }
 
   // Both must have action_id=3 and action_id=4
-  assert(strstr(unopt, "i32 3, 1"));
-  assert(strstr(unopt, "i32 4, 1"));
-  assert(strstr(opt, "i32 3, 1"));
-  assert(strstr(opt, "i32 4, 1"));
+  assert(strstr(unopt, "i64 3, 1"));
+  assert(strstr(unopt, "i64 4, 1"));
+  assert(strstr(opt, "i64 3, 1"));
+  assert(strstr(opt, "i64 4, 1"));
 
   free(unopt);
   free(opt);

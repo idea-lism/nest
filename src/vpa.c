@@ -145,16 +145,12 @@ static void _gen_scope_dfa(VpaGenInput* input, IrWriter* w, VpaScope* scope, Act
   char* wrapper_name = malloc((size_t)wrapper_name_len + 1);
   snprintf(wrapper_name, (size_t)wrapper_name_len + 1, "lex_%s", scope->name);
 
-  irwriter_define_startf(w, wrapper_name, "{i64, i64} @%s(i64 %%state_i64, i64 %%cp_i64)", wrapper_name);
+  irwriter_define_startf(w, wrapper_name, "{i64, i64} @%s(i64 %%state, i64 %%cp)", wrapper_name);
   irwriter_bb(w);
   irwriter_dbg(w, scope->source_line, scope->source_col);
-  irwriter_rawf(w, "  %%state = trunc i64 %%state_i64 to i32\n");
-  irwriter_rawf(w, "  %%cp = trunc i64 %%cp_i64 to i32\n");
 
-  // _dfa_* functions use the widened {i64,i64}(i64,i64) ABI
-  IrVal state64 = irwriter_sext(w, "i32", irwriter_imm(w, "%state"), "i64");
-  IrVal cp64 = irwriter_sext(w, "i32", irwriter_imm(w, "%cp"), "i64");
-  IrVal result = irwriter_call_retf(w, "{i64, i64}", func_name, "i64 %%r%d, i64 %%r%d", (int)state64, (int)cp64);
+  // _dfa_* functions use native i64 ABI
+  IrVal result = irwriter_call_retf(w, "{i64, i64}", func_name, "i64 %%state, i64 %%cp");
   irwriter_ret(w, "{i64, i64}", result);
   irwriter_define_end(w);
 

@@ -19,7 +19,6 @@ void irwriter_end(IrWriter* w);
 // e.g. "internal void @save(ptr %%stack_ptr, ptr %%col)"
 // name: function name for debug metadata (DISubprogram)
 void irwriter_define_startf(IrWriter* w, const char* name, const char* sig_fmt, ...);
-void irwriter_set_widen_ret(IrWriter* w);
 void irwriter_define_end(IrWriter* w);
 
 IrLabel irwriter_label(IrWriter* w);

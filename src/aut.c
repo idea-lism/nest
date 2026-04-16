@@ -535,23 +535,20 @@ void aut_gen_dfa(Aut* a, IrWriter* w, bool debug_mode) {
     irwriter_declare(w, "void", "llvm.debugtrap", "");
   }
 
-  const char* ret_ty = "{i32, i32}";
-  irwriter_define_startf(w, a->function_name, "{i64, i64} @%s(i64 %%state_i64, i64 %%cp_i64)", a->function_name);
-  irwriter_set_widen_ret(w);
+  const char* ret_ty = "{i64, i64}";
+  irwriter_define_startf(w, a->function_name, "{i64, i64} @%s(i64 %%state, i64 %%cp)", a->function_name);
 
   // entry BB must be emitted first
   irwriter_bb(w);
-  irwriter_rawf(w, "  %%state = trunc i64 %%state_i64 to i32\n");
-  irwriter_rawf(w, "  %%cp = trunc i64 %%cp_i64 to i32\n");
   IrLabel dead_bb = irwriter_label(w);
   IrLabel* state_bbs = malloc((size_t)dfa_nstates * sizeof(IrLabel));
   for (int s = 0; s < dfa_nstates; s++) {
     state_bbs[s] = irwriter_label(w);
   }
 
-  irwriter_switch_start(w, "i32", irwriter_imm(w, "%state"), dead_bb);
+  irwriter_switch_start(w, "i64", irwriter_imm(w, "%state"), dead_bb);
   for (int s = 0; s < dfa_nstates; s++) {
-    irwriter_switch_case(w, "i32", s, state_bbs[s]);
+    irwriter_switch_case(w, "i64", s, state_bbs[s]);
   }
   irwriter_switch_end(w);
 
@@ -615,8 +612,8 @@ void aut_gen_dfa(Aut* a, IrWriter* w, bool debug_mode) {
       irwriter_bb_at(w, nomatch_bb);
 
       IrVal state_val = irwriter_imm(w, "%state");
-      IrVal v0 = irwriter_insertvalue(w, ret_ty, -1, "i32", state_val, 0);
-      IrVal v1 = irwriter_insertvalue(w, ret_ty, v0, "i32", irwriter_imm(w, "-2"), 1);
+      IrVal v0 = irwriter_insertvalue(w, ret_ty, -1, "i64", state_val, 0);
+      IrVal v1 = irwriter_insertvalue(w, ret_ty, v0, "i64", irwriter_imm(w, "-2"), 1);
       irwriter_ret(w, ret_ty, v1);
       free(trans_bbs);
       free(rck_bbs);
@@ -630,13 +627,13 @@ void aut_gen_dfa(Aut* a, IrWriter* w, bool debug_mode) {
 
     if (has_switch > 0) {
       IrLabel sw_default = has_range > 0 ? ranges_bb : nomatch_bb;
-      irwriter_switch_start(w, "i32", irwriter_imm(w, "%cp"), sw_default);
+      irwriter_switch_start(w, "i64", irwriter_imm(w, "%cp"), sw_default);
 
       for (int t = 0; t < dfa_ntrans; t++) {
         if (a->dfa_trans[t].from != s || a->dfa_trans[t].cp_start != a->dfa_trans[t].cp_end) {
           continue;
         }
-        irwriter_switch_case(w, "i32", a->dfa_trans[t].cp_start, trans_bbs[t]);
+        irwriter_switch_case(w, "i64", a->dfa_trans[t].cp_start, trans_bbs[t]);
       }
       irwriter_switch_end(w);
     } else if (has_range > 0) {
@@ -660,8 +657,8 @@ void aut_gen_dfa(Aut* a, IrWriter* w, bool debug_mode) {
 
         int has_next_range = (range_idx + 1 < nranges);
 
-        IrVal lo_n = irwriter_icmp(w, "sge", "i32", cp_val, irwriter_imm_int(w, dt->cp_start));
-        IrVal hi_n = irwriter_icmp(w, "sle", "i32", cp_val, irwriter_imm_int(w, dt->cp_end));
+        IrVal lo_n = irwriter_icmp(w, "sge", "i64", cp_val, irwriter_imm_int(w, dt->cp_start));
+        IrVal hi_n = irwriter_icmp(w, "sle", "i64", cp_val, irwriter_imm_int(w, dt->cp_end));
         if (has_next_range) {
           irwriter_br_cond(w, irwriter_binop(w, "and", "i1", lo_n, hi_n), trans_bbs[t], rck_bbs[range_idx + 1]);
           irwriter_bb_at(w, rck_bbs[range_idx + 1]);
@@ -685,16 +682,16 @@ void aut_gen_dfa(Aut* a, IrWriter* w, bool debug_mode) {
         irwriter_dbg(w, dt->line, dt->col);
       }
 
-      IrVal v0 = irwriter_insertvalue(w, ret_ty, -1, "i32", irwriter_imm_int(w, dt->to), 0);
-      IrVal v1 = irwriter_insertvalue(w, ret_ty, v0, "i32", irwriter_imm_int(w, dt->action_id), 1);
+      IrVal v0 = irwriter_insertvalue(w, ret_ty, -1, "i64", irwriter_imm_int(w, dt->to), 0);
+      IrVal v1 = irwriter_insertvalue(w, ret_ty, v0, "i64", irwriter_imm_int(w, dt->action_id), 1);
       irwriter_ret(w, ret_ty, v1);
     }
 
     // nomatch BB
     irwriter_bb_at(w, nomatch_bb);
     IrVal state_val = irwriter_imm(w, "%state");
-    IrVal v0 = irwriter_insertvalue(w, ret_ty, -1, "i32", state_val, 0);
-    IrVal v1 = irwriter_insertvalue(w, ret_ty, v0, "i32", irwriter_imm(w, "-2"), 1);
+    IrVal v0 = irwriter_insertvalue(w, ret_ty, -1, "i64", state_val, 0);
+    IrVal v1 = irwriter_insertvalue(w, ret_ty, v0, "i64", irwriter_imm(w, "-2"), 1);
     irwriter_ret(w, ret_ty, v1);
 
     free(trans_bbs);
@@ -708,8 +705,8 @@ void aut_gen_dfa(Aut* a, IrWriter* w, bool debug_mode) {
       irwriter_call_void_fmtf(w, "llvm.debugtrap", "");
     }
     IrVal state_val = irwriter_imm(w, "%state");
-    IrVal v0 = irwriter_insertvalue(w, ret_ty, -1, "i32", state_val, 0);
-    IrVal v1 = irwriter_insertvalue(w, ret_ty, v0, "i32", irwriter_imm(w, "-2"), 1);
+    IrVal v0 = irwriter_insertvalue(w, ret_ty, -1, "i64", state_val, 0);
+    IrVal v1 = irwriter_insertvalue(w, ret_ty, v0, "i64", irwriter_imm(w, "-2"), 1);
     irwriter_ret(w, ret_ty, v1);
   }
 

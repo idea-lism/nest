@@ -39,15 +39,12 @@ TEST(test_module_prelude) {
 static void _emit_simple_function(IrWriter* w) {
   irwriter_start(w, "test.ll", ".");
 
-  irwriter_define_startf(w, "match", "{i64, i64} @match(i64 %%state_i64, i64 %%cp_i64)");
-  irwriter_set_widen_ret(w);
+  irwriter_define_startf(w, "match", "{i64, i64} @match(i64 %%state, i64 %%cp)");
 
   irwriter_bb(w); // L0
-  irwriter_rawf(w, "  %%state = trunc i64 %%state_i64 to i32\n");
-  irwriter_rawf(w, "  %%cp = trunc i64 %%cp_i64 to i32\n");
   IrVal zero = irwriter_imm(w, "0");
-  IrVal undef_r = irwriter_insertvalue(w, "{i32, i32}", -1, "i32", zero, 0);
-  irwriter_ret(w, "{i32, i32}", undef_r);
+  IrVal undef_r = irwriter_insertvalue(w, "{i64, i64}", -1, "i64", zero, 0);
+  irwriter_ret(w, "{i64, i64}", undef_r);
 
   irwriter_define_end(w);
   irwriter_end(w);
@@ -55,11 +52,9 @@ static void _emit_simple_function(IrWriter* w) {
 
 TEST(test_simple_function) {
   char* out = _capture(_emit_simple_function);
-  assert(strstr(out, "define {i64, i64} @match(i64 %state_i64, i64 %cp_i64)"));
-  assert(strstr(out, "%state = trunc i64 %state_i64 to i32"));
-  assert(strstr(out, "%cp = trunc i64 %cp_i64 to i32"));
+  assert(strstr(out, "define {i64, i64} @match(i64 %state, i64 %cp)"));
   assert(strstr(out, "L0:"));
-  assert(strstr(out, "insertvalue {i32, i32} undef, i32 0, 0"));
+  assert(strstr(out, "insertvalue {i64, i64} undef, i64 0, 0"));
   assert(strstr(out, "ret {i64, i64}"));
   assert(strstr(out, "}"));
   free(out);
@@ -169,15 +164,12 @@ TEST(test_switch) {
 
 static void _emit_insertvalue(IrWriter* w) {
   irwriter_start(w, "test.ll", ".");
-  irwriter_define_startf(w, "match", "{i64, i64} @match(i64 %%state_i64, i64 %%cp_i64)");
-  irwriter_set_widen_ret(w);
+  irwriter_define_startf(w, "match", "{i64, i64} @match(i64 %%state, i64 %%cp)");
 
   irwriter_bb(w); // L0
-  irwriter_rawf(w, "  %%state = trunc i64 %%state_i64 to i32\n");
-  irwriter_rawf(w, "  %%cp = trunc i64 %%cp_i64 to i32\n");
-  IrVal r0 = irwriter_insertvalue(w, "{i32, i32}", -1, "i32", irwriter_imm(w, "1"), 0);
-  IrVal r1 = irwriter_insertvalue(w, "{i32, i32}", r0, "i32", irwriter_imm(w, "0"), 1);
-  irwriter_ret(w, "{i32, i32}", r1);
+  IrVal r0 = irwriter_insertvalue(w, "{i64, i64}", -1, "i64", irwriter_imm(w, "1"), 0);
+  IrVal r1 = irwriter_insertvalue(w, "{i64, i64}", r0, "i64", irwriter_imm(w, "0"), 1);
+  irwriter_ret(w, "{i64, i64}", r1);
 
   irwriter_define_end(w);
   irwriter_end(w);
@@ -185,8 +177,8 @@ static void _emit_insertvalue(IrWriter* w) {
 
 TEST(test_insertvalue) {
   char* out = _capture(_emit_insertvalue);
-  assert(strstr(out, "%r0 = insertvalue {i32, i32} undef, i32 1, 0"));
-  assert(strstr(out, "%r1 = insertvalue {i32, i32} %r0, i32 0, 1"));
+  assert(strstr(out, "%r0 = insertvalue {i64, i64} undef, i64 1, 0"));
+  assert(strstr(out, "%r1 = insertvalue {i64, i64} %r0, i64 0, 1"));
   assert(strstr(out, "ret {i64, i64}"));
   free(out);
 }
@@ -223,8 +215,7 @@ TEST(test_debug_locations) {
 static void _emit_dfa_function(IrWriter* w) {
   irwriter_start(w, "dfa.rules", ".");
 
-  irwriter_define_startf(w, "match", "{i64, i64} @match(i64 %%state_i64, i64 %%cp_i64)");
-  irwriter_set_widen_ret(w);
+  irwriter_define_startf(w, "match", "{i64, i64} @match(i64 %%state, i64 %%cp)");
 
   IrLabel dead = irwriter_label(w);     // L0
   IrLabel state0 = irwriter_label(w);   // L1
@@ -233,42 +224,40 @@ static void _emit_dfa_function(IrWriter* w) {
 
   // entry: switch on state
   irwriter_bb(w);
-  irwriter_rawf(w, "  %%state = trunc i64 %%state_i64 to i32\n");
-  irwriter_rawf(w, "  %%cp = trunc i64 %%cp_i64 to i32\n");
   irwriter_dbg(w, 1, 1);
-  irwriter_switch_start(w, "i32", irwriter_imm(w, "%state"), dead);
-  irwriter_switch_case(w, "i32", 0, state0);
+  irwriter_switch_start(w, "i64", irwriter_imm(w, "%state"), dead);
+  irwriter_switch_case(w, "i64", 0, state0);
   irwriter_switch_end(w);
 
   // state0: check if cp in [0x41, 0x5A]
   irwriter_bb_at(w, state0);
   irwriter_dbg(w, 2, 1);
   IrVal cp = irwriter_imm(w, "%cp");
-  IrVal lo = irwriter_icmp(w, "sge", "i32", cp, irwriter_imm(w, "65"));
-  IrVal hi = irwriter_icmp(w, "sle", "i32", cp, irwriter_imm(w, "90"));
+  IrVal lo = irwriter_icmp(w, "sge", "i64", cp, irwriter_imm(w, "65"));
+  IrVal hi = irwriter_icmp(w, "sle", "i64", cp, irwriter_imm(w, "90"));
   IrVal in_range = irwriter_binop(w, "and", "i1", lo, hi);
   irwriter_br_cond(w, in_range, s0_match, s0_fail);
 
   // s0_match: return {1, 0}
   irwriter_bb_at(w, s0_match);
   irwriter_dbg(w, 2, 5);
-  IrVal v0_reg = irwriter_insertvalue(w, "{i32, i32}", -1, "i32", irwriter_imm(w, "1"), 0);
-  IrVal v1_reg = irwriter_insertvalue(w, "{i32, i32}", v0_reg, "i32", irwriter_imm(w, "0"), 1);
-  irwriter_ret(w, "{i32, i32}", v1_reg);
+  IrVal v0_reg = irwriter_insertvalue(w, "{i64, i64}", -1, "i64", irwriter_imm(w, "1"), 0);
+  IrVal v1_reg = irwriter_insertvalue(w, "{i64, i64}", v0_reg, "i64", irwriter_imm(w, "0"), 1);
+  irwriter_ret(w, "{i64, i64}", v1_reg);
 
   // s0_fail: return {0, -2}
   irwriter_bb_at(w, s0_fail);
   irwriter_dbg(w, 2, 10);
-  IrVal v2_reg = irwriter_insertvalue(w, "{i32, i32}", -1, "i32", irwriter_imm(w, "0"), 0);
-  IrVal v3_reg = irwriter_insertvalue(w, "{i32, i32}", v2_reg, "i32", irwriter_imm(w, "-2"), 1);
-  irwriter_ret(w, "{i32, i32}", v3_reg);
+  IrVal v2_reg = irwriter_insertvalue(w, "{i64, i64}", -1, "i64", irwriter_imm(w, "0"), 0);
+  IrVal v3_reg = irwriter_insertvalue(w, "{i64, i64}", v2_reg, "i64", irwriter_imm(w, "-2"), 1);
+  irwriter_ret(w, "{i64, i64}", v3_reg);
 
   // dead: return {0, -2}
   irwriter_bb_at(w, dead);
   irwriter_dbg(w, 1, 1);
-  IrVal v4_reg = irwriter_insertvalue(w, "{i32, i32}", -1, "i32", irwriter_imm(w, "0"), 0);
-  IrVal v5_reg = irwriter_insertvalue(w, "{i32, i32}", v4_reg, "i32", irwriter_imm(w, "-2"), 1);
-  irwriter_ret(w, "{i32, i32}", v5_reg);
+  IrVal v4_reg = irwriter_insertvalue(w, "{i64, i64}", -1, "i64", irwriter_imm(w, "0"), 0);
+  IrVal v5_reg = irwriter_insertvalue(w, "{i64, i64}", v4_reg, "i64", irwriter_imm(w, "-2"), 1);
+  irwriter_ret(w, "{i64, i64}", v5_reg);
 
   irwriter_define_end(w);
   irwriter_end(w);
@@ -276,14 +265,14 @@ static void _emit_dfa_function(IrWriter* w) {
 
 TEST(test_dfa_function) {
   char* out = _capture(_emit_dfa_function);
-  assert(strstr(out, "define {i64, i64} @match(i64 %state_i64, i64 %cp_i64)"));
-  assert(strstr(out, "switch i32 %state, label %L0"));
-  assert(strstr(out, "i32 0, label %L1"));
+  assert(strstr(out, "define {i64, i64} @match(i64 %state, i64 %cp)"));
+  assert(strstr(out, "switch i64 %state, label %L0"));
+  assert(strstr(out, "i64 0, label %L1"));
   assert(strstr(out, "L1:"));
   assert(strstr(out, "L2:"));
   assert(strstr(out, "L3:"));
   assert(strstr(out, "L0:"));
-  assert(strstr(out, "insertvalue {i32, i32}"));
+  assert(strstr(out, "insertvalue {i64, i64}"));
   assert(strstr(out, "ret {i64, i64}"));
   assert(strstr(out, "DISubprogram(name: \"match\""));
   assert(strstr(out, "DILocation"));
@@ -350,8 +339,7 @@ TEST(test_clang_compile) {
 
   irwriter_start(w, "dfa.rules", ".");
 
-  irwriter_define_startf(w, "match", "{i64, i64} @match(i64 %%state_i64, i64 %%cp_i64)");
-  irwriter_set_widen_ret(w);
+  irwriter_define_startf(w, "match", "{i64, i64} @match(i64 %%state, i64 %%cp)");
 
   IrLabel state0 = irwriter_label(w);   // L0
   IrLabel dead = irwriter_label(w);     // L1
@@ -360,42 +348,40 @@ TEST(test_clang_compile) {
 
   // entry BB
   irwriter_bb(w); // L4
-  irwriter_rawf(w, "  %%state = trunc i64 %%state_i64 to i32\n");
-  irwriter_rawf(w, "  %%cp = trunc i64 %%cp_i64 to i32\n");
   irwriter_dbg(w, 1, 1);
-  irwriter_switch_start(w, "i32", irwriter_imm(w, "%state"), dead);
-  irwriter_switch_case(w, "i32", 0, state0);
+  irwriter_switch_start(w, "i64", irwriter_imm(w, "%state"), dead);
+  irwriter_switch_case(w, "i64", 0, state0);
   irwriter_switch_end(w);
 
   // state0
   irwriter_bb_at(w, state0);
   irwriter_dbg(w, 2, 1);
   IrVal cp = irwriter_imm(w, "%cp");
-  IrVal lo_r = irwriter_icmp(w, "sge", "i32", cp, irwriter_imm(w, "65"));
-  IrVal hi_r = irwriter_icmp(w, "sle", "i32", cp, irwriter_imm(w, "90"));
+  IrVal lo_r = irwriter_icmp(w, "sge", "i64", cp, irwriter_imm(w, "65"));
+  IrVal hi_r = irwriter_icmp(w, "sle", "i64", cp, irwriter_imm(w, "90"));
   IrVal in_range = irwriter_binop(w, "and", "i1", lo_r, hi_r);
   irwriter_br_cond(w, in_range, s0_match, s0_fail);
 
   // s0_match
   irwriter_bb_at(w, s0_match);
   irwriter_dbg(w, 2, 5);
-  IrVal v0r = irwriter_insertvalue(w, "{i32, i32}", -1, "i32", irwriter_imm(w, "1"), 0);
-  IrVal v1r = irwriter_insertvalue(w, "{i32, i32}", v0r, "i32", irwriter_imm(w, "0"), 1);
-  irwriter_ret(w, "{i32, i32}", v1r);
+  IrVal v0r = irwriter_insertvalue(w, "{i64, i64}", -1, "i64", irwriter_imm(w, "1"), 0);
+  IrVal v1r = irwriter_insertvalue(w, "{i64, i64}", v0r, "i64", irwriter_imm(w, "0"), 1);
+  irwriter_ret(w, "{i64, i64}", v1r);
 
   // s0_fail
   irwriter_bb_at(w, s0_fail);
   irwriter_dbg(w, 2, 10);
-  IrVal v2r = irwriter_insertvalue(w, "{i32, i32}", -1, "i32", irwriter_imm(w, "0"), 0);
-  IrVal v3r = irwriter_insertvalue(w, "{i32, i32}", v2r, "i32", irwriter_imm(w, "-2"), 1);
-  irwriter_ret(w, "{i32, i32}", v3r);
+  IrVal v2r = irwriter_insertvalue(w, "{i64, i64}", -1, "i64", irwriter_imm(w, "0"), 0);
+  IrVal v3r = irwriter_insertvalue(w, "{i64, i64}", v2r, "i64", irwriter_imm(w, "-2"), 1);
+  irwriter_ret(w, "{i64, i64}", v3r);
 
   // dead
   irwriter_bb_at(w, dead);
   irwriter_dbg(w, 1, 1);
-  IrVal v4r = irwriter_insertvalue(w, "{i32, i32}", -1, "i32", irwriter_imm(w, "0"), 0);
-  IrVal v5r = irwriter_insertvalue(w, "{i32, i32}", v4r, "i32", irwriter_imm(w, "-2"), 1);
-  irwriter_ret(w, "{i32, i32}", v5r);
+  IrVal v4r = irwriter_insertvalue(w, "{i64, i64}", -1, "i64", irwriter_imm(w, "0"), 0);
+  IrVal v5r = irwriter_insertvalue(w, "{i64, i64}", v4r, "i64", irwriter_imm(w, "-2"), 1);
+  irwriter_ret(w, "{i64, i64}", v5r);
 
   irwriter_define_end(w);
   irwriter_end(w);

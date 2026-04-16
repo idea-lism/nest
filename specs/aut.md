@@ -32,7 +32,7 @@ Can define actions (terminal states) on certain states -- because optimization m
 - `aut_gen_dfa(dfa, IRWriter writer, debug_mode)`
   - Generates function in LLVM IR
   - C calling convention
-  - signature: `(int32_t state, int cp) -> (int32_t new_state, int32_t action_id)`
+  - signature: `(int64_t state, int64_t cp) -> (int64_t new_state, int64_t action_id)`
   - char group range matching:
     - just generate a flat switch case, llvm can optimize this
     - single char check code: `if (cp == ...)`

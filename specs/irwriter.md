@@ -68,14 +68,7 @@ We target DFA generation, so there are no loops and no need for a complex Domina
 - binop, icmp
 - insertvalue: insert a scalar into an aggregate at a given index
   - `insertvalue(agg_ty, agg_val, elem_ty, elem_val, idx)` -- string element value
-  - used to build `{i32, i32}` return pairs: first insert at index 0 from undef, then insert at index 1
-
-### ABI widening
-
-When `ret_type` is `{i32, i32}`, the external signature is widened to `{i64, i64}` so C callers
-can use a `struct { int64_t; int64_t; }` directly. Parameters declared as `i32` are widened to
-`i64` in the signature with `trunc` instructions at function entry. Returns are widened via
-`extractvalue` + `sext` + `insertvalue {i64, i64}` before `ret`. Internal IR stays `i32`.
+  - used to build `{i64, i64}` return pairs: first insert at index 0 from undef, then insert at index 1
 
 ### Security
 

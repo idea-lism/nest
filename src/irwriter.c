@@ -23,7 +23,6 @@ struct IrWriter {
   int dbg_next_id;
   int dbg_sub_id;
   int in_switch;
-  int widen_ret;
   char* entry_prologue;
   PendingLoc* locs;
   int dbg_file_id;
@@ -175,7 +174,6 @@ void irwriter_define_startf(IrWriter* w, const char* name, const char* sig_fmt, 
   w->reg = 0;
   w->label = 0;
   w->labels = darray_grow(w->labels, 1);
-  w->widen_ret = 0;
   free(w->entry_prologue);
   w->entry_prologue = NULL;
 
@@ -187,7 +185,6 @@ void irwriter_define_startf(IrWriter* w, const char* name, const char* sig_fmt, 
   fprintf(w->out, " !dbg !%d {\n", w->dbg_sub_id);
 }
 
-void irwriter_set_widen_ret(IrWriter* w) { w->widen_ret = 1; }
 
 void irwriter_define_end(IrWriter* w) {
   fprintf(w->out, "}\n\n");
@@ -325,28 +322,8 @@ void irwriter_switch_end(IrWriter* w) {
 
 void irwriter_ret(IrWriter* w, const char* ty, IrVal val) {
   int dbg = _reserve_dbg(w);
-  if (w->widen_ret && strcmp(ty, "{i32, i32}") == 0) {
-    IrVal e0 = _next_reg(w);
-    fprintf(w->out, "  %%r%d = extractvalue {i32, i32} ", (int)e0);
-    _emit_val(w->out, w->imms, val);
-    fprintf(w->out, ", 0\n");
-    IrVal e1 = _next_reg(w);
-    fprintf(w->out, "  %%r%d = extractvalue {i32, i32} ", (int)e1);
-    _emit_val(w->out, w->imms, val);
-    fprintf(w->out, ", 1\n");
-    IrVal s0 = _next_reg(w);
-    fprintf(w->out, "  %%r%d = sext i32 %%r%d to i64\n", (int)s0, (int)e0);
-    IrVal s1 = _next_reg(w);
-    fprintf(w->out, "  %%r%d = sext i32 %%r%d to i64\n", (int)s1, (int)e1);
-    IrVal w0 = _next_reg(w);
-    fprintf(w->out, "  %%r%d = insertvalue {i64, i64} undef, i64 %%r%d, 0\n", (int)w0, (int)s0);
-    IrVal w1 = _next_reg(w);
-    fprintf(w->out, "  %%r%d = insertvalue {i64, i64} %%r%d, i64 %%r%d, 1\n", (int)w1, (int)w0, (int)s1);
-    fprintf(w->out, "  ret {i64, i64} %%r%d", (int)w1);
-  } else {
-    fprintf(w->out, "  ret %s ", ty);
-    _emit_val(w->out, w->imms, val);
-  }
+  fprintf(w->out, "  ret %s ", ty);
+  _emit_val(w->out, w->imms, val);
   _emit_dbg_suffix(w, dbg);
   fprintf(w->out, "\n");
 }
