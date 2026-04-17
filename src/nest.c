@@ -251,14 +251,14 @@ static void _gen_print_children(FILE* f, const char* prefix, PegUnit* children, 
         int32_t rid = symtab_find(rule_names, tname);
         if (rid >= 0) {
           if (is_link) {
-            fprintf(f, "    for (PegLink _l = _n.%s; %s_has_elem(_l); _l = %s_get_next(_l))\n", fname, prefix, prefix);
-            fprintf(f, "      print_%s(%s_get_lhs(_l), depth + 1);\n", tname, prefix);
+            fprintf(f, "    for (PegLink _l = _n.%s; %s_has_elem(&_l); %s_get_next(&_l))\n", fname, prefix, prefix);
+            fprintf(f, "      print_%s(%s_get_lhs(&_l), depth + 1);\n", tname, prefix);
           } else {
             fprintf(f, "    print_%s(_n.%s, depth + 1);\n", tname, fname);
           }
         }
       } else if (is_link) {
-        fprintf(f, "    for (PegLink _l = _n.%s; %s_has_elem(_l); _l = %s_get_next(_l)) {\n", fname, prefix, prefix);
+        fprintf(f, "    for (PegLink _l = _n.%s; %s_has_elem(&_l); %s_get_next(&_l)) {\n", fname, prefix, prefix);
         fprintf(f, "      _indent(depth + 1); printf(\"%s\\n\");\n", tname);
         fprintf(f, "    }\n");
       } else {
@@ -270,8 +270,8 @@ static void _gen_print_children(FILE* f, const char* prefix, PegUnit* children, 
       const char* callee = symtab_get(rule_names, u->id);
       char* fname = _exd_next(fd, callee);
       if (is_link) {
-        fprintf(f, "    for (PegLink _l = _n.%s; %s_has_elem(_l); _l = %s_get_next(_l))\n", fname, prefix, prefix);
-        fprintf(f, "      print_%s(%s_get_lhs(_l), depth + 1);\n", callee, prefix);
+        fprintf(f, "    for (PegLink _l = _n.%s; %s_has_elem(&_l); %s_get_next(&_l))\n", fname, prefix, prefix);
+        fprintf(f, "      print_%s(%s_get_lhs(&_l), depth + 1);\n", callee, prefix);
       } else if (is_opt) {
         fprintf(f, "    if (%s_peg_size(_n.%s) > 0)\n", prefix, fname);
         fprintf(f, "      print_%s(_n.%s, depth + 1);\n", callee, fname);
@@ -412,14 +412,14 @@ static void _gen_example_c(FILE* f, const char* prefix, ParseState* ps) {
         int32_t rid = symtab_find(rule_names, tname);
         if (rid >= 0) {
           if (is_link) {
-            fprintf(f, "  for (PegLink _l = _n.%s; %s_has_elem(_l); _l = %s_get_next(_l))\n", san, prefix, prefix);
-            fprintf(f, "    print_%s(%s_get_lhs(_l), depth + 1);\n", tname, prefix);
+            fprintf(f, "  for (PegLink _l = _n.%s; %s_has_elem(&_l); %s_get_next(&_l))\n", san, prefix, prefix);
+            fprintf(f, "    print_%s(%s_get_lhs(&_l), depth + 1);\n", tname, prefix);
           } else {
             fprintf(f, "  print_%s(_n.%s, depth + 1);\n", tname, san);
           }
         }
       } else if (is_link) {
-        fprintf(f, "  for (PegLink _l = _n.%s; %s_has_elem(_l); _l = %s_get_next(_l)) {\n", san, prefix, prefix);
+        fprintf(f, "  for (PegLink _l = _n.%s; %s_has_elem(&_l); %s_get_next(&_l)) {\n", san, prefix, prefix);
         fprintf(f, "    _indent(depth + 1); printf(\"%s\\n\");\n", tname);
         fprintf(f, "  }\n");
       } else {
@@ -431,8 +431,8 @@ static void _gen_example_c(FILE* f, const char* prefix, ParseState* ps) {
       bool is_link = (body->multiplier == '*' || body->multiplier == '+');
       bool is_opt = (body->multiplier == '?');
       if (is_link) {
-        fprintf(f, "  for (PegLink _l = _n.%s; %s_has_elem(_l); _l = %s_get_next(_l))\n", callee, prefix, prefix);
-        fprintf(f, "    print_%s(%s_get_lhs(_l), depth + 1);\n", callee, prefix);
+        fprintf(f, "  for (PegLink _l = _n.%s; %s_has_elem(&_l); %s_get_next(&_l))\n", callee, prefix, prefix);
+        fprintf(f, "    print_%s(%s_get_lhs(&_l), depth + 1);\n", callee, prefix);
       } else if (is_opt) {
         fprintf(f, "  if (%s_peg_size(_n.%s) > 0)\n", prefix, callee);
         fprintf(f, "    print_%s(_n.%s, depth + 1);\n", callee, callee);

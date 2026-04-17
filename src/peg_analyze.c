@@ -910,12 +910,17 @@ static NodeField _build_term_node_field(PegAnalyzeInput* input, ScopeClosure* cl
       .rhs_row = -1,
       .advance = (is_link || in_branch) ? NODE_ADVANCE_NONE : NODE_ADVANCE_ONE,
       .advance_slot_row = 0,
+      .wrapper_name = NULL,
   };
   if (is_link) {
     (*mult_num)++;
-    ScopedRule* wrapper = _find_scoped_rule(
-        cl, symtab_find_f(&cl->scoped_rule_names, "%s$%s$%d", cl->scope_name, parent_rule_name, *mult_num));
+    const char* wrapper_name =
+        symtab_get(&cl->scoped_rule_names,
+                   symtab_find_f(&cl->scoped_rule_names, "%s$%s$%d", cl->scope_name, parent_rule_name, *mult_num));
+    ScopedRule* wrapper =
+        wrapper_name ? _find_scoped_rule(cl, symtab_find(&cl->scoped_rule_names, wrapper_name)) : NULL;
     nf.ref_row = wrapper ? _slot_row(cl, wrapper) : 0;
+    nf.wrapper_name = wrapper_name;
   }
   free(san);
   return nf;
@@ -935,12 +940,17 @@ static NodeField _build_call_node_field(PegAnalyzeInput* input, ScopeClosure* cl
       .rhs_row = -1,
       .advance = NODE_ADVANCE_NONE,
       .advance_slot_row = 0,
+      .wrapper_name = NULL,
   };
   if (is_link) {
     (*mult_num)++;
-    ScopedRule* wrapper = _find_scoped_rule(
-        cl, symtab_find_f(&cl->scoped_rule_names, "%s$%s$%d", cl->scope_name, parent_rule_name, *mult_num));
+    const char* wrapper_name =
+        symtab_get(&cl->scoped_rule_names,
+                   symtab_find_f(&cl->scoped_rule_names, "%s$%s$%d", cl->scope_name, parent_rule_name, *mult_num));
+    ScopedRule* wrapper =
+        wrapper_name ? _find_scoped_rule(cl, symtab_find(&cl->scoped_rule_names, wrapper_name)) : NULL;
     nf.ref_row = wrapper ? _slot_row(cl, wrapper) : 0;
+    nf.wrapper_name = wrapper_name;
     if (u && u->interlace_rhs_kind == PEG_CALL) {
       const char* rhs_name = symtab_get(&input->rule_names, u->interlace_rhs_id);
       ScopedRule* rhs_sr =
@@ -1064,86 +1074,8 @@ static void _build_node_fields(PegAnalyzeInput* input, RuleLookup* lu, ScopeClos
 // Link info collection for iteration helpers
 // ============================================================
 
-static void _build_link_infos(ScopeClosure* cl) {
-  cl->link_infos = NULL;
-  int64_t col_size_in_i32 = cl->bits_bucket_size * 2 + cl->slots_size;
-  for (size_t i = 0; i < darray_size(cl->scoped_rules); i++) {
-    ScopedRule* sr = &cl->scoped_rules[i];
-    if (!sr->node_fields) {
-      continue;
-    }
-    for (size_t fi = 0; fi < darray_size(sr->node_fields); fi++) {
-      NodeField* nf = &sr->node_fields[fi];
-      if (!nf->is_link) {
-        continue;
-      }
-      // find the wrapper scoped rule by its row
-      int32_t wrapper_row = nf->ref_row;
-      // check if this row already has a LinkInfo
-      bool found = false;
-      if (cl->link_infos) {
-        for (size_t li = 0; li < darray_size(cl->link_infos); li++) {
-          if (cl->link_infos[li].wrapper_row == wrapper_row) {
-            found = true;
-            break;
-          }
-        }
-      }
-      if (found) {
-        continue;
-      }
-      // find the wrapper rule to inspect its body
-      ScopedRule* wrapper = NULL;
-      for (size_t ri = 0; ri < darray_size(cl->scoped_rules); ri++) {
-        if (_slot_row(cl, &cl->scoped_rules[ri]) == wrapper_row) {
-          wrapper = &cl->scoped_rules[ri];
-          break;
-        }
-      }
-      if (!wrapper) {
-        continue;
-      }
-      // extract LHS info from wrapper body (star/plus body has interlace.lhs)
-      ScopedUnit* body = &wrapper->body;
-      ScopedUnit* lhs = NULL;
-      if (body->kind == SCOPED_UNIT_STAR || body->kind == SCOPED_UNIT_PLUS) {
-        lhs = body->as.interlace.lhs;
-      } else if (body->kind == SCOPED_UNIT_MAYBE) {
-        lhs = body->as.base;
-      }
-      if (!lhs) {
-        continue;
-      }
-      LinkInfo li = {.wrapper_row = wrapper_row, .col_size_in_i32 = col_size_in_i32, .rhs_row = nf->rhs_row};
-      if (lhs->kind == SCOPED_UNIT_TERM) {
-        li.lhs_is_term = true;
-        li.lhs_term_id = lhs->as.term_id;
-        li.lhs_row = -1;
-      } else if (lhs->kind == SCOPED_UNIT_CALL) {
-        li.lhs_is_term = false;
-        ScopedRule* callee = _find_scoped_rule(cl, symtab_find(&cl->scoped_rule_names, lhs->as.callee));
-        li.lhs_row = callee ? _slot_row(cl, callee) : 0;
-        li.lhs_bit_index = callee ? callee->segment_index : 0;
-        li.lhs_bit_mask = callee ? callee->rule_bit_mask : 0;
-      }
-      // extract RHS bit info for interlaced wrappers
-      if (li.rhs_row >= 0 && (body->kind == SCOPED_UNIT_STAR || body->kind == SCOPED_UNIT_PLUS)) {
-        ScopedUnit* rhs = body->as.interlace.rhs;
-        if (rhs && rhs->kind == SCOPED_UNIT_CALL) {
-          ScopedRule* rhs_sr = _find_scoped_rule(cl, symtab_find(&cl->scoped_rule_names, rhs->as.callee));
-          li.rhs_bit_index = rhs_sr ? rhs_sr->segment_index : 0;
-          li.rhs_bit_mask = rhs_sr ? rhs_sr->rule_bit_mask : 0;
-        } else {
-          li.rhs_bit_mask = 0;
-        }
-      }
-      if (!cl->link_infos) {
-        cl->link_infos = darray_new(sizeof(LinkInfo), 0);
-      }
-      darray_push(cl->link_infos, li);
-    }
-  }
-}
+// (removed _build_link_infos — link dispatch info now embedded in PegLink at load time)
+
 // ============================================================
 // Cleanup
 // ============================================================
@@ -1205,9 +1137,6 @@ static void _free_closure(ScopeClosure* cl) {
   }
   darray_del(cl->scoped_rules);
   symtab_free(&cl->scoped_rule_names);
-  if (cl->link_infos) {
-    darray_del(cl->link_infos);
-  }
 }
 
 // ============================================================
@@ -1268,7 +1197,6 @@ PegGenInput peg_analyze(PegAnalyzeInput* input, int memoize_mode, const char* pr
   }
 
   for (int32_t c = 0; c < closure_size; c++) {
-    _build_link_infos(&closures[c]);
   }
 
   _free_rule_lookup(&lu);

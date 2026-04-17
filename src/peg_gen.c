@@ -72,7 +72,10 @@ static void _gen_header_types(HeaderWriter* hw) {
   hdwriter_puts(hw, "#ifndef _NEST_PEGREF\n#define _NEST_PEGREF\n");
   hdwriter_puts(hw, "typedef struct { TokenChunk* tc; int64_t col; int64_t row; } PegRef;\n");
   hdwriter_puts(hw, "#endif\n\n");
-  hdwriter_puts(hw, "typedef struct { TokenChunk* tc; int64_t col; int64_t row; } PegLink;\n");
+  hdwriter_puts(hw, "typedef struct { TokenChunk* tc; int64_t col; int64_t col_size_in_i32;"
+                    " int64_t lhs_bit_index; int64_t lhs_bit_mask; int64_t lhs_row;"
+                    " int64_t lhs_term_id;"
+                    " int64_t rhs_bit_index; int64_t rhs_bit_mask; int64_t rhs_row; } PegLink;\n");
   hdwriter_putc(hw, '\n');
 }
 
@@ -100,6 +103,18 @@ static void _gen_node_struct(HeaderWriter* hw, ScopedRule* sr, const char* rule_
   }
   hdwriter_printf(hw, "} Node_%s;\n", rule_name);
   hdwriter_putc(hw, '\n');
+}
+
+static int32_t _slot_row_gen(ScopeClosure* cl, ScopedRule* sr) {
+  return (int32_t)(cl->bits_bucket_size * 2 + (int64_t)sr->slot_index);
+}
+
+static ScopedRule* _find_sr_by_name(ScopeClosure* cl, const char* name) {
+  int32_t id = symtab_find(&cl->scoped_rule_names, name);
+  if (id < 0) {
+    return NULL;
+  }
+  return &cl->scoped_rules[id - cl->scoped_rule_names.start_num];
 }
 
 // Info for one scope's instance of a rule, used in loader generation.
@@ -194,7 +209,47 @@ static void _gen_loader(HeaderWriter* hw, const char* rule_name, RuleScopeEntry*
           hdwriter_printf(hw, "$1.%s.tc = ref.tc;\n", nf->name);
           hdwriter_printf(hw, "$1.%s.col = ref.col;\n", nf->name);
         }
-        hdwriter_printf(hw, "$1.%s.row = %d;\n", nf->name, nf->ref_row);
+        hdwriter_printf(hw, "$1.%s.col_size_in_i32 = %lld;\n", nf->name, (long long)col_size_in_i32);
+        // find wrapper scoped rule and extract LHS/RHS info
+        ScopedRule* wrapper = nf->wrapper_name ? _find_sr_by_name(cl, nf->wrapper_name) : NULL;
+        ScopedUnit* body = wrapper ? &wrapper->body : NULL;
+        ScopedUnit* lhs = NULL;
+        if (body && (body->kind == SCOPED_UNIT_STAR || body->kind == SCOPED_UNIT_PLUS)) {
+          lhs = body->as.interlace.lhs;
+        } else if (body && body->kind == SCOPED_UNIT_MAYBE) {
+          lhs = body->as.base;
+        }
+        if (lhs && lhs->kind == SCOPED_UNIT_TERM) {
+          // term LHS: has_elem checks term_id, get_next advances by 1
+          hdwriter_printf(hw, "$1.%s.lhs_bit_index = 0; $1.%s.lhs_bit_mask = 0; $1.%s.lhs_row = -1;\n", nf->name,
+                          nf->name, nf->name);
+          hdwriter_printf(hw, "$1.%s.lhs_term_id = %d;\n", nf->name, lhs->as.term_id);
+        } else if (lhs && lhs->kind == SCOPED_UNIT_CALL) {
+          ScopedRule* callee = _find_sr_by_name(cl, lhs->as.callee);
+          int32_t lhs_row = callee ? _slot_row_gen(cl, callee) : 0;
+          hdwriter_printf(hw, "$1.%s.lhs_row = %d;\n", nf->name, lhs_row);
+          hdwriter_printf(hw, "$1.%s.lhs_term_id = 0;\n", nf->name);
+          hdwriter_printf(hw, "$1.%s.lhs_bit_index = %llu; $1.%s.lhs_bit_mask = 0x%llxULL;\n", nf->name,
+                          callee ? (unsigned long long)callee->segment_index : 0ULL, nf->name,
+                          callee ? (unsigned long long)callee->rule_bit_mask : 0ULL);
+        } else {
+          hdwriter_printf(hw, "$1.%s.lhs_bit_index = 0; $1.%s.lhs_bit_mask = 0; $1.%s.lhs_row = -1;\n", nf->name,
+                          nf->name, nf->name);
+          hdwriter_printf(hw, "$1.%s.lhs_term_id = 0;\n", nf->name);
+        }
+        // RHS info for interlaced links
+        if (nf->rhs_row >= 0 && body && (body->kind == SCOPED_UNIT_STAR || body->kind == SCOPED_UNIT_PLUS)) {
+          ScopedUnit* rhs = body->as.interlace.rhs;
+          ScopedRule* rhs_sr = (rhs && rhs->kind == SCOPED_UNIT_CALL) ? _find_sr_by_name(cl, rhs->as.callee) : NULL;
+          int32_t rhs_row = rhs_sr ? _slot_row_gen(cl, rhs_sr) : nf->rhs_row;
+          hdwriter_printf(hw, "$1.%s.rhs_row = %d;\n", nf->name, rhs_row);
+          hdwriter_printf(hw, "$1.%s.rhs_bit_index = %llu; $1.%s.rhs_bit_mask = 0x%llxULL;\n", nf->name,
+                          rhs_sr ? (unsigned long long)rhs_sr->segment_index : 0ULL, nf->name,
+                          rhs_sr ? (unsigned long long)rhs_sr->rule_bit_mask : 0ULL);
+        } else {
+          hdwriter_printf(hw, "$1.%s.rhs_row = -1; $1.%s.rhs_bit_index = 0; $1.%s.rhs_bit_mask = 0;\n", nf->name,
+                          nf->name, nf->name);
+        }
       } else {
         if (nf->is_scope) {
           hdwriter_printf(hw, "$1.%s.tc = &((TokenTree*)ref.tc->aux_value)->table[ref.tc->tokens[ref.col].chunk_id];\n",
@@ -235,160 +290,62 @@ static void _gen_iter_preamble(HeaderWriter* hw) {
   hdwriter_puts(hw, "extern size_t darray_size(void*);\n");
   hdwriter_puts(hw, "#endif\n\n");
 }
-static void _gen_has_elem(HeaderWriter* hw, ScopeClosure* closures, int32_t closure_size, const char* prefix,
-                          int memoize_mode) {
-  hdwriter_printf(hw, "static inline bool %s_has_elem(PegLink l)", prefix);
+static void _gen_has_elem(HeaderWriter* hw, const char* prefix, int memoize_mode) {
+  hdwriter_printf(hw, "static inline bool %s_has_elem(PegLink* l)", prefix);
   hdwriter_begin(hw);
-  hdwriter_puts(hw, "if (l.col >= (int64_t)darray_size(l.tc->tokens)) return false;\n");
-  hdwriter_puts(hw, "switch (l.tc->scope_id)");
-  hdwriter_begin(hw);
-  for (int32_t c = 0; c < closure_size; c++) {
-    ScopeClosure* cl = &closures[c];
-    if (!cl->link_infos || darray_size(cl->link_infos) == 0) {
-      continue;
-    }
-    hdwriter_printf(hw, "case %d: switch (l.row)", cl->scope_id);
-    hdwriter_begin(hw);
-    for (size_t i = 0; i < darray_size(cl->link_infos); i++) {
-      LinkInfo* li = &cl->link_infos[i];
-      hdwriter_printf(hw, "case %d:", li->wrapper_row);
-      hdwriter_begin(hw);
-      if (li->lhs_is_term) {
-        hdwriter_printf(hw, "return l.tc->tokens[l.col].term_id == %d;\n", li->lhs_term_id);
-      } else {
-        hdwriter_printf(hw, "int32_t* $col = (int32_t*)l.tc->value + %lld * l.col;\n", (long long)li->col_size_in_i32);
-        if (memoize_mode == MEMOIZE_SHARED) {
-          hdwriter_printf(hw, "uint64_t* $bits = (uint64_t*)$col;\n");
-          hdwriter_printf(hw, "return ($bits[%llu] & 0x%llxULL) && $col[%d] >= 0;\n",
-                          (unsigned long long)li->lhs_bit_index, (unsigned long long)li->lhs_bit_mask, li->lhs_row);
-        } else {
-          hdwriter_printf(hw, "return $col[%d] >= 0;\n", li->lhs_row);
-        }
-      }
-      hdwriter_end(hw);
-    }
-    hdwriter_puts(hw, "default: return false;\n");
-    hdwriter_end(hw);
+  hdwriter_puts(hw, "if (l->col >= (int64_t)darray_size(l->tc->tokens)) return false;\n");
+  // term LHS: check term_id
+  hdwriter_puts(hw, "if (l->lhs_row < 0) return l->tc->tokens[l->col].term_id == (int32_t)l->lhs_term_id;\n");
+  // call LHS: check slot (and bits in shared mode)
+  hdwriter_puts(hw, "int32_t* $col = (int32_t*)l->tc->value + l->col_size_in_i32 * l->col;\n");
+  if (memoize_mode == MEMOIZE_SHARED) {
+    hdwriter_puts(hw, "uint64_t* $bits = (uint64_t*)$col;\n");
+    hdwriter_puts(hw, "return ($bits[l->lhs_bit_index] & l->lhs_bit_mask) && $col[l->lhs_row] >= 0;\n");
+  } else {
+    hdwriter_puts(hw, "return $col[l->lhs_row] >= 0;\n");
   }
-  hdwriter_puts(hw, "default: return false;\n");
+  hdwriter_end(hw);
+  hdwriter_putc(hw, '\n');
+}
+static void _gen_get_next(HeaderWriter* hw, const char* prefix, int memoize_mode) {
+  hdwriter_printf(hw, "static inline void %s_get_next(PegLink* l)", prefix);
+  hdwriter_begin(hw);
+  // LHS advance: if lhs_row < 0 it's a term (advance by 1), else read slot
+  hdwriter_puts(hw, "if (l->lhs_row < 0) { l->col += 1; }\n");
+  hdwriter_puts(hw, "else");
+  hdwriter_begin(hw);
+  hdwriter_puts(hw, "int32_t* $col = (int32_t*)l->tc->value + l->col_size_in_i32 * l->col;\n");
+  hdwriter_puts(hw, "l->col += $col[l->lhs_row];\n");
+  hdwriter_end(hw);
+  // RHS advance
+  hdwriter_puts(hw, "if (l->rhs_row >= 0 && l->col < (int64_t)darray_size(l->tc->tokens))");
+  hdwriter_begin(hw);
+  hdwriter_puts(hw, "int32_t* $rhs_col = (int32_t*)l->tc->value + l->col_size_in_i32 * l->col;\n");
+  if (memoize_mode == MEMOIZE_SHARED) {
+    hdwriter_puts(hw, "uint64_t* $rhs_bits = (uint64_t*)$rhs_col;\n");
+    hdwriter_puts(hw, "if (($rhs_bits[l->rhs_bit_index] & l->rhs_bit_mask) && $rhs_col[l->rhs_row] > 0) "
+                      "l->col += $rhs_col[l->rhs_row];\n");
+  } else {
+    hdwriter_puts(hw, "if ($rhs_col[l->rhs_row] > 0) l->col += $rhs_col[l->rhs_row];\n");
+  }
   hdwriter_end(hw);
   hdwriter_end(hw);
   hdwriter_putc(hw, '\n');
 }
-static void _gen_get_next(HeaderWriter* hw, ScopeClosure* closures, int32_t closure_size, const char* prefix,
-                          int memoize_mode) {
-  hdwriter_printf(hw, "static inline PegLink %s_get_next(PegLink l)", prefix);
+static void _gen_get_lhs(HeaderWriter* hw, const char* prefix) {
+  hdwriter_printf(hw, "static inline PegRef %s_get_lhs(PegLink* l)", prefix);
   hdwriter_begin(hw);
-  hdwriter_puts(hw, "switch (l.tc->scope_id)");
-  hdwriter_begin(hw);
-  for (int32_t c = 0; c < closure_size; c++) {
-    ScopeClosure* cl = &closures[c];
-    if (!cl->link_infos || darray_size(cl->link_infos) == 0) {
-      continue;
-    }
-    hdwriter_printf(hw, "case %d: switch (l.row)", cl->scope_id);
-    hdwriter_begin(hw);
-    for (size_t i = 0; i < darray_size(cl->link_infos); i++) {
-      LinkInfo* li = &cl->link_infos[i];
-      hdwriter_printf(hw, "case %d:", li->wrapper_row);
-      hdwriter_begin(hw);
-      hdwriter_puts(hw, "PegLink $res = l;\n");
-      if (li->lhs_is_term) {
-        hdwriter_puts(hw, "$res.col += 1;\n");
-      } else {
-        hdwriter_printf(hw, "int32_t* $col = (int32_t*)l.tc->value + %lld * l.col;\n", (long long)li->col_size_in_i32);
-        hdwriter_printf(hw, "$res.col += $col[%d];\n", li->lhs_row);
-      }
-      if (li->rhs_row >= 0) {
-        hdwriter_puts(hw, "if ($res.col < (int64_t)darray_size(l.tc->tokens))");
-        hdwriter_begin(hw);
-        hdwriter_printf(hw, "int32_t* $rhs_col = (int32_t*)l.tc->value + %lld * $res.col;\n",
-                        (long long)li->col_size_in_i32);
-        if (memoize_mode == MEMOIZE_SHARED) {
-          hdwriter_printf(hw, "uint64_t* $rhs_bits = (uint64_t*)$rhs_col;\n");
-          hdwriter_printf(hw, "if (($rhs_bits[%llu] & 0x%llxULL) && $rhs_col[%d] > 0) $res.col += $rhs_col[%d];\n",
-                          (unsigned long long)li->rhs_bit_index, (unsigned long long)li->rhs_bit_mask, li->rhs_row,
-                          li->rhs_row);
-        } else {
-          hdwriter_printf(hw, "if ($rhs_col[%d] > 0) $res.col += $rhs_col[%d];\n", li->rhs_row, li->rhs_row);
-        }
-        hdwriter_end(hw);
-      }
-      hdwriter_puts(hw, "return $res;\n");
-      hdwriter_end(hw);
-    }
-    hdwriter_puts(hw, "default: break;\n");
-    hdwriter_end(hw);
-    hdwriter_puts(hw, "break;\n");
-  }
-  hdwriter_end(hw);
-  hdwriter_puts(hw, "return l;\n");
+  hdwriter_puts(hw, "return (PegRef){l->tc, l->col, l->lhs_row};\n");
   hdwriter_end(hw);
   hdwriter_putc(hw, '\n');
 }
-static void _gen_get_lhs(HeaderWriter* hw, ScopeClosure* closures, int32_t closure_size, const char* prefix) {
-  hdwriter_printf(hw, "static inline PegRef %s_get_lhs(PegLink l)", prefix);
+static void _gen_get_rhs(HeaderWriter* hw, const char* prefix, int memoize_mode) {
+  (void)memoize_mode;
+  hdwriter_printf(hw, "static inline PegRef %s_get_rhs(PegLink* l)", prefix);
   hdwriter_begin(hw);
-  hdwriter_puts(hw, "switch (l.tc->scope_id)");
-  hdwriter_begin(hw);
-  for (int32_t c = 0; c < closure_size; c++) {
-    ScopeClosure* cl = &closures[c];
-    if (!cl->link_infos || darray_size(cl->link_infos) == 0) {
-      continue;
-    }
-    hdwriter_printf(hw, "case %d: switch (l.row)", cl->scope_id);
-    hdwriter_begin(hw);
-    for (size_t i = 0; i < darray_size(cl->link_infos); i++) {
-      LinkInfo* li = &cl->link_infos[i];
-      hdwriter_printf(hw, "case %d:\n", li->wrapper_row);
-      if (li->lhs_is_term) {
-        hdwriter_puts(hw, "return (PegRef){l.tc, l.col, 0};\n");
-      } else {
-        hdwriter_printf(hw, "return (PegRef){l.tc, l.col, %d};\n", li->lhs_row);
-      }
-    }
-    hdwriter_puts(hw, "default: break;\n");
-    hdwriter_end(hw);
-    hdwriter_puts(hw, "break;\n");
-  }
-  hdwriter_end(hw);
-  hdwriter_puts(hw, "return (PegRef){0};\n");
-  hdwriter_end(hw);
-  hdwriter_putc(hw, '\n');
-}
-static void _gen_get_rhs(HeaderWriter* hw, ScopeClosure* closures, int32_t closure_size, const char* prefix) {
-  hdwriter_printf(hw, "static inline PegRef %s_get_rhs(PegLink l)", prefix);
-  hdwriter_begin(hw);
-  hdwriter_puts(hw, "switch (l.tc->scope_id)");
-  hdwriter_begin(hw);
-  for (int32_t c = 0; c < closure_size; c++) {
-    ScopeClosure* cl = &closures[c];
-    if (!cl->link_infos || darray_size(cl->link_infos) == 0) {
-      continue;
-    }
-    hdwriter_printf(hw, "case %d: switch (l.row)", cl->scope_id);
-    hdwriter_begin(hw);
-    for (size_t i = 0; i < darray_size(cl->link_infos); i++) {
-      LinkInfo* li = &cl->link_infos[i];
-      if (li->rhs_row < 0) {
-        continue;
-      }
-      hdwriter_printf(hw, "case %d:", li->wrapper_row);
-      hdwriter_begin(hw);
-      if (li->lhs_is_term) {
-        hdwriter_printf(hw, "return (PegRef){l.tc, l.col + 1, %d};\n", li->rhs_row);
-      } else {
-        hdwriter_printf(hw, "int32_t* $col = (int32_t*)l.tc->value + %lld * l.col;\n", (long long)li->col_size_in_i32);
-        hdwriter_printf(hw, "return (PegRef){l.tc, l.col + $col[%d], %d};\n", li->lhs_row, li->rhs_row);
-      }
-      hdwriter_end(hw);
-    }
-    hdwriter_puts(hw, "default: break;\n");
-    hdwriter_end(hw);
-    hdwriter_puts(hw, "break;\n");
-  }
-  hdwriter_end(hw);
-  hdwriter_puts(hw, "return (PegRef){0};\n");
+  hdwriter_puts(hw, "if (l->lhs_row < 0) return (PegRef){l->tc, l->col + 1, l->rhs_row};\n");
+  hdwriter_puts(hw, "int32_t* $col = (int32_t*)l->tc->value + l->col_size_in_i32 * l->col;\n");
+  hdwriter_puts(hw, "return (PegRef){l->tc, l->col + $col[l->lhs_row], l->rhs_row};\n");
   hdwriter_end(hw);
   hdwriter_putc(hw, '\n');
 }
@@ -430,10 +387,10 @@ static void _gen_header(PegGenInput* input, HeaderWriter* hw, RuleScopeMap* scop
   }
 
   _gen_iter_preamble(hw);
-  _gen_has_elem(hw, closures, closure_size, prefix, input->memoize_mode);
-  _gen_get_next(hw, closures, closure_size, prefix, input->memoize_mode);
-  _gen_get_lhs(hw, closures, closure_size, prefix);
-  _gen_get_rhs(hw, closures, closure_size, prefix);
+  _gen_has_elem(hw, prefix, input->memoize_mode);
+  _gen_get_next(hw, prefix, input->memoize_mode);
+  _gen_get_lhs(hw, prefix);
+  _gen_get_rhs(hw, prefix, input->memoize_mode);
   _gen_peg_size(hw, closures, closure_size, prefix);
 }
 

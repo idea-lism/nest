@@ -60,7 +60,7 @@ benchmark/
 - GLR + error recovery. Industry standard.
 - Install: `brew install tree-sitter`.
 - Build: `tree-sitter generate && xcrun clang -O2 src/parser.c -I... -ltree-sitter -o parser`
-- Grammars: tree-sitter-json (official), tree-sitter-kotlin (community), calc (write small one).
+- Grammars: tree-sitter-json (official), tree-sitter-kotlin from `https://github.com/tree-sitter-grammars/tree-sitter-kotlin`, calc (write small one).
 
 ## Grammars
 
@@ -216,8 +216,9 @@ All builds use `xcrun clang`. No cross-compilation.
 Tasks:
 1. Clone packcc → `benchmark/vendor/packcc/`, build `packcc` binary with `xcrun clang -O2`
 2. `brew install tree-sitter` (skip if already installed)
-3. Clone tree-sitter-json, tree-sitter-kotlin → `benchmark/vendor/`
+3. Clone tree-sitter-json, tree-sitter-kotlin (`https://github.com/tree-sitter-grammars/tree-sitter-kotlin`) → `benchmark/vendor/`
 4. Copy PackCC benchmark grammars/inputs to `benchmark/inputs/compare/` (for example `calc.txt`, `json.json`, `kotlin.kt`) and keep them verbatim for comparison runs
+5. Copy upstream licenses for reused benchmark assets/code into `benchmark/licenses/`
 
 ## run.rb
 
@@ -286,4 +287,5 @@ Each file must be completed fully before moving to the next. No scaffolding stub
 14. `benchmark/grammars/kotlin/grammar.nest` — translate kotlin.peg to .nest, complete
 15. `benchmark/grammars/kotlin/grammar.peg` — copy from packcc repo
 16. `benchmark/grammars/kotlin/grammar.js` — tree-sitter-kotlin grammar
-17. `benchmark/benchmark` — one-shot shell script entry point, calls `ruby benchmark/run.rb all`
+17. `benchmark/licenses/*` — upstream licenses for reused PackCC/tree-sitter benchmark assets
+18. `benchmark/benchmark` — one-shot shell script entry point, calls `ruby benchmark/run.rb all`

@@ -520,7 +520,7 @@ TEST(test_iteration_helpers) {
   assert(strstr(g.hdr_buf, "json_get_next") != NULL);
   assert(strstr(g.hdr_buf, "json_get_lhs") != NULL);
   assert(strstr(g.hdr_buf, "json_get_rhs") != NULL);
-  assert(strstr(g.hdr_buf, "darray_size(l.tc->tokens)") != NULL);
+  assert(strstr(g.hdr_buf, "darray_size(l->tc->tokens)") != NULL);
 
   _free_gen(&g);
   _free_json_fixture(&input, &cl);
@@ -872,7 +872,8 @@ TEST(test_interlaced_link_rhs_row) {
   memcpy(body, loader, span);
   body[span] = '\0';
 
-  assert(strstr(body, "$1.items.row = 2") != NULL);
+  assert(strstr(body, "$1.items.col_size_in_i32") != NULL);
+  assert(strstr(body, "$1.items.rhs_row") != NULL);
 
   free(body);
   _free_gen(&g);
