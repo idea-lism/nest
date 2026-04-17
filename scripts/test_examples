@@ -48,15 +48,9 @@ for dir in test/examples/*/; do
       [ -f "$expected" ] || continue
 
       input_text=$(cat "$input_file")
-      actual=$("$TMPDIR/${name}_${mode}" "$input_text" 2>"$TMPDIR/stderr" || true)
-      stderr=$(cat "$TMPDIR/stderr")
-      if [ -n "$stderr" ]; then
-        combined=$(printf '%s\n%s' "$stderr" "$actual")
-      else
-        combined="$actual"
-      fi
+      actual=$("$TMPDIR/${name}_${mode}" "$input_text" 2>&1 || true)
 
-      if diff -u "$expected" - <<<"$combined" >"$TMPDIR/diff" 2>&1; then
+      if diff -u "$expected" - <<<"$actual" >"$TMPDIR/diff" 2>&1; then
         pass=$((pass + 1))
       else
         echo "FAIL $name/$case_name ($mode):"

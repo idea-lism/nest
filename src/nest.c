@@ -453,9 +453,26 @@ static void _gen_example_c(FILE* f, const char* prefix, ParseState* ps) {
   fprintf(f, "  const char* input = argv[1];\n");
   fprintf(f, "  int32_t len = (int32_t)strlen(input);\n");
   fprintf(f, "  char* ustr = ustr_new(len, input);\n");
+  fprintf(f, "  int32_t total_cps = ustr_size(ustr);\n");
   fprintf(f, "  ParseContext ctx = {0};\n");
   fprintf(f, "  ParseResult res = %s_parse(ctx, ustr);\n", prefix);
   fprintf(f, "  TokenTree* tt = res.tt;\n\n");
+
+  // error detection: token error if not all input consumed
+  fprintf(f, "  int32_t consumed = 0;\n");
+  fprintf(f, "  {\n");
+  fprintf(f, "    int32_t n = (int32_t)darray_size(tt->root->tokens);\n");
+  fprintf(f, "    for (int32_t i = 0; i < n; i++) {\n");
+  fprintf(f, "      Token* t = &tt->root->tokens[i];\n");
+  fprintf(f, "      int32_t end = t->cp_start + t->cp_size;\n");
+  fprintf(f, "      if (end > consumed) consumed = end;\n");
+  fprintf(f, "    }\n");
+  fprintf(f, "  }\n");
+  fprintf(f, "  if (consumed < total_cps) {\n");
+  fprintf(f, "    Location loc = tt_locate(tt, consumed);\n");
+  fprintf(f, "    printf(\"%%d:%%d: token error\\n\", loc.line, loc.col);\n");
+  fprintf(f, "  }\n");
+
   fprintf(f, "  printf(\"------\\n\");\n");
   fprintf(f, "  print_tokens(tt, tt->root, 0);\n");
   fprintf(f, "  printf(\"------\\n\");\n");
