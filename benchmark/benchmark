@@ -1,0 +1,8 @@
+#!/bin/sh
+set -e
+
+# One-shot entry point: generates inputs, runs all benchmarks, produces reports.
+# Assumes: build/release/nest already built (ruby config.rb release && ninja)
+
+cd "$(dirname "$0")"
+ruby run.rb all

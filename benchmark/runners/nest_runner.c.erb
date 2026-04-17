@@ -1,0 +1,89 @@
+// nest_runner.c.erb — timing harness for nest-generated parsers.
+// ERB template. Compiled per grammar via: nest c grammar.nest -p <prefix> -m <mode>
+// Then: clang -O2 nest_runner.c <prefix>.ll -o runner
+
+#define NEST_RT_IMPLEMENTATION
+#include "<%= prefix %>.h"
+
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <time.h>
+
+static double now_sec(void) {
+    struct timespec ts;
+    clock_gettime(CLOCK_MONOTONIC, &ts);
+    return ts.tv_sec + ts.tv_nsec * 1e-9;
+}
+
+int32_t <%= prefix %>_next_cp(void* src, int32_t cp_off) {
+    (void)src; (void)cp_off;
+    return -1;
+}
+
+static int cmp_double(const void* a, const void* b) {
+    double da = *(const double*)a;
+    double db = *(const double*)b;
+    return (da > db) - (da < db);
+}
+
+int main(int argc, char** argv) {
+    if (argc < 3) {
+        fprintf(stderr, "usage: %s <input_file> <iterations>\n", argv[0]);
+        return 1;
+    }
+
+    const char* input_path = argv[1];
+    int iterations = atoi(argv[2]);
+    if (iterations < 1) iterations = 1;
+
+    // Read input file
+    FILE* f = fopen(input_path, "rb");
+    if (!f) { perror(input_path); return 1; }
+    fseek(f, 0, SEEK_END);
+    long file_size = ftell(f);
+    fseek(f, 0, SEEK_SET);
+    char* raw = malloc((size_t)file_size + 1);
+    fread(raw, 1, (size_t)file_size, f);
+    raw[file_size] = '\0';
+    fclose(f);
+
+    char* src = ustr_new((size_t)file_size, raw);
+    free(raw);
+
+    // Warm up: 3 iterations
+    for (int i = 0; i < 3; i++) {
+        ParseContext ctx = {0};
+        ParseResult res = <%= prefix %>_parse(ctx, src);
+        <%= prefix %>_cleanup(res);
+    }
+
+    // Timed iterations
+    double* times = malloc(sizeof(double) * (size_t)iterations);
+    for (int i = 0; i < iterations; i++) {
+        ParseContext ctx = {0};
+        double t0 = now_sec();
+        ParseResult res = <%= prefix %>_parse(ctx, src);
+        double t1 = now_sec();
+        times[i] = (t1 - t0) * 1e6; // microseconds
+        <%= prefix %>_cleanup(res);
+    }
+
+    // Compute median
+    qsort(times, (size_t)iterations, sizeof(double), cmp_double);
+    double median_us = times[iterations / 2];
+
+    // One more parse to collect stats
+    ParseContext ctx = {0};
+    ParseResult res = <%= prefix %>_parse(ctx, src);
+    int32_t token_count = res.main.tc ? (int32_t)darray_size(res.main.tc->tokens) : 0;
+    int32_t chunk_count = res.tt ? (int32_t)darray_size(res.tt->table) : 0;
+    <%= prefix %>_cleanup(res);
+
+    // CSV: parse_us,size_bytes,token_count,chunk_count
+    printf("%.1f,%ld,%d,%d\n", median_us, file_size, token_count, chunk_count);
+
+    free(times);
+    ustr_del(src);
+    return 0;
+}

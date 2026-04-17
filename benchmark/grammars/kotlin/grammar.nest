@@ -1,0 +1,161 @@
+[[vpa]]
+%ignore @space
+
+*keywords = @{
+  "package"
+  "import"
+  "class"
+  "interface"
+  "object"
+  "fun"
+  "val"
+  "var"
+  "if"
+  "else"
+  "when"
+  "for"
+  "while"
+  "do"
+  "return"
+  "try"
+  "catch"
+  "finally"
+  "throw"
+  "true"
+  "false"
+  "null"
+  "this"
+  "super"
+  "in"
+  "is"
+  "as"
+  "typealias"
+}
+
+main = {
+  *keywords
+  /\/\*([^*]|\*+[^*\/])*\*+\// @comment
+  /\/\/[^\n\r]*/ @comment
+  /"([^"\\]|\\.)*"/ @string
+  /'([^'\\]|\\.)*'/ @char
+  /-?(0|[1-9][0-9]*)(\.[0-9]+)?([eE][+\-]?[0-9]+)?/ @number
+  /[A-Za-z_][A-Za-z0-9_]*/ @ident
+  /[\r]?\n/ @nl
+  /\s+/ @space
+  /->/ @arrow
+  /::/ @coloncolon
+  /==/ @eqeq
+  /!=/ @noteq
+  /<=/ @le
+  />=/ @ge
+  /&&/ @andand
+  /\|\|/ @oror
+  /\?\./ @safe_nav
+  /\+\+/ @plusplus
+  /--/ @minusminus
+  /\+=/ @plus_assign
+  /-=/ @minus_assign
+  /\*=/ @star_assign
+  /\// @slash
+  /\/=/ @slash_assign
+  /%=/ @percent_assign
+  /\(/ @lparen
+  /\)/ @rparen
+  /\[/ @lbracket
+  /\]/ @rbracket
+  /[{]/ @lbrace
+  /[}]/ @rbrace
+  /,/ @comma
+  /:/ @colon
+  /;/ @semi
+  /\./ @dot
+  /\?/ @quest
+  /!/ @bang
+  /=/ @assign
+  /</ @lt
+  />/ @gt
+  /\+/ @plus
+  /-/ @minus
+  /\*/ @star
+  /%/ @percent
+  /@/ @at
+}
+
+[[peg]]
+main = elem*
+elem = [
+  block
+  paren
+  bracket
+  atom
+]
+block = @lbrace elem* @rbrace
+paren = @lparen elem* @rparen
+bracket = @lbracket elem* @rbracket
+atom = [
+  "package"
+  "import"
+  "class"
+  "interface"
+  "object"
+  "fun"
+  "val"
+  "var"
+  "if"
+  "else"
+  "when"
+  "for"
+  "while"
+  "do"
+  "return"
+  "try"
+  "catch"
+  "finally"
+  "throw"
+  "true"
+  "false"
+  "null"
+  "this"
+  "super"
+  "in"
+  "is"
+  "as"
+  "typealias"
+  @comment
+  @string
+  @char
+  @number
+  @ident
+  @nl
+  @arrow
+  @coloncolon
+  @eqeq
+  @noteq
+  @le
+  @ge
+  @andand
+  @oror
+  @safe_nav
+  @plusplus
+  @minusminus
+  @plus_assign
+  @minus_assign
+  @star_assign
+  @slash_assign
+  @percent_assign
+  @slash
+  @comma
+  @colon
+  @semi
+  @dot
+  @quest
+  @bang
+  @assign
+  @lt
+  @gt
+  @plus
+  @minus
+  @star
+  @percent
+  @at
+]

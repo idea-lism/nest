@@ -1,0 +1,36 @@
+[[vpa]]
+%ignore @space
+
+*keywords = @{
+  "true"
+  "false"
+  "null"
+}
+
+main = {
+  *keywords
+  /-?(0|[1-9][0-9]*)(\.[0-9]+)?([eE][+\-]?[0-9]+)?/ @number
+  /"([^"\\]|\\["\\\/bfnrt]|\\u[0-9a-fA-F]{4})*"/ @string
+  /\s+/ @space
+  /,/ @comma
+  /:/ @colon
+  /\[/ @lbracket
+  /\]/ @rbracket
+  /[{]/ @lbrace
+  /[}]/ @rbrace
+}
+
+[[peg]]
+main = value
+value = [
+  object
+  array
+  @string
+  @number
+  "true"
+  "false"
+  "null"
+]
+object = @lbrace pair*<@comma> @rbrace
+pair = @string @colon value
+array = @lbracket value*<@comma> @rbracket

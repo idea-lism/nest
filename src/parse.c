@@ -346,7 +346,9 @@ static ReIr _parse_re_expr(ParseState* ps, TokenChunk* chunk, int32_t* tpos, ReI
 static bool _is_charclass_char(int32_t id) { return _is_str_char(id); }
 
 static int32_t _parse_charclass_char(ParseState* ps, TokenChunk* chunk, int32_t* tpos) {
-  return _decode_cp(ps->src, _next(chunk, tpos));
+  Token* t = _next(chunk, tpos);
+  if (!t) return -1;
+  return _decode_cp(ps->src, t);
 }
 
 // charclass_unit = [ charclass_char @range_sep charclass_char : range | charclass_char : single ]
@@ -357,6 +359,10 @@ static ReIr _parse_charclass_unit(ParseState* ps, TokenChunk* chunk, int32_t* tp
   if (_at(chunk, *tpos, TOK_RANGE_SEP)) {
     _next(chunk, tpos);
     int32_t hi = _parse_charclass_char(ps, chunk, tpos);
+    if (hi < 0) {
+      _error_at(ps, first, "incomplete range in character class");
+      return ir;
+    }
     return re_ir_emit(ir, RE_IR_APPEND_CH, lo, hi, loc.line, loc.col);
   }
   return re_ir_emit(ir, RE_IR_APPEND_CH, lo, lo, loc.line, loc.col);

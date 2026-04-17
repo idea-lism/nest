@@ -1,0 +1,30 @@
+[[vpa]]
+%ignore @space
+
+main = {
+  /[0-9]+/ @number
+  /\+/ @plus
+  /-/ @minus
+  /\*/ @star
+  /\// @slash
+  /\(/ @lparen
+  /\)/ @rparen
+  /\s+/ @space
+}
+
+[[peg]]
+main = expr
+expr = term+<addop>
+addop = [
+  @plus
+  @minus
+]
+term = factor+<mulop>
+mulop = [
+  @star
+  @slash
+]
+factor = [
+  @number
+  @lparen expr @rparen
+]

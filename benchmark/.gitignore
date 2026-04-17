@@ -1,0 +1,5 @@
+# Benchmark build artifacts
+build/
+vendor/
+results/
+inputs/internal/

@@ -564,6 +564,21 @@ TEST(test_invalid_empty_regexp) {
   parse_state_del(ps);
 }
 
+// --- Incomplete range in character class ---
+
+static const char BAD_CC_RANGE_NEST[] = "[[vpa]]\n"
+                                       "main = { /[+-]/ @tok }\n"
+                                       "[[peg]]\n"
+                                       "main = @tok\n";
+
+TEST(test_incomplete_charclass_range) {
+  ParseState* ps = parse_state_new();
+  bool ok = _parse(ps, BAD_CC_RANGE_NEST);
+  ASSERT_PARSE_FAIL(ps, ok);
+  assert(strstr(parse_get_error(ps), "incomplete range") != NULL);
+  parse_state_del(ps);
+}
+
 // --- Unclosed scope ---
 
 static const char UNCLOSED_SCOPE_NEST[] = "[[vpa]]\n"
@@ -631,6 +646,7 @@ int main(void) {
 
   // VPA errors
   RUN(test_invalid_empty_regexp);
+  RUN(test_incomplete_charclass_range);
   RUN(test_unclosed_scope);
 
   // reuse

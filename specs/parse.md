@@ -362,3 +362,10 @@ Parser should produce what vpa_gen / peg_gen requires.
 
 - Re-inventing regexp/lexer machine in parse.c
 - Stub implementations
+
+### Test
+
+Should at least check these cases:
+
+- `/[a-]/`, `/[-a]/` regexp with bad range, should report syntax error
+
