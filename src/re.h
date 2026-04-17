@@ -4,9 +4,6 @@
 #include <stdbool.h>
 #include <stdint.h>
 
-#define LEX_CP_BOF (-1)
-#define LEX_CP_EOF (-2)
-
 typedef struct Re Re;
 
 typedef struct {

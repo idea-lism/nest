@@ -629,6 +629,93 @@ bool pp_auto_tag_branches(ParseState* ps) {
   return true;
 }
 
+// --- C keyword check for tags ---
+
+static const char* _c_keywords[] = {
+    "alignas",
+    "alignof",
+    "auto",
+    "bool",
+    "break",
+    "case",
+    "char",
+    "const",
+    "constexpr",
+    "continue",
+    "default",
+    "do",
+    "double",
+    "else",
+    "enum",
+    "extern",
+    "false",
+    "float",
+    "for",
+    "goto",
+    "if",
+    "inline",
+    "int",
+    "long",
+    "nullptr",
+    "register",
+    "restrict",
+    "return",
+    "short",
+    "signed",
+    "sizeof",
+    "static",
+    "static_assert",
+    "struct",
+    "switch",
+    "thread_local",
+    "true",
+    "typedef",
+    "typeof",
+    "typeof_unqual",
+    "union",
+    "unsigned",
+    "void",
+    "volatile",
+    "while",
+    "_Alignas",
+    "_Alignof",
+    "_Atomic",
+    "_BitInt",
+    "_Bool",
+    "_Complex",
+    "_Decimal128",
+    "_Decimal32",
+    "_Decimal64",
+    "_Generic",
+    "_Imaginary",
+    "_Noreturn",
+    "_Static_assert",
+    "_Thread_local",
+    NULL,
+};
+
+static bool _is_c_keyword(const char* name) {
+  for (int32_t i = 0; _c_keywords[i]; i++) {
+    if (strcmp(_c_keywords[i], name) == 0) {
+      return true;
+    }
+  }
+  return false;
+}
+
+static bool _check_keyword_tags(ParseState* ps, PegUnit* unit, const char* rn) {
+  if (unit->tag && _is_c_keyword(unit->tag)) {
+    parse_error(ps, "tag '%s' in rule '%s' is a C keyword", unit->tag, rn);
+    return false;
+  }
+  for (int32_t i = 0; i < (int32_t)darray_size(unit->children); i++) {
+    if (!_check_keyword_tags(ps, &unit->children[i], rn)) {
+      return false;
+    }
+  }
+  return true;
+}
+
 static bool _check_dup_tags_in_branches(ParseState* ps, PegUnit* br, char*** tags, const char* rn) {
   for (int32_t j = 0; j < (int32_t)darray_size(br->children); j++) {
     char* tag = br->children[j].tag;
@@ -650,6 +737,12 @@ bool pp_check_duplicate_tags(ParseState* ps) {
   for (int32_t r = 0; r < (int32_t)darray_size(ps->peg_rules); r++) {
     PegRule* rule = &ps->peg_rules[r];
     const char* rn = _rule_name(ps, rule->global_id);
+
+    // check C keyword tags
+    if (!_check_keyword_tags(ps, &rule->body, rn)) {
+      return false;
+    }
+
     char** tags = darray_new(sizeof(char*), 0);
     bool ok = true;
 

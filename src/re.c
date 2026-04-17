@@ -554,13 +554,7 @@ static void _rlp_parse_atom(ReLexParser* p) {
     if (ch < 0) {
       return;
     }
-    if (ch == 'a') {
-      _rlp_advance(p);
-      re_append_ch(p->lex->re, LEX_CP_BOF, _rlp_di(p));
-    } else if (ch == 'z') {
-      _rlp_advance(p);
-      re_append_ch(p->lex->re, LEX_CP_EOF, _rlp_di(p));
-    } else if (ch == 's' || ch == 'w' || ch == 'd' || ch == 'h') {
+    if (ch == 's' || ch == 'w' || ch == 'd' || ch == 'h') {
       _rlp_advance(p);
       ReRange* range = re_range_new();
       _rlp_add_class_ranges(range, ch);

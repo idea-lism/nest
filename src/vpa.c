@@ -79,6 +79,20 @@ static void _gen_scope_dfa(VpaGenInput* input, IrWriter* w, VpaScope* scope, Act
 
   for (size_t i = 0; i < darray_size(scope->children); i++) {
     VpaUnit* u = &scope->children[i];
+    // VPA_EOF is handled separately, not in DFA
+    if (u->kind == VPA_EOF) {
+      const char* end_name = NULL;
+      if (u->action_units) {
+        for (int32_t j = 0; j < (int32_t)darray_size(u->action_units); j++) {
+          if (u->action_units[j] <= 0 && -u->action_units[j] == HOOK_ID_END) {
+            end_name = scope->name;
+            break;
+          }
+        }
+      }
+      scope->eof_action = _intern_action(actions, u->action_units, end_name);
+      continue;
+    }
     // For VPA_CALL, use the called scope's leader actions (spec: "Sub-scope calls inlines the leader regexp")
     VpaActionUnits action_au = u->action_units;
     int32_t begin_scope_id = -1;
@@ -486,8 +500,77 @@ static void _gen_vpa_lex(VpaGenInput* input, IrWriter* w, const char* prefix) {
   IrVal match_off = irwriter_load(w, "i32", last_match_off_ptr);
   IrVal tok_size = irwriter_binop(w, "sub", "i32", match_off, tok_start);
 
+  // check if any scope has eof_action
+  bool any_eof = false;
+  for (int32_t si = 0; si < n_scopes; si++) {
+    if (input->scopes[si].eof_action > 0) {
+      any_eof = true;
+      break;
+    }
+  }
+
   IrVal has_last = irwriter_icmp(w, "sgt", "i32", last_action, irwriter_imm_int(w, 0));
-  irwriter_br_cond(w, has_last, dispatch_action_bb, done_bb);
+  if (any_eof) {
+    IrLabel eof_check_bb = irwriter_label(w);
+    irwriter_br_cond(w, has_last, dispatch_action_bb, eof_check_bb);
+
+    // --- eof check: if at end of input and scope has eof_action, invoke it ---
+    irwriter_bb_at(w, eof_check_bb);
+    irwriter_comment(w, "eof check: scope-switched EOF action");
+    IrVal eof_cp_off = irwriter_load(w, "i32", cp_off_ptr);
+    IrVal is_eof = irwriter_icmp(w, "sge", "i32", eof_cp_off, irwriter_imm(w, "%len"));
+    IrLabel eof_scope_sw_bb = irwriter_label(w);
+    irwriter_br_cond(w, is_eof, eof_scope_sw_bb, done_bb);
+    irwriter_bb_at(w, eof_scope_sw_bb);
+
+    // read scope_id to switch on
+    irwriter_rawf(w, "  %%r%d = getelementptr i8, ptr %%tt, i64 24\n", irwriter_next_reg(w));
+    IrVal eof_cur_ptr = irwriter_load(w, "ptr", (IrVal)(irwriter_next_reg(w) - 1));
+    IrVal eof_scope_id = irwriter_load(w, "i32", eof_cur_ptr);
+
+    // count eof scopes and allocate labels
+    int32_t n_eof = 0;
+    for (int32_t si = 0; si < n_scopes; si++) {
+      if (input->scopes[si].eof_action > 0) {
+        n_eof++;
+      }
+    }
+    IrLabel* eof_case_bbs = malloc((size_t)n_eof * sizeof(IrLabel));
+    int32_t ei = 0;
+    for (int32_t si = 0; si < n_scopes; si++) {
+      if (input->scopes[si].eof_action > 0) {
+        eof_case_bbs[ei++] = irwriter_label(w);
+      }
+    }
+
+    irwriter_switch_start(w, "i32", eof_scope_id, done_bb);
+    ei = 0;
+    for (int32_t si = 0; si < n_scopes; si++) {
+      if (input->scopes[si].eof_action > 0) {
+        irwriter_switch_case(w, "i32", input->scopes[si].scope_id, eof_case_bbs[ei++]);
+      }
+    }
+    irwriter_switch_end(w);
+
+    ei = 0;
+    IrVal eof_tok_start = irwriter_imm(w, "%len");
+    for (int32_t si = 0; si < n_scopes; si++) {
+      if (input->scopes[si].eof_action <= 0) {
+        continue;
+      }
+      irwriter_bb_at(w, eof_case_bbs[ei++]);
+      irwriter_comment(w, "eof action for scope %s", input->scopes[si].name);
+      IrVal eof_aid = irwriter_imm_int(w, input->scopes[si].eof_action);
+      IrVal ea64 = irwriter_sext(w, "i32", eof_aid, "i64");
+      IrVal ets64 = irwriter_sext(w, "i32", eof_tok_start, "i64");
+      irwriter_call_void_fmtf(w, "vpa_dispatch", "i64 %%r%d, i8* %%tt, i64 %%r%d, i64 0, i8* %%ctx", (int)ea64,
+                              (int)ets64);
+      irwriter_br(w, done_bb);
+    }
+    free(eof_case_bbs);
+  } else {
+    irwriter_br_cond(w, has_last, dispatch_action_bb, done_bb);
+  }
 
   irwriter_bb_at(w, dispatch_action_bb);
   // vpa_dispatch uses i64 ABI — widen i32 args

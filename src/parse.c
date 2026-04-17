@@ -281,6 +281,11 @@ static void _lex_scope(LexCtx* ctx, ScopeId scope_id) {
   TokenChunk* chunk = ctx->tree->current;
   tt_pop(ctx->tree, ctx->it.cp_idx);
 
+  // EOF .end — PEG scope ends cleanly at end of file
+  if (scope_id == SCOPE_PEG && !scope_ended && ctx->it.cp_idx >= ctx->cp_count) {
+    scope_ended = true;
+  }
+
   if (scope_id != SCOPE_MAIN && !scope_ended && !parse_has_error(ctx->ps)) {
     parse_error(ctx->ps, "unexpected end of input inside %s scope", cfg.scope_name);
   }
@@ -405,10 +410,10 @@ static ReIr _emit_shorthand(ReIr ir, int32_t tok_id, int32_t line, int32_t col) 
 static bool _is_re_unit(int32_t id) {
   return id == LIT_LPAREN || id == SCOPE_CHARCLASS || id == SCOPE_RE_REF || id == TOK_RE_DOT ||
          id == TOK_RE_SPACE_CLASS || id == TOK_RE_WORD_CLASS || id == TOK_RE_DIGIT_CLASS || id == TOK_RE_HEX_CLASS ||
-         id == TOK_RE_BOF || id == TOK_RE_EOF || _is_str_char(id);
+         _is_str_char(id);
 }
 
-// re_unit = [ "(" re ")" | charclass | shorthand | @re_bof | @re_eof | @re_ref | char_token ]
+// re_unit = [ "(" re ")" | charclass | shorthand | @re_ref | char_token ]
 static ReIr _parse_re_unit(ParseState* ps, TokenChunk* chunk, int32_t* tpos, ReIr ir, bool icase) {
   Token* t = _peek(chunk, *tpos);
   if (!t) {
@@ -443,12 +448,6 @@ static ReIr _parse_re_unit(ParseState* ps, TokenChunk* chunk, int32_t* tpos, ReI
   case TOK_RE_HEX_CLASS:
     _next(chunk, tpos);
     return _emit_shorthand(ir, t->term_id, loc.line, loc.col);
-  case TOK_RE_BOF:
-    _next(chunk, tpos);
-    return re_ir_emit(ir, RE_IR_APPEND_CH, LEX_CP_BOF, LEX_CP_BOF, loc.line, loc.col);
-  case TOK_RE_EOF:
-    _next(chunk, tpos);
-    return re_ir_emit(ir, RE_IR_APPEND_CH, LEX_CP_EOF, LEX_CP_EOF, loc.line, loc.col);
   case SCOPE_RE_REF: {
     _next(chunk, tpos);
     TokenChunk* ref_chunk = _scope_chunk(ps, t);
@@ -677,7 +676,8 @@ static bool _consume_re(ParseState* ps, TokenChunk* chunk, int32_t* tpos, VpaUni
   return true;
 }
 
-// scope_line = [ re action* | re_str action* | @re_frag_id action* | @vpa_id action* | @module_id ]
+// scope_line = [ re action* | re_str action* | @pseudo_frag_eof action* | @re_frag_id action* | @vpa_id action* |
+// @module_id ]
 static bool _parse_scope_line(ParseState* ps, TokenChunk* chunk, int32_t* tpos, VpaScope* scope) {
   Token* t = _peek(chunk, *tpos);
   if (!t) {
@@ -701,6 +701,10 @@ static bool _parse_scope_line(ParseState* ps, TokenChunk* chunk, int32_t* tpos, 
     sc->value = NULL;
     free(sc->aux_value);
     sc->aux_value = NULL;
+    _parse_actions(ps, chunk, tpos, &u);
+  } else if (t->term_id == TOK_PSEUDO_FRAG_EOF) {
+    _next(chunk, tpos);
+    u.kind = VPA_EOF;
     _parse_actions(ps, chunk, tpos, &u);
   } else if (t->term_id == TOK_RE_FRAG_ID) {
     _next(chunk, tpos);
@@ -845,6 +849,14 @@ static bool _parse_define_frag(ParseState* ps, TokenChunk* chunk, int32_t* tpos)
   if (!name) {
     return false;
   }
+  // EOF is reserved as pseudo fragment
+  char* name_str = _tok_str(ps, name);
+  if (strcmp(name_str, "EOF") == 0) {
+    free(name_str);
+    _error_at(ps, name, "'EOF' is reserved and cannot be used as a fragment name");
+    return false;
+  }
+  free(name_str);
   Token* sc = _expect(ps, chunk, tpos, SCOPE_RE, "re scope");
   if (!sc) {
     return false;
@@ -873,7 +885,7 @@ static VpaScope* _new_scope(ParseState* ps, char* name) {
   return &ps->vpa_scopes[darray_size(ps->vpa_scopes) - 1];
 }
 
-// vpa_rule = @vpa_id "=" [ re | peg_str | @re_frag_id ] action* scope?
+// vpa_rule = @vpa_id "=" [ re | re_str | @pseudo_frag_eof | @re_frag_id ] action* scope?
 static bool _parse_vpa_rule(ParseState* ps, TokenChunk* chunk, int32_t* tpos) {
   if (!_at(chunk, *tpos, TOK_VPA_ID)) {
     return false;
@@ -917,6 +929,9 @@ static bool _parse_vpa_rule(ParseState* ps, TokenChunk* chunk, int32_t* tpos) {
     sc->value = NULL;
     free(sc->aux_value);
     sc->aux_value = NULL;
+  } else if (t->term_id == TOK_PSEUDO_FRAG_EOF) {
+    _next(chunk, tpos);
+    leader.kind = VPA_EOF;
   } else if (t->term_id == TOK_RE_FRAG_ID) {
     _next(chunk, tpos);
     leader.kind = VPA_RE;
@@ -925,7 +940,7 @@ static bool _parse_vpa_rule(ParseState* ps, TokenChunk* chunk, int32_t* tpos) {
     leader.re = re_ir_new();
     leader.re = re_ir_emit(leader.re, RE_IR_FRAG_REF, fid, 0, loc.line, loc.col);
   } else {
-    _error_at(ps, t, "expected re, string, or fragment ref");
+    _error_at(ps, t, "expected re, string, EOF, or fragment ref");
     return false;
   }
 

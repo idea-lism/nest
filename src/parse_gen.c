@@ -15,7 +15,7 @@ static void _build_noise(ReLex* l) {
   re_lex_add(l, "\\n+", __LINE__, 15, TOK_NL);            // @nl
 }
 
-// *chars: /\\\{\h+\}/ @codepoint, /\\[bfnrtv]/ @c_escape, /\\./ @plain_escape, /./ @char
+// *chars: /\u\{\h+\}/ @codepoint, /\\[bfnrtv]/ @c_escape, /\\./ @plain_escape, /./ @char
 static void _build_chars(ReLex* l) {
   re_lex_add(l, "\\\\u\\{[0-9a-fA-F]+\\}", __LINE__, 15, TOK_CODEPOINT);
   re_lex_add(l, "\\\\[bfnrtv]", __LINE__, 15, TOK_C_ESCAPE);
@@ -31,6 +31,7 @@ static void _build_vpa_commons(ReLex* l) {
   re_lex_add(l, "\\.unparse", __LINE__, 15, TOK_HOOK_UNPARSE);
 
   re_lex_add(l, "[a-z_][a-zA-Z0-9_]*", __LINE__, 15, TOK_VPA_ID);
+  re_lex_add(l, "EOF", __LINE__, 15, TOK_PSEUDO_FRAG_EOF);
   re_lex_add(l, "[A-Z][a-zA-Z0-9_]*", __LINE__, 15, TOK_RE_FRAG_ID);
   re_lex_add(l, "\\*[a-z_][a-zA-Z0-9_]*", __LINE__, 15, TOK_MODULE_ID);
   re_lex_add(l, "\\.[a-z_][a-zA-Z0-9_]*", __LINE__, 15, TOK_USER_HOOK_ID);
@@ -139,10 +140,8 @@ static ReLex* _build_re_scope(void) {
   re_lex_add(l, "\\\\w", __LINE__, 15, TOK_RE_WORD_CLASS);
   re_lex_add(l, "\\\\d", __LINE__, 15, TOK_RE_DIGIT_CLASS);
   re_lex_add(l, "\\\\h", __LINE__, 15, TOK_RE_HEX_CLASS);
-  re_lex_add(l, "\\\\a", __LINE__, 15, TOK_RE_BOF);
-  re_lex_add(l, "\\\\z", __LINE__, 15, TOK_RE_EOF);
-  // re_ref = /\\\{/ .begin
-  re_lex_add(l, "\\\\\\{", __LINE__, 15, SCOPE_RE_REF);
+  // re_ref = /#\{/ .begin
+  re_lex_add(l, "#\\{", __LINE__, 15, SCOPE_RE_REF);
   // *re_ops
   _build_re_ops(l);
   // *chars
@@ -163,7 +162,7 @@ static ReLex* _build_charclass_scope(void) {
   return l;
 }
 
-// re_ref = /\\\{/ .begin { ID @re_ref /\}/ .end }
+// re_ref = /#\{/ .begin { ID @re_ref /\}/ .end }
 static ReLex* _build_re_ref_scope(void) {
   ReLex* l = re_lex_new("lex_re_ref", "nest", "");
 
@@ -189,8 +188,7 @@ static ReLex* _build_peg_scope(void) {
   re_lex_add(l, "\\[", __LINE__, 15, SCOPE_BRANCHES);
   // *noise
   _build_noise(l);
-  // /\z/ .end
-  re_lex_add(l, "\\z", __LINE__, 15, ACTION_END);
+  // EOF .end — handled specially in _lex_scope, not by DFA
   return l;
 }
 
@@ -212,12 +210,13 @@ static ReLex* _build_branches_scope(void) {
   return l;
 }
 
-// peg_tag = /:/ .begin { ID @tag_id // .end *noise }
+// peg_tag = /:/ .begin { ID @tag_id *noise /./ .unparse .end }
 static ReLex* _build_peg_tag_scope(void) {
   ReLex* l = re_lex_new("lex_peg_tag", "nest", "");
 
   re_lex_add(l, "[a-z_][a-zA-Z0-9_]*", __LINE__, 15, TOK_TAG_ID);
   _build_noise(l);
+  re_lex_add(l, ".", __LINE__, 15, ACTION_UNPARSE_END);
 
   return l;
 }

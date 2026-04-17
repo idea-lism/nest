@@ -73,6 +73,7 @@ typedef enum {
   TOK_VPA_ID,
   TOK_MODULE_ID,
   TOK_USER_HOOK_ID,
+  TOK_PSEUDO_FRAG_EOF,
   TOK_RE_FRAG_ID,
 
   TOK_RANGE_SEP,
@@ -82,8 +83,6 @@ typedef enum {
   TOK_RE_WORD_CLASS,
   TOK_RE_DIGIT_CLASS,
   TOK_RE_HEX_CLASS,
-  TOK_RE_BOF,
-  TOK_RE_EOF,
 
   TOK_RE_REF,
 

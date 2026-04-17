@@ -85,11 +85,11 @@ TEST(test_emit_ch_multibyte) {
 
 TEST(test_emit_ch_special_codepoints) {
   ReIr ir = re_ir_new();
-  ir = re_ir_emit_ch(ir, LEX_CP_BOF);
-  ir = re_ir_emit_ch(ir, LEX_CP_EOF);
+  ir = re_ir_emit_ch(ir, 0);
+  ir = re_ir_emit_ch(ir, 0x10FFFF);
   assert(darray_size(ir) == 2);
-  assert(ir[0].start == LEX_CP_BOF);
-  assert(ir[1].start == LEX_CP_EOF);
+  assert(ir[0].start == 0);
+  assert(ir[1].start == 0x10FFFF);
   re_ir_free(ir);
 }
 

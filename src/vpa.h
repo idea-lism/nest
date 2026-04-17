@@ -23,6 +23,7 @@ typedef enum {
   VPA_RE, // for literals, we have VpaUnit.re built from string, and action_units = { literal_tok_id }
   VPA_CALL,
   VPA_MACRO_REF,
+  VPA_EOF, // matches end of input
 } VpaUnitKind;
 
 typedef struct {
@@ -55,6 +56,7 @@ typedef struct {
   VpaUnits children;
   bool has_parser;
   bool is_macro;       // parse-time: macro rule, removed after inlining
+  int32_t eof_action;  // action_id for VPA_EOF child, 0 = none
   int32_t source_line; // line in .nest file (for LLVM IR debug info), 0 = unknown
   int32_t source_col;
 } VpaScope;

@@ -105,11 +105,11 @@ TEST(test_epsilon) {
 // --- Special codepoints ---
 
 static void _build_special_cp(Aut* a, IrWriter* w) {
-  aut_transition(a, (TransitionDef){0, 1, -1, -1}, (DebugInfo){1, 1});
+  aut_transition(a, (TransitionDef){0, 1, 0, 0}, (DebugInfo){1, 1});
   aut_transition(a, (TransitionDef){1, 2, 'a', 'z'}, (DebugInfo){1, 5});
   aut_epsilon(a, 2, 3);
   aut_action(a, 3, 1);
-  aut_transition(a, (TransitionDef){3, 4, -2, -2}, (DebugInfo){1, 10});
+  aut_transition(a, (TransitionDef){3, 4, 0x10FFFF, 0x10FFFF}, (DebugInfo){1, 10});
   aut_epsilon(a, 4, 5);
   aut_action(a, 5, 2);
   aut_gen_dfa(a, w, false);
@@ -117,8 +117,8 @@ static void _build_special_cp(Aut* a, IrWriter* w) {
 
 TEST(test_special_codepoints) {
   char* out = _gen_ir(_build_special_cp);
-  assert(strstr(out, "-1"));
-  assert(strstr(out, "-2"));
+  assert(strstr(out, "0"));
+  assert(strstr(out, "1114111"));
   free(out);
 }
 

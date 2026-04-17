@@ -456,7 +456,7 @@ TEST(test_string_literal_scope) {
 static const char DEFINE_REF_NEST[] = "[[vpa]]\n"
                                       "%ignore @space @comment\n"
                                       "%define ID /[a-z_]\\w*/\n"
-                                      "main = { /\\{ID}/ @tok_a *noise }\n"
+                                      "main = { /#{ID}/ @tok_a *noise }\n"
                                       "*noise = { /[ \\t\\n]+/ @space /#[^\\n]*/ @comment /\\n+/ @nl }\n"
                                       "[[peg]]\n"
                                       "main = @tok_a*\n";

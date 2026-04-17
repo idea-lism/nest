@@ -12,7 +12,7 @@
 main = {
   *keywords
   /\d+/ @number
-  /0x\{HEX}+/ @hex
+  /0x#{HEX}+/ @hex
   i/true/ @true
   i/false/ @false
   /[a-zA-Z_]\w*/ @ident
