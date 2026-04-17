@@ -332,7 +332,7 @@ When met `re_ref` sub-scope, insert frag_ref into re_ir, by looking up / create 
 
 The `%define` directives sets the `ReIr` item into the `ReFrags frags`, by looking up / create `Symtab re_frag_names` for the index.
 
-Then in `re_ir_exec(...)` call, we pass the `frags` darray for the lookup.
+Then in `re_ir_validate(...)` call, we pass the `frags` darray for the lookup and report regexp syntax errors.
 
 ### Token & Hook numbering
 

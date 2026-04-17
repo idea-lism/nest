@@ -24,7 +24,7 @@ typedef struct {
   VpaUnitKind kind;
 
   // kind = VPA_RE
-  ReIr re;           // a flattened regexp representation
+  ReIr re;            // regexp representation
   bool binary_mode;  // true if tagged with 'b' mode
 
   // kind = VPA_CALL
@@ -69,6 +69,7 @@ typedef struct {
   Symtab tokens; // owned by ParseState, can be used to lookup token name, start from 1
   Symtab hooks;  // owned by ParseState, can be used to lookup hook name, start from 0
   const char* source_file_name;
+  ReFrags re_frags;
 } VpaGenInput;
 ```
 

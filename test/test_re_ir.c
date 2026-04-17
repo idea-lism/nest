@@ -917,6 +917,27 @@ TEST(test_exec_frag_standalone) {
   darray_del(frags);
 }
 
+// Empty IR
+TEST(test_exec_empty_ir) {
+  ReIr ir = re_ir_new();
+  Aut* aut = aut_new("test", "test");
+  Re* re = re_new(aut);
+  ReIrExecResult res = re_ir_exec(re, ir, "test", NULL);
+  assert(res.err_type == RE_IR_ERR_EMPTY);
+  re_del(re);
+  aut_del(aut);
+  re_ir_free(ir);
+}
+
+TEST(test_exec_null_ir) {
+  Aut* aut = aut_new("test", "test");
+  Re* re = re_new(aut);
+  ReIrExecResult res = re_ir_exec(re, NULL, "test", NULL);
+  assert(res.err_type == RE_IR_ERR_EMPTY);
+  re_del(re);
+  aut_del(aut);
+}
+
 // Extra RPAREN without LPAREN
 TEST(test_exec_paren_extra_rparen) {
   ReIr ir = re_ir_new();
@@ -1024,6 +1045,8 @@ int main(void) {
   RUN(test_exec_frag_mutual_recursion);
   RUN(test_exec_ok_result);
   RUN(test_exec_frag_standalone);
+  RUN(test_exec_empty_ir);
+  RUN(test_exec_null_ir);
   RUN(test_exec_paren_extra_rparen);
   RUN(test_exec_paren_unclosed);
 

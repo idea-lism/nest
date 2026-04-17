@@ -42,6 +42,7 @@ typedef ReIr* ReFrags; // darray of ReIr, indexed by frag_id
 
 typedef enum {
   RE_IR_OK,
+  RE_IR_ERR_EMPTY,
   RE_IR_ERR_RECURSION,       // frag_ref recurses
   RE_IR_ERR_MISSING_FRAG_ID, // frags size too small or frags[frag_id] is empty
   RE_IR_ERR_PAREN_MISMATCH,  // too many right-paren, or missing right-paren at end

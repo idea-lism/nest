@@ -135,6 +135,7 @@ re_ref = /\\\{/ .begin {
 }
 
 charclass = /\[\^?/ .set_cc_kind .begin {
+  "/" .unparse .end # populate error to regexp
   /\]/ .end
   /-/ @range_sep
   *chars

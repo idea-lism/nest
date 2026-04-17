@@ -190,6 +190,9 @@ static void _exec_ir(ExecCtx* ctx, ReIr ir) {
 }
 
 ReIrExecResult re_ir_exec(Re* re, ReIr ir, const char* source_file_name, ReFrags frags) {
+  if (!ir || darray_size(ir) == 0) {
+    return (ReIrExecResult){.err_type = RE_IR_ERR_EMPTY};
+  }
   ExecCtx ctx = {
       .re = re,
       .source_file_name = source_file_name,
