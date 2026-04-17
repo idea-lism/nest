@@ -11,4 +11,16 @@
 ------
 main
   value
-    @number
+    object
+      @lbrace
+      pair
+        @ident
+        @colon
+        value
+          @number
+      pair
+        @ident
+        @colon
+        value
+          @number
+      @rbrace

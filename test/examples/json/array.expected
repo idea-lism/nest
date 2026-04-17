@@ -9,4 +9,12 @@
 ------
 main
   value
-    @number
+    array
+      @lbracket
+      value
+        @number
+      value
+        @number
+      value
+        @number
+      @rbracket

@@ -53,6 +53,7 @@ Layout
 ```c
 typedef union {
   int64_t col;
+  uint64_t tag_bits; // when calling sub-rule we also need to push tag_bits
   void* ret_site;
 } StackSlot;
 
@@ -73,12 +74,21 @@ Operations
   stack--;
 
 // call sub-rule
+  { if caller has tag_bits }
+    stack++;
+    stack->tag_bits = tag_bits;
+  { end if }
   stack++;
   stack->ret_site = &&ret_label;
   stack++;
-  stack->col = col
+  stack->col = col;
+  tag_bits = 0;
   br {scoped_rule_name};
 ret_label:
+  { if caller has tag_bits }
+    tag_bits = stack->tag_bits;
+    stack--;
+  { end if }
   parsed = %ret;
 
 // call return (generated at the end of peg_ir_emit_ret)
@@ -239,3 +249,12 @@ end_bb:
 - Helper functions are real `define internal` helper functions in LLVM IR.
 - No fabricated extra features / conditionals / checks / vars / functions that's not in spec -- if need, ask first.
 - For shared context registers / allocas, the names should be readable.
+
+# Tests
+
+In `test_peg_ir.c`, Create irwriter, emit:
+
+- `peg_ir_emit_helpers`
+- `peg_ir_emit_gep_helpers`
+
+And expose them as `define` instead of `define internal`, so we can test all generated helper functions.

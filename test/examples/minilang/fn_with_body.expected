@@ -22,6 +22,8 @@ main
       @lparen
       param
         @ident
+      param
+        @ident
       @rparen
       body
         @lparen

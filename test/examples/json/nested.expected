@@ -19,4 +19,29 @@
 ------
 main
   value
-    @number
+    object
+      @lbrace
+      pair
+        @ident
+        @colon
+        value
+          array
+            @lbracket
+            value
+              @number
+            value
+              @number
+            @rbracket
+      pair
+        @ident
+        @colon
+        value
+          object
+            @lbrace
+            pair
+              @ident
+              @colon
+              value
+                @number
+            @rbrace
+      @rbrace

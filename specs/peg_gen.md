@@ -124,7 +124,7 @@ To access memoize table:
 When memoize_mode=`shared` mode, we also have:
 
 - `define internal @bit_test(ptr table, i64 col, i64 col_size, i64 seg_offset, i64 rule_bit)`: Test rule's bit in the segment. Returns `i1` (1 = may match, 0 = proven fail).
-  - `seg_offset = seg_idx * sizeof(i64)`
+  - `seg_offset = segment_index * sizeof(i64)`
 - `define internal @bit_deny(ptr table, i64 col, i64 col_size, i64 seg_offset, i64 rule_bit)`: Clear rule's bit (cache failure).
 - `define internal @bit_exclude(ptr table, i64 col, i64 col_size, i64 seg_offset, i64 segment_mask, i64 rule_bit)`: Keep only this rule's bit, zero out others in segment (cache exclusive match).
 
@@ -151,11 +151,11 @@ typedef struct {
 
   int64_t lhs_bit_index;
   int64_t lhs_bit_mask;
-  int64_t lhs_row;
+  int64_t lhs_row; // >= 0: call lhs (read slot), -1: no link, -2: term lhs (advance by 1, check lhs_term_id)
 
   int64_t rhs_bit_index;
   int64_t rhs_bit_mask;
-  int64_t rhs_row;
+  int64_t rhs_row; // >= 0: call separator (read slot), -1: no separator, -2: term separator (advance by 1)
 } PegLink;
 
 typedef Node_{rule_name} {
@@ -219,9 +219,10 @@ bool {prefix}_has_elem(PegLink* l) {
 }
 
 void {prefix}_get_next(PegLink* l) {
-  int32_t lhs_size = ...
-  int32_t rhs_size = ...
-  l->col += lhs_size + rhs_size;
+  int32_t lhs_size = (l->lhs_row < 0) ? 1 : $col[l->lhs_row];
+  l->col += lhs_size;
+  if (l->rhs_row == -2) l->col += 1;          // term separator
+  else if (l->rhs_row >= 0) l->col += $col[l->rhs_row]; // call separator
 }
 
 PegRef {prefix}_get_lhs(PegLink* l) {

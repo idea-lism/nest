@@ -116,20 +116,33 @@ IrLabel peg_ir_emit_call(PegIrCtx* ctx, const char* callee_name) {
 
   darray_push(ctx->ret_labels, ret_label);
 
-  // stack++; stack->ret_site = &&ret_label
   IrVal sp = irwriter_load(w, "ptr", ctx->stack_ptr);
-  irwriter_rawf(w, "  %%r%d = getelementptr i64, ptr %%r%d, i64 1\n", irwriter_next_reg(w), (int)sp);
+
+  // { if caller has tag_bits } stack++; stack->tag_bits = tag_bits
+  IrVal sp_top = sp;
+  if (ctx->has_tags) {
+    irwriter_rawf(w, "  %%r%d = getelementptr i64, ptr %%r%d, i64 1\n", irwriter_next_reg(w), (int)sp_top);
+    sp_top = (IrVal)(irwriter_next_reg(w) - 1);
+    IrVal tb_val = irwriter_load(w, "i64", ctx->tag_bits);
+    irwriter_store(w, "i64", tb_val, sp_top);
+  }
+
+  // stack++; stack->ret_site = &&ret_label
+  irwriter_rawf(w, "  %%r%d = getelementptr i64, ptr %%r%d, i64 1\n", irwriter_next_reg(w), (int)sp_top);
   IrVal sp1 = (IrVal)(irwriter_next_reg(w) - 1);
   irwriter_rawf(w, "  store ptr blockaddress(@%s, %%", ctx->fn_name);
   irwriter_emit_label(w, ret_label);
   irwriter_rawf(w, "), ptr %%r%d, align 8\n", (int)sp1);
 
-  // stack++; stack->col = col
+  // stack++; stack->col = col; tag_bits = 0
   irwriter_rawf(w, "  %%r%d = getelementptr i64, ptr %%r%d, i64 1\n", irwriter_next_reg(w), (int)sp1);
   IrVal sp2 = (IrVal)(irwriter_next_reg(w) - 1);
   irwriter_store(w, "ptr", sp2, ctx->stack_ptr);
   IrVal col_val = irwriter_load(w, "i64", ctx->col);
   irwriter_store(w, "i64", col_val, sp2);
+  if (ctx->has_tags) {
+    irwriter_store(w, "i64", irwriter_imm_int(w, 0), ctx->tag_bits);
+  }
 
   // branch to callee
   irwriter_rawf(w, "  br label %%%s\n", callee_name);
@@ -143,6 +156,12 @@ static void _emit_call(PegIrCtx* ctx, ScopedUnit* unit, IrLabel fail_label) {
 
   // ret_label: resume after call
   irwriter_bb_at(w, ret_label);
+  // { if caller has tag_bits } restore tag_bits; stack--
+  if (ctx->has_tags) {
+    IrVal tb_restored = irwriter_load(w, "i64", irwriter_load(w, "ptr", ctx->stack_ptr));
+    _emit_discard(ctx);
+    irwriter_store(w, "i64", tb_restored, ctx->tag_bits);
+  }
   IrVal parsed = irwriter_load(w, "i64", ctx->parse_result);
   IrVal failed = irwriter_icmp(w, "slt", "i64", parsed, irwriter_imm_int(w, 0));
   IrLabel call_ok_bb = irwriter_label(w);

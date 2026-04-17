@@ -958,6 +958,8 @@ static NodeField _build_call_node_field(PegAnalyzeInput* input, ScopeClosure* cl
       if (rhs_sr) {
         nf.rhs_row = _slot_row(cl, rhs_sr);
       }
+    } else if (u && u->interlace_rhs_kind == PEG_TERM) {
+      nf.rhs_row = -2; // sentinel: term separator, rhs_size = 1
     }
   } else {
     ScopedRule* callee_sr =

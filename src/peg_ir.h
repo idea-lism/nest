@@ -21,6 +21,7 @@ typedef struct {
   IrVal stack_ptr;
   IrVal parse_result;
   IrVal tag_bits;
+  bool has_tags; // whether current rule has tag bits (controls stack push/pop around calls)
   IrVal parsed_tokens;
   IrVal token_size;
 
