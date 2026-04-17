@@ -61,7 +61,7 @@ TokenChunk* tt_push_assoc(TokenTree* tree, int32_t scope_id);
 TokenChunk* tt_pop(TokenTree* tree, int32_t cp_end);
 
 // current chunk token count
-int32_t tt_current_size(TokenTree* tree);
+int64_t tt_current_size(TokenTree* tree);
 // get current chunk
 TokenChunk* tt_current(TokenTree* tree);
 // alloc sizeof_col * col_token_size to value

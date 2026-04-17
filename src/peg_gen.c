@@ -425,8 +425,7 @@ static void _memoize_read_none(PegIrCtx* ctx, PegIrScopeCtx* sc, ScopedRule* sr,
 static void _memoize_read_shared(PegIrCtx* ctx, PegIrScopeCtx* sc, ScopedRule* sr, MemoizeLabels* ml) {
   IrWriter* w = ctx->ir_writer;
   IrVal col_val = irwriter_load(w, "i64", ctx->col);
-  IrVal n_tok_i64 = irwriter_sext(w, "i32", ctx->token_size, "i64");
-  IrVal in_range = irwriter_icmp(w, "slt", "i64", col_val, n_tok_i64);
+  IrVal in_range = irwriter_icmp(w, "slt", "i64", col_val, ctx->token_size);
   IrLabel memoize_ok = irwriter_label(w);
   irwriter_br_cond(w, in_range, memoize_ok, ml->material_parse);
   irwriter_bb_at(w, memoize_ok);
@@ -458,8 +457,7 @@ static void _memoize_read_naive(PegIrCtx* ctx, PegIrScopeCtx* sc, ScopedRule* sr
   (void)sr;
   IrWriter* w = ctx->ir_writer;
   IrVal col_val = irwriter_load(w, "i64", ctx->col);
-  IrVal n_tok_i64 = irwriter_sext(w, "i32", ctx->token_size, "i64");
-  IrVal in_range = irwriter_icmp(w, "slt", "i64", col_val, n_tok_i64);
+  IrVal in_range = irwriter_icmp(w, "slt", "i64", col_val, ctx->token_size);
   IrLabel memoize_ok = irwriter_label(w);
   irwriter_br_cond(w, in_range, memoize_ok, ml->material_parse);
   irwriter_bb_at(w, memoize_ok);
@@ -587,7 +585,7 @@ static void _gen_scope_ir(IrWriter* w, ScopeClosure* cl, int memoize_mode) {
 
   irwriter_declare(w, "ptr", "tt_current", "ptr");
   irwriter_declare(w, "ptr", "tt_alloc_memoize_table", "ptr, i64");
-  irwriter_declare(w, "i32", "tt_current_size", "ptr");
+  irwriter_declare(w, "i64", "tt_current_size", "ptr");
 
   char* fn_name = _fmt("parse_%s", cl->scope_name);
   irwriter_define_startf(w, fn_name, "{i64, i64} @%s(ptr %%tt, ptr %%stack_ptr_in)", fn_name);
@@ -610,7 +608,7 @@ static void _gen_scope_ir(IrWriter* w, ScopeClosure* cl, int memoize_mode) {
   IrVal tag_bits = irwriter_alloca(w, "i64");
   irwriter_store(w, "i64", irwriter_imm_int(w, 0), tag_bits);
 
-  IrVal token_size = irwriter_call_retf(w, "i32", "tt_current_size", "ptr %%tt");
+  IrVal token_size = irwriter_call_retf(w, "i64", "tt_current_size", "ptr %%tt");
 
   irwriter_rawf(w, "  %%r%d = getelementptr i8, ptr %%r%d, i64 24\n", irwriter_next_reg(w), (int)tc);
   IrVal tokens = irwriter_load(w, "ptr", (IrVal)(irwriter_next_reg(w) - 1));

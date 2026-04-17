@@ -100,7 +100,7 @@ TokenChunk* tt_pop(TokenTree* tree, int32_t cp_end) {
   return tree->current;
 }
 
-int32_t tt_current_size(TokenTree* tree) { return darray_size(tree->current->tokens); }
+int64_t tt_current_size(TokenTree* tree) { return (int64_t)darray_size(tree->current->tokens); }
 
 TokenChunk* tt_current(TokenTree* tree) { return tree->current; }
 

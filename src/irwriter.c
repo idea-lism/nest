@@ -25,6 +25,10 @@ struct IrWriter {
   int in_switch;
   char* entry_prologue;
   PendingLoc* locs;
+  int last_dbg_id;
+  int32_t last_dbg_line;
+  int32_t last_dbg_col;
+  int last_dbg_scope_id;
   int dbg_file_id;
   int dbg_flags_emitted;
   int switch_dbg_id;
@@ -71,6 +75,10 @@ IrWriter* irwriter_new(FILE* out, const char* target_triple) {
   w->target_triple = target_triple;
   symtab_init(&w->decls, 0);
   w->dbg_line = -1;
+  w->last_dbg_id = -1;
+  w->last_dbg_line = -1;
+  w->last_dbg_col = -1;
+  w->last_dbg_scope_id = -1;
   w->imms = darray_new(1, 1);
   w->imms[0] = '\0';
   w->labels = darray_new(1, 1);
@@ -134,8 +142,16 @@ static int _reserve_dbg(IrWriter* w) {
   if (w->dbg_line < 0) {
     return -1;
   }
+  if (w->last_dbg_id >= 0 && w->last_dbg_line == w->dbg_line && w->last_dbg_col == w->dbg_col &&
+      w->last_dbg_scope_id == w->dbg_sub_id) {
+    return w->last_dbg_id;
+  }
   int id = w->dbg_next_id++;
   _push_loc(w, id, w->dbg_line, w->dbg_col, w->dbg_sub_id);
+  w->last_dbg_id = id;
+  w->last_dbg_line = w->dbg_line;
+  w->last_dbg_col = w->dbg_col;
+  w->last_dbg_scope_id = w->dbg_sub_id;
   return id;
 }
 
@@ -173,6 +189,10 @@ void irwriter_define_startf(IrWriter* w, const char* name, const char* sig_fmt, 
 
   w->reg = 0;
   w->label = 0;
+  w->last_dbg_id = -1;
+  w->last_dbg_line = -1;
+  w->last_dbg_col = -1;
+  w->last_dbg_scope_id = -1;
   w->labels = darray_grow(w->labels, 1);
   free(w->entry_prologue);
   w->entry_prologue = NULL;
@@ -187,7 +207,7 @@ void irwriter_define_startf(IrWriter* w, const char* name, const char* sig_fmt, 
 
 void irwriter_define_end(IrWriter* w) {
   fprintf(w->out, "}\n\n");
-  for (int i = 0; i < (int)darray_size(w->locs); i++) {
+  for (size_t i = 0; i < darray_size(w->locs); i++) {
     PendingLoc* l = &w->locs[i];
     fprintf(w->out, "!%d = !DILocation(line: %d, column: %d, scope: !%d)\n", l->id, l->line, l->col, l->scope_id);
   }
