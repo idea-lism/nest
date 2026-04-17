@@ -24,7 +24,7 @@ Both modes must produce identical output.
 ### Expected file format
 
 ```
-<stderr lines>
+<errors lines>
 ------
 <token list>
 ------
@@ -33,7 +33,7 @@ Both modes must produce identical output.
 
 Three sections separated by a line containing exactly `------`.
 
-1. **stderr** — diagnostic output (may be empty, separator still required).
+1. **errors** — tokenizer / syntax / post_process error output (may be empty, separator still required).
 2. **Token list** — one token per line, indented by VPA scope depth.
    Each line: `<indent><token_name> "<matched text>"`.
 3. **Parse tree** — tree defined by PEG rules, indented by nesting depth.
@@ -84,8 +84,7 @@ main
 
 `nest c` produces `<prefix>.c` which must print both sections:
 the scope-indented token list, then `------`, then the indented parse tree.
-The `------` separator between stderr and the token list is also printed
-(to stdout), so the combined captured output matches the expected format directly.
+The `------` separator between errors and the token list is also printed, so the combined captured output matches the expected format directly.
 
 ### Test runner
 
@@ -96,7 +95,7 @@ For each directory, for each memoize mode (`naive`, `shared`):
 1. Run `nest c grammar.nest -p <name> -m <mode>` (prefix = directory name).
 2. Compile `<name>.c` + `<name>.ll` with clang.
 3. For each `*.input` file, run the binary with the file's contents as `argv[1]`.
-4. Diff combined output (stderr then stdout) against the matching `*.expected` file.
+4. Diff combined output against the matching `*.expected` file.
 5. Report pass/fail per case; exit non-zero if anything failed.
 
 Temp build artifacts go in a scratch directory and are cleaned up.
