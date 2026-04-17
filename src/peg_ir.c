@@ -9,12 +9,20 @@
 
 static void _emit_call_save(PegIrCtx* ctx) {
   IrWriter* w = ctx->ir_writer;
-  irwriter_call_void_fmtf(w, "save", "ptr %%r%d, ptr %%r%d", (int)ctx->stack_ptr, (int)ctx->col);
+  irwriter_raw(w, "  call void @save(ptr ");
+  irwriter_emit_val(w, ctx->stack_ptr);
+  irwriter_raw(w, ", ptr ");
+  irwriter_emit_val(w, ctx->col);
+  irwriter_raw(w, ")\n");
 }
 
 static void _emit_call_restore(PegIrCtx* ctx) {
   IrWriter* w = ctx->ir_writer;
-  irwriter_call_void_fmtf(w, "restore", "ptr %%r%d, ptr %%r%d", (int)ctx->stack_ptr, (int)ctx->col);
+  irwriter_raw(w, "  call void @restore(ptr ");
+  irwriter_emit_val(w, ctx->stack_ptr);
+  irwriter_raw(w, ", ptr ");
+  irwriter_emit_val(w, ctx->col);
+  irwriter_raw(w, ")\n");
 }
 
 // discard: stack-- without restoring col

@@ -598,8 +598,9 @@ static void _gen_scope_ir(IrWriter* w, ScopeClosure* cl, int memoize_mode) {
   IrVal peg_table =
       irwriter_call_retf(w, "ptr", "tt_alloc_memoize_table", "ptr %%r%d, i64 %lld", (int)tc, (long long)sizeof_col);
 
-  IrVal col_ptr = irwriter_alloca(w, "i64");
-  irwriter_store(w, "i64", irwriter_imm_int(w, 0), col_ptr);
+  irwriter_raw(w, "  %col = alloca i64\n");
+  IrVal col = irwriter_imm(w, "%col");
+  irwriter_store(w, "i64", irwriter_imm_int(w, 0), col);
   IrVal stack_ptr = irwriter_alloca(w, "ptr");
   irwriter_store(w, "ptr", irwriter_imm(w, "%stack_ptr_in"), stack_ptr);
   IrVal parse_result = irwriter_alloca(w, "i64");
@@ -619,7 +620,7 @@ static void _gen_scope_ir(IrWriter* w, ScopeClosure* cl, int memoize_mode) {
       .fn_name = fn_name,
       .tc = tc,
       .tokens = tokens,
-      .col = col_ptr,
+      .col = col,
       .token_size = token_size,
       .stack_ptr = stack_ptr,
       .parse_result = parse_result,
@@ -673,7 +674,7 @@ static void _gen_scope_ir(IrWriter* w, ScopeClosure* cl, int memoize_mode) {
     // --- parse success ---
     irwriter_bb_at(w, parse_success);
     IrVal start_col = irwriter_call_retf(w, "i64", "top", "ptr %%r%d", (int)stack_ptr);
-    IrVal cur_col = irwriter_load(w, "i64", col_ptr);
+    IrVal cur_col = irwriter_load(w, "i64", col);
     IrVal pt = irwriter_binop(w, "sub", "i64", cur_col, start_col);
     irwriter_store(w, "i64", pt, parsed_tokens);
 
@@ -688,7 +689,7 @@ static void _gen_scope_ir(IrWriter* w, ScopeClosure* cl, int memoize_mode) {
     // --- parse fail ---
     irwriter_bb_at(w, parse_fail);
     IrVal fail_col = irwriter_call_retf(w, "i64", "top", "ptr %%r%d", (int)stack_ptr);
-    irwriter_store(w, "i64", fail_col, col_ptr);
+    irwriter_store(w, "i64", fail_col, col);
     memoize_deny(&ctx, &sc, sr, fail_col);
     irwriter_br(w, ml.fail_bb);
 
@@ -704,7 +705,7 @@ static void _gen_scope_ir(IrWriter* w, ScopeClosure* cl, int memoize_mode) {
 
   irwriter_bb_at(w, final_ret);
   IrVal fr = irwriter_load(w, "i64", parse_result);
-  IrVal fc = irwriter_load(w, "i64", col_ptr);
+  IrVal fc = irwriter_load(w, "i64", col);
   IrVal r0 = irwriter_insertvalue(w, "{i64, i64}", -1, "i64", fr, 0);
   IrVal r1 = irwriter_insertvalue(w, "{i64, i64}", r0, "i64", fc, 1);
   irwriter_ret(w, "{i64, i64}", r1);

@@ -28,7 +28,7 @@ typedef struct {
 } PegIrCtx;
 ```
 
-- `peg_ir_emit_parse(ctx, ScopedUnit* unit, IrVal fail_label)`: emit IR for ScopedUnit tree (see definition in [PEG spec](peg.md#scope-closures)).
+- `peg_ir_emit_parse(ctx, ScopedUnit* unit, IrVal fail_label)`: emit IR for ScopedUnit tree (see definition in [PEG analyze](peg_analyze.md#scope-closures)).
   - by unit's kind, dispatch to different `gen` parts as described below
   - if unit.tag_bit_local_offset >= 0, also `%tag_bits |= {1 << (unit.tag_bit_local_offset + ctx.tag_bit_offset)}`
 - `peg_ir_emit_call(ctx, name)` pushes ret_site, then col (details see below)
@@ -38,7 +38,7 @@ typedef struct {
   - `void @save(ptr %stack_ptr, ptr %col)`
   - `void @restore(ptr %stack_ptr, ptr %col)`
   - `i64 @top(ptr %stack_ptr)`: get the top stored col (but not update `%col`)
-- `peg_ir_emit_bit_helpers(irwriter)`: emit shared-mode bit helper definitions: `@bit_test`, `@bit_deny`, `@bit_exclude` as defined in [PEG](peg.md)
+- `peg_ir_emit_bit_helpers(irwriter)`: emit shared-mode bit helper definitions: `@bit_test`, `@bit_deny`, `@bit_exclude` as defined in [PEG Gen](peg_gen.md)
 - `peg_ir_emit_gep_helpers(irwriter)`: emit GEP and tag writeback helper definitions
   - `ptr @gep_slot(ptr %table, i64 %col, i64 %sizeof_col, i64 %slot_byte_offset)`: compute pointer to memoize slot
   - `ptr @gep_tag(ptr %table, i64 %col, i64 %sizeof_col, i64 %tag_byte_offset)`: compute pointer to tag bits bucket
