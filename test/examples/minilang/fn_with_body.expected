@@ -24,3 +24,16 @@ main
         @ident
       @rparen
       body
+        @lparen
+        stmt
+          ret_stmt
+            @lit.return
+            expr
+              term
+                factor
+                  @ident
+              term
+                factor
+                  @ident
+            @semi
+        @rparen

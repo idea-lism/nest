@@ -980,9 +980,21 @@ static void _build_child_fields(PegAnalyzeInput* input, ScopeClosure* cl, ScopeC
     if (u->kind == PEG_TERM) {
       darray_push(*out, _build_term_node_field(input, cl, all_closures, n_closures, fd, u->id, is_link, false,
                                                parent_rule_name, multiplier_num_ptr));
+      // link field followed by more children: advance cursor past repetition via wrapper slot
+      if (is_link && i < child_size - 1) {
+        NodeField* last = &(*out)[darray_size(*out) - 1];
+        last->advance = NODE_ADVANCE_SLOT;
+        last->advance_slot_row = last->ref_row;
+      }
     } else if (u->kind == PEG_CALL) {
       darray_push(
           *out, _build_call_node_field(input, cl, fd, u->id, is_link, false, u, parent_rule_name, multiplier_num_ptr));
+      // link field followed by more children: advance cursor past repetition via wrapper slot
+      if (is_link && i < child_size - 1) {
+        NodeField* last = &(*out)[darray_size(*out) - 1];
+        last->advance = NODE_ADVANCE_SLOT;
+        last->advance_slot_row = last->ref_row;
+      }
     } else if (u->kind == PEG_BRANCHES) {
       for (size_t j = 0; j < darray_size(u->children); j++) {
         PegUnit* branch = &u->children[j];

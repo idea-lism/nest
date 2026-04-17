@@ -182,7 +182,9 @@ static void _gen_loader(HeaderWriter* hw, const char* rule_name, RuleScopeEntry*
   hdwriter_printf(hw, "static inline Node_%s %s_load_%s(PegRef ref)", rule_name, prefix, rule_name);
   hdwriter_begin(hw);
   hdwriter_printf(hw, "Node_%s $1 = {0};\n", rule_name);
-  hdwriter_puts(hw, "int64_t* $table = (int64_t*)ref.tc->value;\n");
+  if (has_tags) {
+    hdwriter_puts(hw, "int64_t* $table = (int64_t*)ref.tc->value;\n");
+  }
   hdwriter_puts(hw, "switch (ref.tc->scope_id)");
   hdwriter_begin(hw);
   for (int32_t e = 0; e < used_in_closures_count; e++) {
