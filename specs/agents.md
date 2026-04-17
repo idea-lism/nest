@@ -52,7 +52,7 @@ Adding new source files:
 
 Ustr
 ```c
-// typical use of ustr.h
+// typical use, ustr_from_file, ustr_iter ... of ustr.h
 ```
 
 Darray

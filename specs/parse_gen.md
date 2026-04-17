@@ -30,11 +30,10 @@ src/parse_gen.c
 
 ## Parse gen
 
-1. Create `src/parse.h` to define all token ids (action_id in automata), also scope ids are token ids.
-2. Create `src/parse_gen.c`, which compiles to a build-time cmd
-  - mimic the struct of `specs/bootstrap.nest`, but with hand-written lex helper calls
-  - uses the lex helpers to generate DFAs (one DFA per scope) for the whole source file
-  - use the token definition in `src/parse.h` for lex actions.
+Create `src/parse_gen.c`, which compiles to a build-time cmd
+- mimic the struct of `specs/bootstrap.nest`, but with hand-written lex helper calls
+- uses the lex helpers to generate DFAs (one DFA per scope) for the whole source file
+- use the token definition in `src/parse.h` for lex actions.
 
 Regexps that having an `.unparse .end` hook should generate a `TOK_UNPARSE_END` after it.
 

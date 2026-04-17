@@ -32,10 +32,10 @@ Regexp don't handle EOF or other boundaries, because they are zero width (can st
 
 # Predefined char groups
 
-- `re_append_group_s(re)`
-- `re_append_group_d(re)`
-- `re_append_group_w(re)`
-- `re_append_group_dot(re)`
+- `re_append_group_s(re_range)`
+- `re_append_group_d(re_range)`
+- `re_append_group_w(re_range)`
+- `re_append_group_dot(re_range)`
 
 # Predefined escape
 

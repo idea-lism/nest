@@ -223,7 +223,8 @@ static void _gen_dispatch(VpaGenInput* input, IrWriter* w, Actions actions) {
 
   irwriter_define_startf(
       w, "vpa_dispatch",
-      "void @vpa_dispatch(i64 %%action_id_i64, i8* %%tt, i64 %%cp_start_i64, i64 %%cp_size_i64, i8* %%ctx)");
+      "void @vpa_dispatch(i64 %%action_id_i64, i8* %%tt, i64 %%cp_start_i64, i64 %%cp_size_i64, i8* %%ctx, "
+      "ptr %%stack_ptr)");
   irwriter_bb(w);
   irwriter_dbg(w, 0, 0);
   irwriter_rawf(w, "  %%action_id = trunc i64 %%action_id_i64 to i32\n");
@@ -271,9 +272,7 @@ static void _gen_dispatch(VpaGenInput* input, IrWriter* w, Actions actions) {
             int fn_len = snprintf(NULL, 0, "parse_%s", actions[i].end_scope_name);
             char* fn_name = malloc((size_t)fn_len + 1);
             snprintf(fn_name, (size_t)fn_len + 1, "parse_%s", actions[i].end_scope_name);
-            IrVal stack_buf = (IrVal)(irwriter_next_reg(w));
-            irwriter_rawf(w, "  %%r%d = alloca i64, i32 1024\n", (int)stack_buf);
-            irwriter_call_retf(w, "{i64, i64}", fn_name, "ptr %%tt, ptr %%r%d", (int)stack_buf);
+            irwriter_call_retf(w, "{i64, i64}", fn_name, "ptr %%tt, ptr %%stack_ptr");
             free(fn_name);
           }
           // pop scope + add scope-ref to parent
@@ -354,12 +353,15 @@ static void _gen_vpa_lex(VpaGenInput* input, IrWriter* w, const char* prefix) {
   } else {
     read_cp_name = strdup("vpa_rt_read_cp");
   }
-  irwriter_declare(w, "i32", read_cp_name, "i8*, i32");
+  irwriter_declare(w, "i32", read_cp_name, "i8*");
+  irwriter_declare(w, "void", "ustr_iter_seek", "i8*, i32");
   irwriter_declare(w, "i32", "tt_depth", "i8*");
   irwriter_declare(w, "void", "tt_add", "i8*, i32, i32, i32, i32");
   irwriter_declare(w, "void", "tt_mark_newline", "i8*, i32");
 
-  irwriter_define_startf(w, "vpa_lex", "void @vpa_lex(i8* %%src, i64 %%len_i64, i8* %%tt, i8* %%errors, i8* %%ctx)");
+  irwriter_define_startf(w, "vpa_lex",
+                         "void @vpa_lex(i8* %%src, i64 %%len_i64, i8* %%tt, i8* %%errors, i8* %%ctx, "
+                         "ptr %%stack_ptr)");
 
   irwriter_bb(w);
   irwriter_dbg(w, 0, 0);
@@ -407,7 +409,7 @@ static void _gen_vpa_lex(VpaGenInput* input, IrWriter* w, const char* prefix) {
   // --- read cp and run scope-switched DFA ---
   irwriter_bb_at(w, read_bb);
   IrVal cp_off2 = irwriter_load(w, "i32", cp_off_ptr);
-  IrVal cp = irwriter_call_retf(w, "i32", read_cp_name, "i8* %%src, i32 %%r%d", (int)cp_off2);
+  IrVal cp = irwriter_call_retf(w, "i32", read_cp_name, "i8* %%src");
 
   // mark newline in bitmap
   IrLabel nl_bb = irwriter_label(w);
@@ -573,8 +575,8 @@ static void _gen_vpa_lex(VpaGenInput* input, IrWriter* w, const char* prefix) {
       IrVal eof_aid = irwriter_imm_int(w, input->scopes[si].eof_action);
       IrVal ea64 = irwriter_sext(w, "i32", eof_aid, "i64");
       IrVal ets64 = irwriter_sext(w, "i32", eof_tok_start, "i64");
-      irwriter_call_void_fmtf(w, "vpa_dispatch", "i64 %%r%d, i8* %%tt, i64 %%r%d, i64 0, i8* %%ctx", (int)ea64,
-                              (int)ets64);
+      irwriter_call_void_fmtf(w, "vpa_dispatch", "i64 %%r%d, i8* %%tt, i64 %%r%d, i64 0, i8* %%ctx, ptr %%stack_ptr",
+                              (int)ea64, (int)ets64);
       irwriter_br(w, done_bb);
     }
     free(eof_case_bbs);
@@ -587,14 +589,16 @@ static void _gen_vpa_lex(VpaGenInput* input, IrWriter* w, const char* prefix) {
   IrVal la64 = irwriter_sext(w, "i32", last_action, "i64");
   IrVal ts64 = irwriter_sext(w, "i32", tok_start, "i64");
   IrVal sz64 = irwriter_sext(w, "i32", tok_size, "i64");
-  irwriter_call_void_fmtf(w, "vpa_dispatch", "i64 %%r%d, i8* %%tt, i64 %%r%d, i64 %%r%d, i8* %%ctx", (int)la64,
-                          (int)ts64, (int)sz64);
+  irwriter_call_void_fmtf(w, "vpa_dispatch", "i64 %%r%d, i8* %%tt, i64 %%r%d, i64 %%r%d, i8* %%ctx, ptr %%stack_ptr",
+                          (int)la64, (int)ts64, (int)sz64);
 
   irwriter_store(w, "i32", match_off, cp_off_ptr);
   irwriter_store(w, "i32", match_off, token_start_ptr);
   irwriter_store(w, "i32", irwriter_imm_int(w, 0), dfa_state_ptr);
   irwriter_store(w, "i32", irwriter_imm_int(w, 0), last_action_ptr);
   irwriter_store(w, "i32", match_off, last_match_off_ptr);
+  // seek iterator to backtrack position
+  irwriter_call_void_fmtf(w, "ustr_iter_seek", "i8* %%src, i32 %%r%d", (int)match_off);
 
   IrVal still_going = irwriter_icmp(w, "slt", "i32", match_off, irwriter_imm(w, "%len"));
   irwriter_br_cond(w, still_going, loop_bb, done_bb);
@@ -622,6 +626,9 @@ static void _gen_parse_entry(IrWriter* w, const char* prefix, int32_t main_rule_
   irwriter_declare(w, "i32", "ustr_size", "i8*");
   irwriter_declare(w, "{i64, i64}", "parse_main", "ptr, ptr");
   irwriter_declare(w, "ptr", "tt_current", "ptr");
+  irwriter_declare(w, "ptr", "malloc", "i64");
+  irwriter_declare(w, "void", "free", "ptr");
+  irwriter_declare(w, "void", "ustr_iter_init", "i8*, i8*, i32");
   // {prefix}_parse — use sret for ABI compatibility with C
   int parse_name_len = snprintf(NULL, 0, "%s_parse", prefix);
   char* parse_name = malloc((size_t)parse_name_len + 1);
@@ -637,12 +644,14 @@ static void _gen_parse_entry(IrWriter* w, const char* prefix, int32_t main_rule_
   IrVal tt = irwriter_call_retf(w, "ptr", "tt_tree_new", "ptr %%src");
   irwriter_rawf(w, "  %%r%d = inttoptr i64 %%ctx_i64 to ptr\n", irwriter_next_reg(w));
   IrVal ctx_ptr = (IrVal)(irwriter_next_reg(w) - 1);
-  irwriter_call_void_fmtf(w, "vpa_lex", "ptr %%src, i64 %%r%d, ptr %%r%d, ptr null, ptr %%r%d", (int)len64, (int)tt,
-                          (int)ctx_ptr);
+  // allocate UstrIter on stack as userdata for vpa_lex
+  IrVal iter_ptr = irwriter_alloca(w, "{ptr, ptr, i32, i32, i32}");
+  irwriter_call_void_fmtf(w, "ustr_iter_init", "i8* %%r%d, i8* %%src, i32 0", (int)iter_ptr);
+  // malloc 1M stack for PEG backtracking
+  IrVal stack_buf = irwriter_call_retf(w, "ptr", "malloc", "i64 1048576");
+  irwriter_call_void_fmtf(w, "vpa_lex", "ptr %%r%d, i64 %%r%d, ptr %%r%d, ptr null, ptr %%r%d, ptr %%r%d",
+                          (int)iter_ptr, (int)len64, (int)tt, (int)ctx_ptr, (int)stack_buf);
   // vpa_lex sets root chunk scope_id; now call parse_main
-  // call parse_main on the root scope
-  IrVal stack_buf = (IrVal)(irwriter_next_reg(w));
-  irwriter_rawf(w, "  %%r%d = alloca i64, i32 1024\n", (int)stack_buf);
   IrVal parse_ret = irwriter_call_retf(w, "{i64, i64}", "parse_main", "ptr %%r%d, ptr %%r%d", (int)tt, (int)stack_buf);
   IrVal parse_end_col = irwriter_extractvalue(w, "{i64, i64}", parse_ret, 0);
   IrVal tc = irwriter_call_retf(w, "ptr", "tt_current", "ptr %%r%d", (int)tt);
@@ -677,6 +686,7 @@ static void _gen_parse_entry(IrWriter* w, const char* prefix, int32_t main_rule_
                 irwriter_next_reg(w));
   IrVal f5 = (IrVal)(irwriter_next_reg(w) - 1);
   irwriter_store(w, "i64", parse_end_col, f5);
+  irwriter_call_void_fmtf(w, "free", "ptr %%r%d", (int)stack_buf);
   irwriter_ret_void(w);
   irwriter_define_end(w);
 
@@ -788,7 +798,8 @@ static void _gen_header(VpaGenInput* input, HeaderWriter* hw, const char* prefix
   hdwriter_putc(hw, '\n');
 
   // extern declarations
-  hdwriter_puts(hw, "extern void vpa_lex(void* src, int64_t len, void* tt, void* errors, void* ctx);\n");
+  hdwriter_puts(hw,
+                "extern void vpa_lex(void* src, int64_t len, void* tt, void* errors, void* ctx, void* stack_ptr);\n");
   hdwriter_putc(hw, '\n');
 
   if (prefix) {

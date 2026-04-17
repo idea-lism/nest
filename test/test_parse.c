@@ -567,9 +567,9 @@ TEST(test_invalid_empty_regexp) {
 // --- Incomplete range in character class ---
 
 static const char BAD_CC_RANGE_NEST[] = "[[vpa]]\n"
-                                       "main = { /[+-]/ @tok }\n"
-                                       "[[peg]]\n"
-                                       "main = @tok\n";
+                                        "main = { /[+-]/ @tok }\n"
+                                        "[[peg]]\n"
+                                        "main = @tok\n";
 
 TEST(test_incomplete_charclass_range) {
   ParseState* ps = parse_state_new();

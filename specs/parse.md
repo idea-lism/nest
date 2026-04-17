@@ -27,7 +27,7 @@ The overall handling with this syntax:
 1. implement a manual pushdown automata in `src/parse.c`, utilizing lexers defined by `src/parse_gen.c`.
 2. implement recursive descend parsers in `src/parse.c` to:
    - recursive descend parse the whole source
-   - utilize [token chunk](src/token_chunk.h)
+   - utilize [token tree / token chunk](src/token_tree.h)
 
 Resulting interface:
 
@@ -143,7 +143,7 @@ Error handling:
 - when sub lexer meets error, set error to lexing state
 - parent lexer checks lexing state after calling sub lexer, if error, just return
 
-The [token stream tree](src/token_chunk.c) is organized the same way as `TokenTree` in [VPA generated code](specs/vpa.md).
+The [token stream tree](token_tree.md) is organized the same way as `TokenTree` in [VPA generated code](specs/vpa.md).
 
 The parsing also follows this nested structure:
 - When parsing matches to a rule that is not a scope, call it as in normal recursive descend parsers
@@ -162,6 +162,8 @@ ACTION_STR_CHECK_END, // .str_check_end
 
 // composite: since lexer api only accepts single action_id, multiple actions must be combined
 ACTION_UNPARSE_END, // .unparse .end
+ACTION_SET_RE_MODE_BEGIN, // .set_re_mode .begin
+ACTION_SET_CC_KIND_BEGIN, // .set_cc_kind .begin
 ACTION_SET_QUOTE_BEGIN, // .set_quote .begin
 ACTION_RE_TAG_BEGIN, // @re_tag .begin
 ACTION_CHARCLASS_BEGIN_BEGIN, // @charclass_begin .begin

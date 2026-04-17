@@ -202,6 +202,106 @@ TEST(test_iter_from_middle_multibyte) {
   ustr_del(s);
 }
 
+// --- iter_seek ---
+
+TEST(test_iter_seek_ascii_close) {
+  // close backtrack within 64 cps
+  char* s = ustr_new(6, "abcdef");
+  UstrIter it;
+  ustr_iter_init(&it, s, 0);
+  assert(ustr_iter_next(&it) == 'a');
+  assert(ustr_iter_next(&it) == 'b');
+  assert(ustr_iter_next(&it) == 'c');
+  assert(ustr_iter_next(&it) == 'd');
+  assert(it.cp_idx == 4);
+  // seek back to cp 1
+  ustr_iter_seek(&it, 1);
+  assert(it.cp_idx == 1);
+  assert(ustr_iter_next(&it) == 'b');
+  assert(ustr_iter_next(&it) == 'c');
+  ustr_del(s);
+}
+
+TEST(test_iter_seek_ascii_to_zero) {
+  char* s = ustr_new(5, "hello");
+  UstrIter it;
+  ustr_iter_init(&it, s, 0);
+  ustr_iter_next(&it);
+  ustr_iter_next(&it);
+  ustr_iter_seek(&it, 0);
+  assert(it.cp_idx == 0);
+  assert(ustr_iter_next(&it) == 'h');
+  ustr_del(s);
+}
+
+TEST(test_iter_seek_multibyte_close) {
+  // a(1) e\u0301(2) \u20ac(3) \U0001f600(4) b(1) = 5 cps, 11 bytes
+  const char input[] = "a\xC3\xA9\xE2\x82\xAC\xF0\x9F\x98\x80"
+                       "b";
+  char* s = ustr_new(sizeof(input) - 1, input);
+  UstrIter it;
+  ustr_iter_init(&it, s, 0);
+  assert(ustr_iter_next(&it) == 'a');
+  assert(ustr_iter_next(&it) == 0xE9);
+  assert(ustr_iter_next(&it) == 0x20AC);
+  assert(ustr_iter_next(&it) == 0x1F600);
+  assert(it.cp_idx == 4);
+  // seek back to cp 1 (e\u0301)
+  ustr_iter_seek(&it, 1);
+  assert(it.cp_idx == 1);
+  assert(ustr_iter_next(&it) == 0xE9);
+  assert(ustr_iter_next(&it) == 0x20AC);
+  ustr_del(s);
+}
+
+TEST(test_iter_seek_forward) {
+  char* s = ustr_new(6, "abcdef");
+  UstrIter it;
+  ustr_iter_init(&it, s, 0);
+  ustr_iter_next(&it); // a
+  assert(it.cp_idx == 1);
+  // seek forward to cp 4
+  ustr_iter_seek(&it, 4);
+  assert(it.cp_idx == 4);
+  assert(ustr_iter_next(&it) == 'e');
+  assert(ustr_iter_next(&it) == 'f');
+  assert(ustr_iter_next(&it) == -1);
+  ustr_del(s);
+}
+
+TEST(test_iter_seek_same_pos) {
+  char* s = ustr_new(3, "abc");
+  UstrIter it;
+  ustr_iter_init(&it, s, 0);
+  ustr_iter_next(&it); // a
+  ustr_iter_next(&it); // b
+  ustr_iter_seek(&it, 2);
+  assert(it.cp_idx == 2);
+  assert(ustr_iter_next(&it) == 'c');
+  ustr_del(s);
+}
+
+TEST(test_iter_seek_far_back) {
+  // build string > 64 cps to test far backtrack path
+  char buf[128];
+  for (int i = 0; i < 100; i++) {
+    buf[i] = 'a' + (char)(i % 26);
+  }
+  char* s = ustr_new(100, buf);
+  UstrIter it;
+  ustr_iter_init(&it, s, 0);
+  // advance to cp 80
+  for (int i = 0; i < 80; i++) {
+    ustr_iter_next(&it);
+  }
+  assert(it.cp_idx == 80);
+  // seek to cp 5 -- far back (5 + 64 = 69 < 80), takes re-init path
+  ustr_iter_seek(&it, 5);
+  assert(it.cp_idx == 5);
+  assert(ustr_iter_next(&it) == 'a' + 5);
+  ustr_del(s);
+}
+
 // --- find_error ---
 
 TEST(test_find_error_valid) {
@@ -413,6 +513,13 @@ int main(void) {
   RUN(test_iter_multibyte);
   RUN(test_iter_from_middle);
   RUN(test_iter_from_middle_multibyte);
+
+  RUN(test_iter_seek_ascii_close);
+  RUN(test_iter_seek_ascii_to_zero);
+  RUN(test_iter_seek_multibyte_close);
+  RUN(test_iter_seek_forward);
+  RUN(test_iter_seek_same_pos);
+  RUN(test_iter_seek_far_back);
 
   RUN(test_find_error_valid);
   RUN(test_find_error_invalid_continuation);

@@ -9,7 +9,7 @@ After coloring there are groups of vertexes with the same color. If a group has 
 - each `seg_group.size <= 64`
 
 With this optimization - arangement, we can
-- assign each vertex a bit in a bitset (`int32_t seg_groups[sg_size]`)
+- assign each vertex a bit in a bitset (`uint64_t seg_groups[sg_size]`)
 - given a vertex id, we can find out its `sg_id` in the seg_group and the `seg_mask` that represents all the vertexes in the segment
 
 ## Symmetry breaking

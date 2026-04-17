@@ -65,7 +65,7 @@ test/
   test_ustr.c, test_bitset.c: utility tests
   bench_ustr.c: UTF-8 string benchmarks
   compat.c: platform compatibility helpers for tests
-test/examples/: example `.nest` files (calc, clike, json, words). follows specs/example_test.md
+test/examples/: example `.nest` files (calc, clike, interp, json, minilang, words). follows specs/example_test.md
 scripts/
   test: run all tests (accepts `debug` or `release` arg)
   bench: run benchmarks
@@ -110,8 +110,14 @@ Ustr
 ```c
 // UTF-8 string with codepoint-level indexing
 char* s = ustr_new(strlen(data), data);  // create from raw bytes
+char* s2 = ustr_from_file(fp);           // read entire file
 int32_t len = ustr_size(s);              // codepoint count
+int32_t bytes = ustr_bytesize(s);        // byte count
+int32_t cp = ustr_cp_at(s, 3);           // codepoint at index
 char* sub = ustr_slice(s, 2, 5);         // slice by codepoint range
+UstrByteSlice bs = ustr_slice_bytes(s, 2, 5); // {.s, .size} byte slice
+UstrIter it; ustr_iter_init(&it, s, 0);  // iterator from codepoint offset
+int32_t ch = ustr_iter_next(&it);        // next codepoint (-1 on end)
 ustr_del(s);                             // free
 ```
 
@@ -138,6 +144,19 @@ irwriter_bb(w);
 irwriter_define_end(w);
 irwriter_end(w);
 irwriter_del(w);
+```
+
+HeaderWriter
+```c
+// C header file emitter with indentation management
+HeaderWriter* hw = hdwriter_new(out_file);
+hdwriter_puts(hw, "#pragma once\n\n");
+hdwriter_printf(hw, "typedef struct %s", name);
+hdwriter_begin(hw);                       // emits " {\n", increments indent
+hdwriter_printf(hw, "int32_t %s;\n", field);
+hdwriter_end(hw);                         // decrements indent, emits "}\n"
+hdwriter_puts(hw, ";\n");
+hdwriter_del(hw);
 ```
 
 TokenTree

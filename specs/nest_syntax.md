@@ -100,7 +100,7 @@ b/\x00\xff/       # binary mode
 | `\d` | Digit class `[0-9]` |
 | `\h` | Hex digit class `[0-9a-fA-F]` |
 | `\n` `\t` `\r` etc. | C escape sequences |
-| `\{XXXX}` | Unicode codepoint (hex) |
+| `\u{XXXX}` | Unicode codepoint (hex) |
 | `[abc]` | Character class |
 | `[^abc]` | Negated character class |
 | `[a-z]` | Character range |

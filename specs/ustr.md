@@ -31,6 +31,11 @@ Resulting code:
 - src/ustr_neon.c, src/ustr_avx.c
   - SIMD accelerated routine for `ustr_new`
 
+Extra iterator interface:
+
+- `ustr_iter_seek(it, int32_t cp_offset)`: seek iterator to cp_offset.
+  - for faster backtracking, if `cp_offset + 64 > it->cp_idx`, scan starts from cp_offset, else start from 0 (re-init).
+
 Also add tests in:
 
 - test/test_ustr.c

@@ -190,7 +190,9 @@ We have 3 memoize_modes (passed from [cli](cli.md)).
 
 ## `memoize_mode=none`
 
-TODO: parsing not using memoize table.
+This mode is for ablation study only.
+
+Parsing not reading memoize table, but on success, writes to memoize table so load_xxx helpers can work.
 
 ## `memoize_mode=naive`
 

@@ -347,7 +347,9 @@ static bool _is_charclass_char(int32_t id) { return _is_str_char(id); }
 
 static int32_t _parse_charclass_char(ParseState* ps, TokenChunk* chunk, int32_t* tpos) {
   Token* t = _next(chunk, tpos);
-  if (!t) return -1;
+  if (!t) {
+    return -1;
+  }
   return _decode_cp(ps->src, t);
 }
 

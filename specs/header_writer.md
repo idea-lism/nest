@@ -2,7 +2,7 @@
 
 Minimal indentation-aware text writer for emitting C header files.
 
-Impl "src/hdwriter.h" and "src/hdwriter.c".
+Impl "src/header_writer.h" and "src/hdwriter.c".
 
 ## Struct
 

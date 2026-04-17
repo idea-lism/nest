@@ -190,34 +190,27 @@ void re_append_range(Re* re, ReRange* range, DebugInfo di) {
   f->cur_state = s;
 }
 
-void re_append_group_s(Re* re, ReRange* range) {
-  (void)re;
+void re_append_group_s(ReRange* range) {
   re_range_add(range, '\t', '\r');
   re_range_add(range, ' ', ' ');
 }
 
-void re_append_group_d(Re* re, ReRange* range) {
-  (void)re;
-  re_range_add(range, '0', '9');
-}
+void re_append_group_d(ReRange* range) { re_range_add(range, '0', '9'); }
 
-void re_append_group_w(Re* re, ReRange* range) {
-  (void)re;
+void re_append_group_w(ReRange* range) {
   re_range_add(range, '0', '9');
   re_range_add(range, 'A', 'Z');
   re_range_add(range, '_', '_');
   re_range_add(range, 'a', 'z');
 }
 
-void re_append_group_h(Re* re, ReRange* range) {
-  (void)re;
+void re_append_group_h(ReRange* range) {
   re_range_add(range, '0', '9');
   re_range_add(range, 'A', 'F');
   re_range_add(range, 'a', 'f');
 }
 
-void re_append_group_dot(Re* re, ReRange* range) {
-  (void)re;
+void re_append_group_dot(ReRange* range) {
   re_range_add(range, 0, 9);
   re_range_add(range, 11, MAX_UNICODE);
 }

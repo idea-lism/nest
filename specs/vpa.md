@@ -94,7 +94,7 @@ For all scopes, the built-in hook `.begin` / `.end` will push / pop the VPA stac
 
 For scopes with `.has_parser`, the built-in hook `.begin` / `.end` also denotes when to push / pop a TokenChunk too.
 We push chunk with `tt_push_assoc()` instead, so the chunk will have the tree ref.
-When popping a chunk (scope), invoke the internal PEG parsing function `parse_{scope_name}` defined in [peg](peg.md) -- this is known in compile time, so generated code will hard-code the parsing funciton call for the `.end` action.
+When popping a chunk (scope), invoke the internal PEG parsing function `parse_{scope_name}` defined in [PEG GEN](peg_gen.md) -- this is known in compile time, so generated code will hard-code the parsing funciton call for the `.end` action.
 
 Sub-scope calls inlines the leader regexp as matcher. Assume we have a scope like this:
 
@@ -174,7 +174,7 @@ int32_t my_foo_hook(void* userdata, Token* token, const char* token_str_start) {
 }
 ```
 
-A typical usage example (the load_xxx functions are defined by [peg](peg.md)):
+A typical usage example (the load_xxx functions are defined by [PEG GEN](peg_gen.md)):
 
 ```c
 struct ParseContext l = { NULL, .foo = my_foo_hook, .bar = my_bar_hook };
@@ -191,6 +191,8 @@ if (res.error) {
 ### Interaction with peg parsers
 
 In LLVM-IR: define the main function `ParseResult {prefix}_parse(l, src_ustr)`.
+
+On top of main function malloc a fixed 1M stack for peg parser's backtracking. All scoped parsers share the same stack ptr (they don't call each other, so just pass the ptr, no arithmetics).
 
 For each scope, PEG parsers generates a `parse_{scope_name}` function, the visibly pushdown machine just invoke the parsing function when a scope ends (`.end` action).
 - Main scope doesn't have `.end` action, so after all input is consumed in {main_parse_fn_name}, call `parse_main()`

@@ -73,8 +73,8 @@ static void _usage(void) {
                   "commands:\n"
                   "  l    generate lexer from regex patterns\n"
                   "  c    generate parser from .nest syntax\n"
-                  "  h    show .nest syntax reference\n"
-                  "  r    show bootstrap.nest reference\n"
+                  "  h    show nest syntax help\n"
+                  "  r    show nest grammar reference\n"
                   "\n"
                   "nest l <input> [options]\n");
 #define OPTION(s, l, n, d) CMDOPT_USAGE(s, l, n, d)
@@ -295,8 +295,8 @@ static void _gen_example_c(FILE* f, const char* prefix, ParseState* ps) {
   fprintf(f, "#define NEST_RT_IMPLEMENTATION\n");
   fprintf(f, "#include \"%s.h\"\n\n", prefix);
 
-  fprintf(f, "int32_t %s_next_cp(void* src, int32_t cp_off) {\n", prefix);
-  fprintf(f, "  return ustr_cp_at((const char*)src, cp_off);\n");
+  fprintf(f, "int32_t %s_next_cp(void* userdata) {\n", prefix);
+  fprintf(f, "  return ustr_iter_next((UstrIter*)userdata);\n");
   fprintf(f, "}\n\n");
 
   // tok_name

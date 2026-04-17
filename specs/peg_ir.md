@@ -19,9 +19,7 @@ typedef struct {
   // shared allocas
   IrVal col; // current %col
   IrVal stack_ptr; // register storing the input stack_ptr
-  IrVal stack_bp;  // base-pointer for stack calls
   IrVal parse_result; // PegRef %parse_result
-  IrVal fast_ret_addr; // a shared register for fast-return
   IrVal tag_bits; // %tag_bits for successful match to set
   // and other context vars if needed in implementation
 
@@ -96,9 +94,7 @@ ret_label:
   stack--;
   %ret_addr = stack->ret_site;
   stack--;
-  %bp = stack
   %ret = ...
-  stack = %bp;
   indirectbr %ret_addr;
 ```
 

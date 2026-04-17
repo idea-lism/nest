@@ -161,27 +161,27 @@ static void _exec_ir(ExecCtx* ctx, ReIr ir) {
       break;
     case RE_IR_APPEND_GROUP_S:
       if (range) {
-        re_append_group_s(ctx->re, range);
+        re_append_group_s(range);
       }
       break;
     case RE_IR_APPEND_GROUP_W:
       if (range) {
-        re_append_group_w(ctx->re, range);
+        re_append_group_w(range);
       }
       break;
     case RE_IR_APPEND_GROUP_D:
       if (range) {
-        re_append_group_d(ctx->re, range);
+        re_append_group_d(range);
       }
       break;
     case RE_IR_APPEND_GROUP_H:
       if (range) {
-        re_append_group_h(ctx->re, range);
+        re_append_group_h(range);
       }
       break;
     case RE_IR_APPEND_GROUP_DOT:
       if (range) {
-        re_append_group_dot(ctx->re, range);
+        re_append_group_dot(range);
       }
       break;
     case RE_IR_APPEND_C_ESCAPE:

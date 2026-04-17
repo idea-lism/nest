@@ -30,6 +30,7 @@ typedef struct {
 } UstrIter;
 
 void ustr_iter_init(UstrIter* it, const char* s, int32_t cp_offset);
+void ustr_iter_seek(UstrIter* it, int32_t cp_offset);
 int32_t ustr_iter_next(UstrIter* it);
 
 typedef struct {

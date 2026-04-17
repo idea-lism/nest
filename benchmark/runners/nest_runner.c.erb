@@ -16,9 +16,8 @@ static double now_sec(void) {
     return ts.tv_sec + ts.tv_nsec * 1e-9;
 }
 
-int32_t <%= prefix %>_next_cp(void* src, int32_t cp_off) {
-    (void)src; (void)cp_off;
-    return -1;
+int32_t <%= prefix %>_next_cp(void* userdata) {
+    return ustr_iter_next((UstrIter*)userdata);
 }
 
 static int cmp_double(const void* a, const void* b) {
@@ -40,16 +39,10 @@ int main(int argc, char** argv) {
     // Read input file
     FILE* f = fopen(input_path, "rb");
     if (!f) { perror(input_path); return 1; }
-    fseek(f, 0, SEEK_END);
-    long file_size = ftell(f);
-    fseek(f, 0, SEEK_SET);
-    char* raw = malloc((size_t)file_size + 1);
-    fread(raw, 1, (size_t)file_size, f);
-    raw[file_size] = '\0';
+    char* src = ustr_from_file(f);
     fclose(f);
-
-    char* src = ustr_new((size_t)file_size, raw);
-    free(raw);
+    if (!src) { fprintf(stderr, "failed to read %s\n", input_path); return 1; }
+    int32_t file_size = ustr_bytesize(src);
 
     // Warm up: 3 iterations
     for (int i = 0; i < 3; i++) {
@@ -81,7 +74,7 @@ int main(int argc, char** argv) {
     <%= prefix %>_cleanup(res);
 
     // CSV: parse_us,size_bytes,token_count,chunk_count
-    printf("%.1f,%ld,%d,%d\n", median_us, file_size, token_count, chunk_count);
+    printf("%.1f,%d,%d,%d\n", median_us, file_size, token_count, chunk_count);
 
     free(times);
     ustr_del(src);

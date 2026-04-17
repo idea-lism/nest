@@ -243,6 +243,30 @@ void ustr_iter_init(UstrIter* it, const char* s, int32_t char_offset) {
   it->cp_idx = char_offset;
 }
 
+void ustr_iter_seek(UstrIter* it, int32_t cp_offset) {
+  if (cp_offset == it->cp_idx) {
+    return;
+  }
+  if (cp_offset + 64 > it->cp_idx && cp_offset < it->cp_idx) {
+    // close backtrack: scan marks backwards from current byte_off
+    int32_t delta = it->cp_idx - cp_offset;
+    int32_t byte_pos = it->byte_off;
+    while (delta > 0 && byte_pos > 0) {
+      byte_pos--;
+      int32_t mark_byte = byte_pos / 8;
+      int32_t mark_bit = byte_pos % 8;
+      if (it->marks[mark_byte] & (1u << mark_bit)) {
+        delta--;
+      }
+    }
+    it->byte_off = byte_pos;
+    it->cp_idx = cp_offset;
+  } else {
+    // far seek or forward: re-init from 0
+    ustr_iter_init(it, it->s, cp_offset);
+  }
+}
+
 static inline int32_t _decode_cp(const char* p, int32_t* out_decoded_bytes) {
   uint8_t b = (uint8_t)p[0];
   if (b < 0x80) {

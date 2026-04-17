@@ -14,7 +14,7 @@
 // Helpers
 // ============================================================
 
-__attribute__((format(printf, 1, 2))) static char* _fmt(const char* fmt, ...) {
+__attribute__((format(printf, 1, 2))) static char* _asprintf(const char* fmt, ...) {
   va_list ap;
   va_start(ap, fmt);
   int n = vsnprintf(NULL, 0, fmt, ap);
@@ -87,10 +87,10 @@ static void _gen_node_struct(HeaderWriter* hw, ScopedRule* sr, const char* rule_
   hdwriter_printf(hw, "typedef struct {\n");
   if (tag_size > 0) {
     hdwriter_puts(hw, "  struct {\n");
-    for (int32_t t = 0; t < tag_size; t++) {
-      char* san = _sanitize_field_name(symtab_get(&sr->tags, t + sr->tags.start_num));
-      hdwriter_printf(hw, "    bool %s : 1;\n", san);
-      free(san);
+    for (int32_t tag_idx = 0; tag_idx < tag_size; tag_idx++) {
+      char* sanitized_name = _sanitize_field_name(symtab_get(&sr->tags, tag_idx + sr->tags.start_num));
+      hdwriter_printf(hw, "    bool %s : 1;\n", sanitized_name);
+      free(sanitized_name);
     }
     if (tag_size < 64) {
       hdwriter_printf(hw, "    uint64_t _padding : %d;\n", 64 - tag_size);
@@ -105,11 +105,11 @@ static void _gen_node_struct(HeaderWriter* hw, ScopedRule* sr, const char* rule_
   hdwriter_putc(hw, '\n');
 }
 
-static int32_t _slot_row_gen(ScopeClosure* cl, ScopedRule* sr) {
+static int32_t _compute_slot_row(ScopeClosure* cl, ScopedRule* sr) {
   return (int32_t)(cl->bits_bucket_size * 2 + (int64_t)sr->slot_index);
 }
 
-static ScopedRule* _find_sr_by_name(ScopeClosure* cl, const char* name) {
+static ScopedRule* _find_scoped_rule_by_name(ScopeClosure* cl, const char* name) {
   int32_t id = symtab_find(&cl->scoped_rule_names, name);
   if (id < 0) {
     return NULL;
@@ -151,10 +151,10 @@ static RuleScopeMap _build_scope_map(PegGenInput* input) {
       if (idx < 0 || idx >= map.size) {
         continue;
       }
-      int32_t n = map.counts[idx];
-      map.entries[idx] = realloc(map.entries[idx], (size_t)(n + 1) * sizeof(RuleScopeEntry));
-      map.entries[idx][n] = (RuleScopeEntry){.scope_id = cl->scope_id, .sr = sr, .cl = cl};
-      map.counts[idx] = n + 1;
+      int32_t entry_count = map.counts[idx];
+      map.entries[idx] = realloc(map.entries[idx], (size_t)(entry_count + 1) * sizeof(RuleScopeEntry));
+      map.entries[idx][entry_count] = (RuleScopeEntry){.scope_id = cl->scope_id, .sr = sr, .cl = cl};
+      map.counts[idx] = entry_count + 1;
     }
   }
   return map;
@@ -173,11 +173,11 @@ static void _gen_loader(HeaderWriter* hw, const char* rule_name, RuleScopeEntry*
   if (used_in_closures_count == 0) {
     return;
   }
-  ScopedRule* sr0 = scope_entries[0].sr;
-  if (!sr0->node_fields) {
+  ScopedRule* first_scoped_rule = scope_entries[0].sr;
+  if (!first_scoped_rule->node_fields) {
     return;
   }
-  int32_t tag_size = symtab_count(&sr0->tags);
+  int32_t tag_size = symtab_count(&first_scoped_rule->tags);
   bool has_tags = (tag_size > 0);
   hdwriter_printf(hw, "static inline Node_%s %s_load_%s(PegRef ref)", rule_name, prefix, rule_name);
   hdwriter_begin(hw);
@@ -187,11 +187,11 @@ static void _gen_loader(HeaderWriter* hw, const char* rule_name, RuleScopeEntry*
   }
   hdwriter_puts(hw, "switch (ref.tc->scope_id)");
   hdwriter_begin(hw);
-  for (int32_t e = 0; e < used_in_closures_count; e++) {
-    ScopedRule* sr = scope_entries[e].sr;
-    ScopeClosure* cl = scope_entries[e].cl;
+  for (int32_t entry_idx = 0; entry_idx < used_in_closures_count; entry_idx++) {
+    ScopedRule* sr = scope_entries[entry_idx].sr;
+    ScopeClosure* cl = scope_entries[entry_idx].cl;
     int64_t col_size_in_i32 = cl->bits_bucket_size * 2 + cl->slots_size;
-    hdwriter_printf(hw, "case %d:", scope_entries[e].scope_id);
+    hdwriter_printf(hw, "case %d:", scope_entries[entry_idx].scope_id);
     hdwriter_begin(hw);
     if (has_tags) {
       hdwriter_printf(hw, "int64_t* $col = (int64_t*)((int32_t*)$table + %lld * ref.col);\n",
@@ -200,8 +200,8 @@ static void _gen_loader(HeaderWriter* hw, const char* rule_name, RuleScopeEntry*
                       (unsigned long long)sr->tag_bit_index, (unsigned long long)sr->tag_bit_offset,
                       (unsigned long long)_tag_mask(tag_size, 0));
     }
-    for (size_t fi = 0; fi < darray_size(sr->node_fields); fi++) {
-      NodeField* nf = &sr->node_fields[fi];
+    for (size_t field_idx = 0; field_idx < darray_size(sr->node_fields); field_idx++) {
+      NodeField* nf = &sr->node_fields[field_idx];
       if (nf->is_link) {
         if (nf->is_scope) {
           hdwriter_printf(hw, "$1.%s.tc = &((TokenTree*)ref.tc->aux_value)->table[ref.tc->tokens[ref.col].chunk_id];\n",
@@ -213,7 +213,7 @@ static void _gen_loader(HeaderWriter* hw, const char* rule_name, RuleScopeEntry*
         }
         hdwriter_printf(hw, "$1.%s.col_size_in_i32 = %lld;\n", nf->name, (long long)col_size_in_i32);
         // find wrapper scoped rule and extract LHS/RHS info
-        ScopedRule* wrapper = nf->wrapper_name ? _find_sr_by_name(cl, nf->wrapper_name) : NULL;
+        ScopedRule* wrapper = nf->wrapper_name ? _find_scoped_rule_by_name(cl, nf->wrapper_name) : NULL;
         ScopedUnit* body = wrapper ? &wrapper->body : NULL;
         ScopedUnit* lhs = NULL;
         if (body && (body->kind == SCOPED_UNIT_STAR || body->kind == SCOPED_UNIT_PLUS)) {
@@ -227,8 +227,8 @@ static void _gen_loader(HeaderWriter* hw, const char* rule_name, RuleScopeEntry*
                           nf->name, nf->name);
           hdwriter_printf(hw, "$1.%s.lhs_term_id = %d;\n", nf->name, lhs->as.term_id);
         } else if (lhs && lhs->kind == SCOPED_UNIT_CALL) {
-          ScopedRule* callee = _find_sr_by_name(cl, lhs->as.callee);
-          int32_t lhs_row = callee ? _slot_row_gen(cl, callee) : 0;
+          ScopedRule* callee = _find_scoped_rule_by_name(cl, lhs->as.callee);
+          int32_t lhs_row = callee ? _compute_slot_row(cl, callee) : 0;
           hdwriter_printf(hw, "$1.%s.lhs_row = %d;\n", nf->name, lhs_row);
           hdwriter_printf(hw, "$1.%s.lhs_term_id = 0;\n", nf->name);
           hdwriter_printf(hw, "$1.%s.lhs_bit_index = %llu; $1.%s.lhs_bit_mask = 0x%llxULL;\n", nf->name,
@@ -245,8 +245,9 @@ static void _gen_loader(HeaderWriter* hw, const char* rule_name, RuleScopeEntry*
                           nf->name, nf->name);
         } else if (nf->rhs_row >= 0 && body && (body->kind == SCOPED_UNIT_STAR || body->kind == SCOPED_UNIT_PLUS)) {
           ScopedUnit* rhs = body->as.interlace.rhs;
-          ScopedRule* rhs_sr = (rhs && rhs->kind == SCOPED_UNIT_CALL) ? _find_sr_by_name(cl, rhs->as.callee) : NULL;
-          int32_t rhs_row = rhs_sr ? _slot_row_gen(cl, rhs_sr) : nf->rhs_row;
+          ScopedRule* rhs_sr =
+              (rhs && rhs->kind == SCOPED_UNIT_CALL) ? _find_scoped_rule_by_name(cl, rhs->as.callee) : NULL;
+          int32_t rhs_row = rhs_sr ? _compute_slot_row(cl, rhs_sr) : nf->rhs_row;
           hdwriter_printf(hw, "$1.%s.rhs_row = %d;\n", nf->name, rhs_row);
           hdwriter_printf(hw, "$1.%s.rhs_bit_index = %llu; $1.%s.rhs_bit_mask = 0x%llxULL;\n", nf->name,
                           rhs_sr ? (unsigned long long)rhs_sr->segment_index : 0ULL, nf->name,
@@ -348,8 +349,7 @@ static void _gen_get_lhs(HeaderWriter* hw, const char* prefix) {
   hdwriter_end(hw);
   hdwriter_putc(hw, '\n');
 }
-static void _gen_get_rhs(HeaderWriter* hw, const char* prefix, int memoize_mode) {
-  (void)memoize_mode;
+static void _gen_get_rhs(HeaderWriter* hw, const char* prefix) {
   hdwriter_printf(hw, "static inline PegRef %s_get_rhs(PegLink* l)", prefix);
   hdwriter_begin(hw);
   hdwriter_puts(hw, "if (l->lhs_row == -2) return (PegRef){l->tc, l->col + 1, l->rhs_row};\n");
@@ -399,7 +399,7 @@ static void _gen_header(PegGenInput* input, HeaderWriter* hw, RuleScopeMap* scop
   _gen_has_elem(hw, prefix, input->memoize_mode);
   _gen_get_next(hw, prefix, input->memoize_mode);
   _gen_get_lhs(hw, prefix);
-  _gen_get_rhs(hw, prefix, input->memoize_mode);
+  _gen_get_rhs(hw, prefix);
   _gen_peg_size(hw, closures, closure_size, prefix);
 }
 
@@ -446,11 +446,11 @@ static void _memoize_read_shared(PegIrCtx* ctx, PegIrScopeCtx* sc, ScopedRule* s
   IrVal is_cached = irwriter_icmp(w, "ne", "i32", slot_val, irwriter_imm_int(w, -1));
 
   uint64_t seg_off = sr->segment_index * 8;
-  IrVal bt = irwriter_call_retf(w, "i1", "bit_test", "ptr %%r%d, i64 %%r%d, i64 %lld, i64 %llu, i64 %llu",
-                                (int)sc->peg_table, (int)col_val, (long long)sc->sizeof_col,
-                                (unsigned long long)seg_off, (unsigned long long)sr->rule_bit_mask);
+  IrVal bit_test_result = irwriter_call_retf(w, "i1", "bit_test", "ptr %%r%d, i64 %%r%d, i64 %lld, i64 %llu, i64 %llu",
+                                             (int)sc->peg_table, (int)col_val, (long long)sc->sizeof_col,
+                                             (unsigned long long)seg_off, (unsigned long long)sr->rule_bit_mask);
   IrLabel bit_ok = irwriter_label(w);
-  irwriter_br_cond(w, bt, bit_ok, ml->fail_bb);
+  irwriter_br_cond(w, bit_test_result, bit_ok, ml->fail_bb);
 
   irwriter_bb_at(w, bit_ok);
   IrLabel fast_ret = irwriter_label(w);
@@ -497,19 +497,23 @@ static void _memoize_read_naive(PegIrCtx* ctx, PegIrScopeCtx* sc, ScopedRule* sr
 // ============================================================
 
 static void _memoize_write_none(PegIrCtx* ctx, PegIrScopeCtx* sc, ScopedRule* sr, IrVal start_col) {
-  (void)ctx;
-  (void)sc;
   (void)sr;
-  (void)start_col;
+  IrWriter* w = ctx->ir_writer;
+  IrVal parsed_tokens_val = irwriter_load(w, "i64", ctx->parsed_tokens);
+  IrVal slot_ptr =
+      irwriter_call_retf(w, "ptr", "gep_slot", "ptr %%r%d, i64 %%r%d, i64 %lld, i64 %lld", (int)sc->peg_table,
+                         (int)start_col, (long long)sc->sizeof_col, (long long)sc->slot_byte_offset);
+  irwriter_rawf(w, "  %%r%d = trunc i64 %%r%d to i32\n", irwriter_next_reg(w), (int)parsed_tokens_val);
+  irwriter_store(w, "i32", (IrVal)(irwriter_next_reg(w) - 1), slot_ptr);
 }
 
 static void _memoize_write_shared(PegIrCtx* ctx, PegIrScopeCtx* sc, ScopedRule* sr, IrVal start_col) {
   IrWriter* w = ctx->ir_writer;
-  IrVal pt = irwriter_load(w, "i64", ctx->parsed_tokens);
+  IrVal parsed_tokens_val = irwriter_load(w, "i64", ctx->parsed_tokens);
   IrVal slot_ptr =
       irwriter_call_retf(w, "ptr", "gep_slot", "ptr %%r%d, i64 %%r%d, i64 %lld, i64 %lld", (int)sc->peg_table,
                          (int)start_col, (long long)sc->sizeof_col, (long long)sc->slot_byte_offset);
-  irwriter_rawf(w, "  %%r%d = trunc i64 %%r%d to i32\n", irwriter_next_reg(w), (int)pt);
+  irwriter_rawf(w, "  %%r%d = trunc i64 %%r%d to i32\n", irwriter_next_reg(w), (int)parsed_tokens_val);
   irwriter_store(w, "i32", (IrVal)(irwriter_next_reg(w) - 1), slot_ptr);
   irwriter_call_void_fmtf(w, "bit_exclude", "ptr %%r%d, i64 %%r%d, i64 %lld, i64 %llu, i64 %llu, i64 %llu",
                           (int)sc->peg_table, (int)start_col, (long long)sc->sizeof_col,
@@ -520,11 +524,11 @@ static void _memoize_write_shared(PegIrCtx* ctx, PegIrScopeCtx* sc, ScopedRule* 
 static void _memoize_write_naive(PegIrCtx* ctx, PegIrScopeCtx* sc, ScopedRule* sr, IrVal start_col) {
   (void)sr;
   IrWriter* w = ctx->ir_writer;
-  IrVal pt = irwriter_load(w, "i64", ctx->parsed_tokens);
+  IrVal parsed_tokens_val = irwriter_load(w, "i64", ctx->parsed_tokens);
   IrVal slot_ptr =
       irwriter_call_retf(w, "ptr", "gep_slot", "ptr %%r%d, i64 %%r%d, i64 %lld, i64 %lld", (int)sc->peg_table,
                          (int)start_col, (long long)sc->sizeof_col, (long long)sc->slot_byte_offset);
-  irwriter_rawf(w, "  %%r%d = trunc i64 %%r%d to i32\n", irwriter_next_reg(w), (int)pt);
+  irwriter_rawf(w, "  %%r%d = trunc i64 %%r%d to i32\n", irwriter_next_reg(w), (int)parsed_tokens_val);
   irwriter_store(w, "i32", (IrVal)(irwriter_next_reg(w) - 1), slot_ptr);
 }
 
@@ -596,7 +600,7 @@ static void _gen_scope_ir(IrWriter* w, ScopeClosure* cl, int memoize_mode) {
   irwriter_declare(w, "ptr", "tt_alloc_memoize_table", "ptr, i64");
   irwriter_declare(w, "i64", "tt_current_size", "ptr");
 
-  char* fn_name = _fmt("parse_%s", cl->scope_name);
+  char* fn_name = _asprintf("parse_%s", cl->scope_name);
   irwriter_define_startf(w, fn_name, "{i64, i64} @%s(ptr %%tt, ptr %%stack_ptr_in)", fn_name);
   irwriter_bb(w);
   irwriter_dbg(w, cl->source_line, cl->source_col);
@@ -684,8 +688,8 @@ static void _gen_scope_ir(IrWriter* w, ScopeClosure* cl, int memoize_mode) {
     irwriter_bb_at(w, parse_success);
     IrVal start_col = irwriter_call_retf(w, "i64", "top", "ptr %%r%d", (int)stack_ptr);
     IrVal cur_col = irwriter_load(w, "i64", col);
-    IrVal pt = irwriter_binop(w, "sub", "i64", cur_col, start_col);
-    irwriter_store(w, "i64", pt, parsed_tokens);
+    IrVal parsed_tokens_val = irwriter_binop(w, "sub", "i64", cur_col, start_col);
+    irwriter_store(w, "i64", parsed_tokens_val, parsed_tokens);
 
     if (tag_size > 0) {
       irwriter_call_void_fmtf(w, "tag_writeback", "ptr %%r%d, i64 %%r%d, i64 %lld, i64 %lld, i64 %llu, i64 %%r%d",
@@ -713,11 +717,11 @@ static void _gen_scope_ir(IrWriter* w, ScopeClosure* cl, int memoize_mode) {
   }
 
   irwriter_bb_at(w, final_ret);
-  IrVal fr = irwriter_load(w, "i64", parse_result);
-  IrVal fc = irwriter_load(w, "i64", col);
-  IrVal r0 = irwriter_insertvalue(w, "{i64, i64}", -1, "i64", fr, 0);
-  IrVal r1 = irwriter_insertvalue(w, "{i64, i64}", r0, "i64", fc, 1);
-  irwriter_ret(w, "{i64, i64}", r1);
+  IrVal final_result = irwriter_load(w, "i64", parse_result);
+  IrVal final_col = irwriter_load(w, "i64", col);
+  IrVal ret_with_result = irwriter_insertvalue(w, "{i64, i64}", -1, "i64", final_result, 0);
+  IrVal ret_with_col = irwriter_insertvalue(w, "{i64, i64}", ret_with_result, "i64", final_col, 1);
+  irwriter_ret(w, "{i64, i64}", ret_with_col);
   irwriter_define_end(w);
   darray_del(ctx.ret_labels);
   free(fn_name);

@@ -29,11 +29,11 @@ void re_append_ch(Re* re, int32_t codepoint, DebugInfo di);
 void re_append_ch_ic(Re* re, int32_t codepoint, DebugInfo di);
 void re_append_range(Re* re, ReRange* range, DebugInfo di);
 
-void re_append_group_s(Re* re, ReRange* range);
-void re_append_group_d(Re* re, ReRange* range);
-void re_append_group_w(Re* re, ReRange* range);
-void re_append_group_h(Re* re, ReRange* range);
-void re_append_group_dot(Re* re, ReRange* range);
+void re_append_group_s(ReRange* range);
+void re_append_group_d(ReRange* range);
+void re_append_group_w(ReRange* range);
+void re_append_group_h(ReRange* range);
+void re_append_group_dot(ReRange* range);
 int32_t re_c_escape(char symbol);
 int32_t re_hex_to_codepoint(const char* h, size_t size);
 

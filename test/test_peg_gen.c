@@ -6,8 +6,6 @@
 #include "compat.h"
 
 #include <assert.h>
-#include <stdio.h>
-#include <stdlib.h>
 #include <string.h>
 
 #define TEST(name) static void name(void)
@@ -957,6 +955,58 @@ TEST(test_scope_link_field) {
 // ============================================================
 // Tests: multi-bucket tags (tag_bit_index > 0)
 // ============================================================
+TEST(test_none_memoize_O2_exec) {
+  // Regression: memoize=none compiled at -O2 must produce correct PEG output.
+  // Write minimal grammar to temp file
+  const char* nest_path = BUILD_DIR "/test_peg_none_o2.nest";
+  FILE* nf = fopen(nest_path, "w");
+  assert(nf);
+  fprintf(nf, "[[vpa]]\n"
+              "%%ignore @space\n"
+              "main = {\n"
+              "  /[a-zA-Z]+/ @word\n"
+              "  /\\s+/ @space\n"
+              "}\n"
+              "[[peg]]\n"
+              "main = @word*\n");
+  fclose(nf);
+
+  // Run nest c -m none
+  char cmd[2048];
+  snprintf(cmd, sizeof(cmd), BUILD_DIR "/nest c %s -p test_none -m none 2>&1", nest_path);
+  int ret = system(cmd);
+  assert(ret == 0);
+
+  // Compile at -O2
+  snprintf(cmd, sizeof(cmd), "%s -O2 test_none.c test_none.ll -o " BUILD_DIR "/test_peg_none_o2_bin 2>&1",
+           compat_llvm_cc());
+  ret = system(cmd);
+  assert(ret == 0);
+
+  // Run with "hello world"
+  snprintf(cmd, sizeof(cmd),
+           BUILD_DIR "/test_peg_none_o2_bin \"hello world\" > " BUILD_DIR "/test_peg_none_o2.out 2>&1");
+  ret = system(cmd);
+  assert(ret == 0);
+
+  // Verify output contains PEG tree ("main" line must appear)
+  FILE* out = fopen(BUILD_DIR "/test_peg_none_o2.out", "r");
+  assert(out);
+  char buf[4096];
+  size_t n = fread(buf, 1, sizeof(buf) - 1, out);
+  buf[n] = '\0';
+  fclose(out);
+  assert(strstr(buf, "main") != NULL);
+  assert(strstr(buf, "@word") != NULL);
+
+  // Cleanup generated files
+  remove("test_none.c");
+  remove("test_none.h");
+  remove("test_none.ll");
+  remove(nest_path);
+  remove(BUILD_DIR "/test_peg_none_o2_bin");
+  remove(BUILD_DIR "/test_peg_none_o2.out");
+}
 
 TEST(test_multi_bucket_tags) {
   PegGenInput input = {0};
@@ -1108,6 +1158,7 @@ int main(void) {
   RUN(test_interlaced_link_rhs_row);
   RUN(test_scope_link_field);
   RUN(test_multi_bucket_tags);
+  RUN(test_none_memoize_O2_exec);
   printf("test_peg_gen: OK\n");
   return 0;
 }

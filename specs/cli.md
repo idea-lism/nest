@@ -1,11 +1,12 @@
 Command line tool that generates 
 
-- `-h` show help
 - subcommands:
   - `nest l` simple lex
   - `nest c` generate parser by complete syntax
-  - `nest h` show help `specs/nest_syntax.md`
-  - `nest r` show reference `specs/bootstrap.nest`
+  - `nest h` show nest syntax help
+    - lists `specs/nest_syntax.md`
+  - `nest r` show nest grammar reference
+    - lists `specs/bootstrap.nest`
 - common options
   - `-t <target_triple>` specify target triple, if none given, probe clang's default triple
   - `-v 1`, or `--verbose=1`. verbose output (prints each step)
@@ -37,7 +38,8 @@ Command line tool that generates
 
 A self-contained usage example that:
 - `#define NEST_RT_IMPLEMENTATION` and `#include "<prefix>.h"`
-- implements `<prefix>_next_cp` for byte-mode reading
+- use `ustr_from_file` to read file.
+- implements `int32_t <prefix>_next_cp(void* userdata)` for character reading -- userdata is a pointer to a struct, which includes a ustr iterator member and calls `ustr_iter_next` to get the cp or EOF.
 - provides a `tok_name()` helper that maps every `TOK_*` id defined in the header to its lowercase name
 - `main(argc, argv)` reads `argv[1]` as input, runs `vpa_lex`, iterates the token tree, and prints one line per token: `<token_name> (id=<id>) "<matched_text>"`
 

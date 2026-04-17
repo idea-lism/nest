@@ -432,6 +432,7 @@ void peg_ir_emit_helpers(IrWriter* w) {
   {
     irwriter_define_startf(w, "save", "internal void @save(ptr %%stack_ptr, ptr %%col)");
     irwriter_bb(w);
+    irwriter_dbg(w, 1, 1);
     IrVal sp = irwriter_load(w, "ptr", irwriter_imm(w, "%stack_ptr"));
     irwriter_rawf(w, "  %%r%d = getelementptr i64, ptr %%r%d, i64 1\n", irwriter_next_reg(w), (int)sp);
     IrVal sp1 = (IrVal)(irwriter_next_reg(w) - 1);
@@ -446,6 +447,7 @@ void peg_ir_emit_helpers(IrWriter* w) {
   {
     irwriter_define_startf(w, "restore", "internal void @restore(ptr %%stack_ptr, ptr %%col)");
     irwriter_bb(w);
+    irwriter_dbg(w, 1, 1);
     IrVal sp = irwriter_load(w, "ptr", irwriter_imm(w, "%stack_ptr"));
     IrVal col_val = irwriter_load(w, "i64", sp);
     irwriter_store(w, "i64", col_val, irwriter_imm(w, "%col"));
@@ -457,6 +459,7 @@ void peg_ir_emit_helpers(IrWriter* w) {
   {
     irwriter_define_startf(w, "top", "internal i64 @top(ptr %%stack_ptr)");
     irwriter_bb(w);
+    irwriter_dbg(w, 1, 1);
     IrVal sp = irwriter_load(w, "ptr", irwriter_imm(w, "%stack_ptr"));
     IrVal val = irwriter_load(w, "i64", sp);
     irwriter_ret(w, "i64", val);
@@ -471,6 +474,7 @@ void peg_ir_emit_bit_helpers(IrWriter* w) {
         w, "bit_test",
         "internal i1 @bit_test(ptr %%table, i64 %%col, i64 %%col_size, i64 %%seg_offset, i64 %%rule_bit)");
     irwriter_bb(w);
+    irwriter_dbg(w, 1, 1);
     IrVal off = irwriter_binop(w, "mul", "i64", irwriter_imm(w, "%col"), irwriter_imm(w, "%col_size"));
     IrVal off2 = irwriter_binop(w, "add", "i64", off, irwriter_imm(w, "%seg_offset"));
     irwriter_rawf(w, "  %%r%d = getelementptr i8, ptr %%table, i64 %%r%d\n", irwriter_next_reg(w), (int)off2);
@@ -488,6 +492,7 @@ void peg_ir_emit_bit_helpers(IrWriter* w) {
         w, "bit_deny",
         "internal void @bit_deny(ptr %%table, i64 %%col, i64 %%col_size, i64 %%seg_offset, i64 %%rule_bit)");
     irwriter_bb(w);
+    irwriter_dbg(w, 1, 1);
     IrVal off = irwriter_binop(w, "mul", "i64", irwriter_imm(w, "%col"), irwriter_imm(w, "%col_size"));
     IrVal off2 = irwriter_binop(w, "add", "i64", off, irwriter_imm(w, "%seg_offset"));
     irwriter_rawf(w, "  %%r%d = getelementptr i8, ptr %%table, i64 %%r%d\n", irwriter_next_reg(w), (int)off2);
@@ -507,6 +512,7 @@ void peg_ir_emit_bit_helpers(IrWriter* w) {
                            "internal void @bit_exclude(ptr %%table, i64 %%col, i64 %%col_size, i64 %%seg_offset, i64 "
                            "%%segment_mask, i64 %%rule_bit)");
     irwriter_bb(w);
+    irwriter_dbg(w, 1, 1);
     IrVal off = irwriter_binop(w, "mul", "i64", irwriter_imm(w, "%col"), irwriter_imm(w, "%col_size"));
     IrVal off2 = irwriter_binop(w, "add", "i64", off, irwriter_imm(w, "%seg_offset"));
     irwriter_rawf(w, "  %%r%d = getelementptr i8, ptr %%table, i64 %%r%d\n", irwriter_next_reg(w), (int)off2);
@@ -529,6 +535,7 @@ void peg_ir_emit_gep_helpers(IrWriter* w) {
     irwriter_define_startf(w, "gep_slot",
                            "internal ptr @gep_slot(ptr %%table, i64 %%col, i64 %%sizeof_col, i64 %%slot_byte_offset)");
     irwriter_bb(w);
+    irwriter_dbg(w, 1, 1);
     IrVal row = irwriter_binop(w, "mul", "i64", irwriter_imm(w, "%col"), irwriter_imm(w, "%sizeof_col"));
     IrVal off = irwriter_binop(w, "add", "i64", row, irwriter_imm(w, "%slot_byte_offset"));
     irwriter_rawf(w, "  %%r%d = getelementptr i8, ptr %%table, i64 %%r%d\n", irwriter_next_reg(w), (int)off);
@@ -541,6 +548,7 @@ void peg_ir_emit_gep_helpers(IrWriter* w) {
     irwriter_define_startf(w, "gep_tag",
                            "internal ptr @gep_tag(ptr %%table, i64 %%col, i64 %%sizeof_col, i64 %%tag_byte_offset)");
     irwriter_bb(w);
+    irwriter_dbg(w, 1, 1);
     IrVal row = irwriter_binop(w, "mul", "i64", irwriter_imm(w, "%col"), irwriter_imm(w, "%sizeof_col"));
     IrVal off = irwriter_binop(w, "add", "i64", row, irwriter_imm(w, "%tag_byte_offset"));
     irwriter_rawf(w, "  %%r%d = getelementptr i8, ptr %%table, i64 %%r%d\n", irwriter_next_reg(w), (int)off);
@@ -554,6 +562,7 @@ void peg_ir_emit_gep_helpers(IrWriter* w) {
                            "internal void @tag_writeback(ptr %%table, i64 %%col, i64 %%sizeof_col, i64 "
                            "%%tag_byte_offset, i64 %%clear_mask, i64 %%tag_bits)");
     irwriter_bb(w);
+    irwriter_dbg(w, 1, 1);
     IrVal p =
         irwriter_call_retf(w, "ptr", "gep_tag", "ptr %%table, i64 %%col, i64 %%sizeof_col, i64 %%tag_byte_offset");
     IrVal old = irwriter_load(w, "i64", p);
