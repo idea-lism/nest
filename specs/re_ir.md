@@ -17,15 +17,50 @@ typedef enum {
   RE_IR_APPEND_HEX,
   RE_IR_LPAREN, // re_lparen()
   RE_IR_RPAREN, // re_rparen()
-  RE_FORK, // re_fork() on new branches
+  RE_IR_FORK, // re_fork() on new branches
+  RE_IR_LOOP_BACK, // aut_epsilon(cur_state, group_start) for + and * loops
   RE_IR_ACTION, // re_action()
+  RE_IR_FRAG_REF, // the fragment to be inlined, start=frag_id
 } ReIrKind;
 
 typedef struct {
   ReIrKind kind;
-  int32_t start;
+  int32_t start; // start cp or frag id
   int32_t end;
+
+  // debug info
+  int32_t line; // 1-based
+  int32_t col;  // 1-based, by cp
 } ReIrOp;
 
 typedef ReIrOp* ReIr; // darray
 ```
+
+The frag_ref is here because regexp are parsed before `%define` resolves.
+
+We have `re_ir_exec()` to materialize the representation into a `Re` type:
+
+```c
+typedef ReIr* ReFrags;
+
+typedef enum {
+  RE_IR_OK,
+  RE_IR_ERR_RECURSION, // frag_ref recurses
+  RE_IR_ERR_MISSING_FRAG_ID, // frags size too small or frags[frag_id] is empty
+  RE_IR_ERR_PAREN_MISMATCH, // too many right-paren, or missign right-paren at end
+  RE_IR_ERR_BRACKET_MISMATCH,
+} ReIrErrKind;
+
+typedef struct {
+  ReIrErrKind err_type;
+  int missing_frag_id; // set when RE_IR_ERR_MISSING_FRAG_ID
+  int line;
+  int col;
+} ReIrExecResult;
+
+// interpret IR into re.h calls, when met with frag_ref,
+// lookup the ReIr in fragment and recursively execute it (frags may ref frags too)
+ReIrExecResult re_ir_exec(Re* re, ReIr ir, const char* source_file_name, ReFrags frags);
+```
+
+Implement detail for infinite recursion detect: have a ref-stack in VM, and check stack.

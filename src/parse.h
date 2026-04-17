@@ -105,11 +105,6 @@ typedef enum {
 #include "token_tree.h"
 #include "vpa.h"
 
-typedef struct {
-  char* name;
-  ReIr re;
-} ReFragment;
-
 // Ignore entry (parse-internal, used by post_process for validation)
 typedef struct {
   Symtab names;
@@ -124,7 +119,8 @@ typedef struct {
 
   TokenTree* tree;
 
-  ReFragment* re_frags;
+  ReFrags re_frags;        // darray of ReIr, indexed by frag_id
+  Symtab re_frag_names;    // frag name -> frag_id
 
   VpaScope* vpa_scopes;
   EffectDecls effect_decls;

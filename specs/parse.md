@@ -317,22 +317,22 @@ bool _parse_re_str(const char* src, TokenChunk* chunk, int32_t* tpos) {
 }
 ```
 
-### Regexp parsing and VPA parse result
-
-Before parsing, call `_collect_re_frags()` to iterate the token tree for the `%define` rules to build the fragment table.
-
-When met `re_ref` sub-scope, replace the scope chunk with the `%define`-ed regexp.
-
-Note that `%define` can reference each other, must avoid infinite recursions.
-
 ### Recursive descend parsing
 
 - Token ids are allocated scopes too
 - Recursive descend parsers work on scope level
   - the input token stream buffer is a scoped chunk
   - no expand sub-scope parsing -- sub-scopes are just a token_id match
-- Regexps are converted to [IR](re_ir.md)
+- Regexps are converted to [IR](re_ir.md), a flattened representation of AST. Since regexp scopes are parsed BEFORE the vpa scope, we have to add the frag_ref in re_ir. Then in vpa's parsing, we execute the IR, inlining the frag_ref by lookup.
 - When a scope is complete (at `.end` hook), it should invoke recursive descend parsing on the token stream chunk
+
+### Regexp parsing and VPA parse result
+
+When met `re_ref` sub-scope, insert frag_ref into re_ir, by looking up / create `Symtab re_frag_names` for the index.
+
+The `%define` directives sets the `ReIr` item into the `ReFrags frags`, by looking up / create `Symtab re_frag_names` for the index.
+
+Then in `re_ir_exec(...)` call, we pass the `frags` darray for the lookup.
 
 ### Token & Hook numbering
 

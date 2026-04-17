@@ -212,7 +212,7 @@ static void _build_ch(Aut* a, Re* re, IrWriter* w) {
 
 TEST(test_append_ch) {
   char* out = _gen_ir(_build_ch);
-  assert(strstr(out, "i32 65")); // 'A'
+  assert(strstr(out, "i64 65")); // 'A'
   free(out);
 }
 
@@ -225,8 +225,8 @@ static void _build_ch_seq(Aut* a, Re* re, IrWriter* w) {
 
 TEST(test_append_ch_seq) {
   char* out = _gen_ir(_build_ch_seq);
-  assert(strstr(out, "i32 72"));  // H
-  assert(strstr(out, "i32 105")); // i
+  assert(strstr(out, "i64 72"));  // H
+  assert(strstr(out, "i64 105")); // i
   free(out);
 }
 
@@ -243,8 +243,8 @@ static void _build_append_range(Aut* a, Re* re, IrWriter* w) {
 
 TEST(test_append_range) {
   char* out = _gen_ir(_build_append_range);
-  assert(strstr(out, "icmp sge i32 %cp"));
-  assert(strstr(out, "icmp sle i32 %cp"));
+  assert(strstr(out, "icmp sge i64 %cp"));
+  assert(strstr(out, "icmp sle i64 %cp"));
   free(out);
 }
 
@@ -261,10 +261,10 @@ static void _build_append_multi_range(Aut* a, Re* re, IrWriter* w) {
 TEST(test_append_multi_range) {
   char* out = _gen_ir(_build_append_multi_range);
   // both ranges present
-  assert(strstr(out, "icmp sge i32 %cp"));
-  assert(strstr(out, "icmp sle i32 %cp"));
-  assert(strstr(out, "icmp sge i32 %cp"));
-  assert(strstr(out, "icmp sle i32 %cp"));
+  assert(strstr(out, "icmp sge i64 %cp"));
+  assert(strstr(out, "icmp sle i64 %cp"));
+  assert(strstr(out, "icmp sge i64 %cp"));
+  assert(strstr(out, "icmp sle i64 %cp"));
   free(out);
 }
 
@@ -282,9 +282,9 @@ static void _build_group(Aut* a, Re* re, IrWriter* w) {
 
 TEST(test_group) {
   char* out = _gen_ir(_build_group);
-  assert(strstr(out, "i32 97"));
-  assert(strstr(out, "i32 98"));
-  assert(strstr(out, "i32 99"));
+  assert(strstr(out, "i64 97"));
+  assert(strstr(out, "i64 98"));
+  assert(strstr(out, "i64 99"));
   free(out);
 }
 
@@ -302,8 +302,8 @@ static void _build_alt(Aut* a, Re* re, IrWriter* w) {
 
 TEST(test_alt) {
   char* out = _gen_ir(_build_alt);
-  assert(strstr(out, "i32 97"));
-  assert(strstr(out, "i32 98"));
+  assert(strstr(out, "i64 97"));
+  assert(strstr(out, "i64 98"));
   free(out);
 }
 
@@ -326,11 +326,11 @@ static void _build_complex(Aut* a, Re* re, IrWriter* w) {
 TEST(test_complex) {
   char* out = _gen_ir(_build_complex);
   assert(strstr(out, "define {i64, i64} @match"));
-  assert(strstr(out, "i32 97"));  // a
-  assert(strstr(out, "i32 98"));  // b
-  assert(strstr(out, "i32 99"));  // c
-  assert(strstr(out, "i32 100")); // d
-  assert(strstr(out, "i32 101")); // e
+  assert(strstr(out, "i64 97"));  // a
+  assert(strstr(out, "i64 98"));  // b
+  assert(strstr(out, "i64 99"));  // c
+  assert(strstr(out, "i64 100")); // d
+  assert(strstr(out, "i64 101")); // e
   free(out);
 }
 
@@ -344,7 +344,7 @@ static void _build_action(Aut* a, Re* re, IrWriter* w) {
 
 TEST(test_action) {
   char* out = _gen_ir(_build_action);
-  assert(strstr(out, "i32 42, 1"));
+  assert(strstr(out, "i64 42, 1"));
   free(out);
 }
 

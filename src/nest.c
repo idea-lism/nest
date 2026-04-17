@@ -617,6 +617,7 @@ static int32_t _cmd_compile(int32_t argc, char** argv) {
           .tokens = ps->tokens,
           .hooks = ps->hooks,
           .source_file_name = input,
+          .re_frags = ps->re_frags,
       },
       hw, w, prefix, main_rule_row);
 

@@ -285,6 +285,7 @@ static void _lex_scope(LexCtx* ctx, ScopeId scope_id) {
 static Token* _peek(TokenChunk* chunk, int32_t tpos) {
   return tpos < (int32_t)darray_size(chunk->tokens) ? &chunk->tokens[tpos] : NULL;
 }
+static Location _tloc(ParseState* ps, Token* t) { return tt_locate(ps->tree, t->cp_start); }
 static Token* _next(TokenChunk* chunk, int32_t* tpos) {
   Token* t = _peek(chunk, *tpos);
   if (t) {
@@ -317,20 +318,11 @@ static TokenChunk* _scope_chunk(ParseState* ps, Token* t) { return &ps->tree->ta
 
 // --- Fragment lookup ---
 
-static ReIr _lookup_frag(ParseState* ps, Token* t) {
-  UstrIter a = {0}, b = {0};
-  ustr_iter_init(&a, ps->src, t->cp_start);
-  ustr_iter_init(&b, ps->src, t->cp_start + t->cp_size);
-  const char* p = ps->src + a.byte_off;
-  int32_t len = b.byte_off - a.byte_off;
-  for (int32_t i = 0; i < (int32_t)darray_size(ps->re_frags); i++) {
-    if (strncmp(ps->re_frags[i].name, p, (size_t)len) == 0 && ps->re_frags[i].name[len] == '\0') {
-      return re_ir_clone(ps->re_frags[i].re);
-    }
-  }
-  _error_at(ps, t, "undefined fragment '%.*s'", len, p);
-  return NULL;
+// lookup/create frag_id for a fragment name token
+static int32_t _frag_id(ParseState* ps, Token* t) {
+  return _intern_tok(&ps->re_frag_names, ps->src, t);
 }
+
 
 // ============================================================================
 // RE recursive descent — see specs/bootstrap.nest [[peg]] "Regex AST rules"
@@ -347,51 +339,60 @@ static int32_t _parse_charclass_char(ParseState* ps, TokenChunk* chunk, int32_t*
 
 // charclass_unit = [ charclass_char @range_sep charclass_char : range | charclass_char : single ]
 static ReIr _parse_charclass_unit(ParseState* ps, TokenChunk* chunk, int32_t* tpos, ReIr ir) {
+  Token* first = _peek(chunk, *tpos);
+  Location loc = _tloc(ps, first);
   int32_t lo = _parse_charclass_char(ps, chunk, tpos);
   if (_at(chunk, *tpos, TOK_RANGE_SEP)) {
     _next(chunk, tpos);
     int32_t hi = _parse_charclass_char(ps, chunk, tpos);
-    return re_ir_emit(ir, RE_IR_APPEND_CH, lo, hi);
+    return re_ir_emit(ir, RE_IR_APPEND_CH, lo, hi, loc.line, loc.col);
   }
-  return re_ir_emit(ir, RE_IR_APPEND_CH, lo, lo);
+  return re_ir_emit(ir, RE_IR_APPEND_CH, lo, lo, loc.line, loc.col);
 }
 
 // charclass = charclass_unit+
 static ReIr _parse_charclass_body(ParseState* ps, TokenChunk* chunk, int32_t* tpos, ReIr ir, bool neg, bool icase) {
-  ir = re_ir_emit(ir, RE_IR_RANGE_BEGIN, 0, 0);
+  Token* first = _peek(chunk, *tpos);
+  int32_t line = 0, col = 0;
+  if (first) {
+    Location loc = _tloc(ps, first);
+    line = loc.line;
+    col = loc.col;
+  }
+  ir = re_ir_emit(ir, RE_IR_RANGE_BEGIN, 0, 0, line, col);
   if (neg) {
-    ir = re_ir_emit(ir, RE_IR_RANGE_NEG, 0, 0);
+    ir = re_ir_emit(ir, RE_IR_RANGE_NEG, 0, 0, line, col);
   }
   while (!_at_end(chunk, *tpos) && _is_charclass_char(_peek(chunk, *tpos)->term_id)) {
     ir = _parse_charclass_unit(ps, chunk, tpos, ir);
   }
   if (icase) {
-    ir = re_ir_emit(ir, RE_IR_RANGE_IC, 0, 0);
+    ir = re_ir_emit(ir, RE_IR_RANGE_IC, 0, 0, line, col);
   }
-  return re_ir_emit(ir, RE_IR_RANGE_END, 0, 0);
+  return re_ir_emit(ir, RE_IR_RANGE_END, 0, 0, line, col);
 }
 
-static ReIr _emit_shorthand(ReIr ir, int32_t tok_id) {
-  ir = re_ir_emit(ir, RE_IR_RANGE_BEGIN, 0, 0);
+static ReIr _emit_shorthand(ReIr ir, int32_t tok_id, int32_t line, int32_t col) {
+  ir = re_ir_emit(ir, RE_IR_RANGE_BEGIN, 0, 0, line, col);
   switch (tok_id) {
   case TOK_RE_DOT:
-    ir = re_ir_emit(ir, RE_IR_RANGE_NEG, 0, 0);
-    ir = re_ir_emit(ir, RE_IR_APPEND_CH, '\n', '\n');
+    ir = re_ir_emit(ir, RE_IR_RANGE_NEG, 0, 0, line, col);
+    ir = re_ir_emit(ir, RE_IR_APPEND_CH, '\n', '\n', line, col);
     break;
   case TOK_RE_SPACE_CLASS:
-    ir = re_ir_emit(ir, RE_IR_APPEND_GROUP_S, 0, 0);
+    ir = re_ir_emit(ir, RE_IR_APPEND_GROUP_S, 0, 0, line, col);
     break;
   case TOK_RE_WORD_CLASS:
-    ir = re_ir_emit(ir, RE_IR_APPEND_GROUP_W, 0, 0);
+    ir = re_ir_emit(ir, RE_IR_APPEND_GROUP_W, 0, 0, line, col);
     break;
   case TOK_RE_DIGIT_CLASS:
-    ir = re_ir_emit(ir, RE_IR_APPEND_GROUP_D, 0, 0);
+    ir = re_ir_emit(ir, RE_IR_APPEND_GROUP_D, 0, 0, line, col);
     break;
   case TOK_RE_HEX_CLASS:
-    ir = re_ir_emit(ir, RE_IR_APPEND_GROUP_H, 0, 0);
+    ir = re_ir_emit(ir, RE_IR_APPEND_GROUP_H, 0, 0, line, col);
     break;
   }
-  return re_ir_emit(ir, RE_IR_RANGE_END, 0, 0);
+  return re_ir_emit(ir, RE_IR_RANGE_END, 0, 0, line, col);
 }
 
 static bool _is_re_unit(int32_t id) {
@@ -406,15 +407,19 @@ static ReIr _parse_re_unit(ParseState* ps, TokenChunk* chunk, int32_t* tpos, ReI
   if (!t) {
     return ir;
   }
+  Location loc = _tloc(ps, t);
   switch (t->term_id) {
   case LIT_LPAREN:
     _next(chunk, tpos);
-    ir = re_ir_emit(ir, RE_IR_LPAREN, 0, 0);
+    ir = re_ir_emit(ir, RE_IR_LPAREN, 0, 0, loc.line, loc.col);
     ir = _parse_re_expr(ps, chunk, tpos, ir, icase);
     if (_at(chunk, *tpos, LIT_RPAREN)) {
+      Token* rp = _peek(chunk, *tpos);
+      Location rloc = _tloc(ps, rp);
       _next(chunk, tpos);
+      return re_ir_emit(ir, RE_IR_RPAREN, 0, 0, rloc.line, rloc.col);
     }
-    return re_ir_emit(ir, RE_IR_RPAREN, 0, 0);
+    return re_ir_emit(ir, RE_IR_RPAREN, 0, 0, loc.line, loc.col);
   case SCOPE_CHARCLASS: {
     _next(chunk, tpos);
     TokenChunk* cc = _scope_chunk(ps, t);
@@ -430,19 +435,22 @@ static ReIr _parse_re_unit(ParseState* ps, TokenChunk* chunk, int32_t* tpos, ReI
   case TOK_RE_DIGIT_CLASS:
   case TOK_RE_HEX_CLASS:
     _next(chunk, tpos);
-    return _emit_shorthand(ir, t->term_id);
+    return _emit_shorthand(ir, t->term_id, loc.line, loc.col);
   case TOK_RE_BOF:
     _next(chunk, tpos);
-    return re_ir_emit_ch(ir, LEX_CP_BOF);
+    return re_ir_emit(ir, RE_IR_APPEND_CH, LEX_CP_BOF, LEX_CP_BOF, loc.line, loc.col);
   case TOK_RE_EOF:
     _next(chunk, tpos);
-    return re_ir_emit_ch(ir, LEX_CP_EOF);
+    return re_ir_emit(ir, RE_IR_APPEND_CH, LEX_CP_EOF, LEX_CP_EOF, loc.line, loc.col);
   case SCOPE_RE_REF: {
     _next(chunk, tpos);
     TokenChunk* ref_chunk = _scope_chunk(ps, t);
     for (int32_t i = 0; i < (int32_t)darray_size(ref_chunk->tokens); i++) {
       if (ref_chunk->tokens[i].term_id == TOK_RE_REF) {
-        return re_ir_emit(ir, RE_IR_FRAG_REF, ref_chunk->tokens[i].cp_start, ref_chunk->tokens[i].cp_size);
+        Token* ref_tok = &ref_chunk->tokens[i];
+        int32_t fid = _frag_id(ps, ref_tok);
+        Location loc = tt_locate(ps->tree, ref_tok->cp_start);
+        return re_ir_emit(ir, RE_IR_FRAG_REF, fid, 0, loc.line, loc.col);
       }
     }
     return ir;
@@ -453,7 +461,7 @@ static ReIr _parse_re_unit(ParseState* ps, TokenChunk* chunk, int32_t* tpos, ReI
   case TOK_PLAIN_ESCAPE: {
     _next(chunk, tpos);
     int32_t cp = _decode_cp(ps->src, t);
-    return re_ir_emit(ir, icase ? RE_IR_APPEND_CH_IC : RE_IR_APPEND_CH, cp, cp);
+    return re_ir_emit(ir, icase ? RE_IR_APPEND_CH_IC : RE_IR_APPEND_CH, cp, cp, loc.line, loc.col);
   }
   default:
     return ir;
@@ -477,25 +485,28 @@ static ReIr _parse_re_quantified(ParseState* ps, TokenChunk* chunk, int32_t* tpo
   if (q->term_id == LIT_QUESTION) {
     // a? = (a | ε)
     _next(chunk, tpos);
-    ReIrOp op = {RE_IR_LPAREN, 0, 0};
+    Location qloc = _tloc(ps, q);
+    ReIrOp op = {RE_IR_LPAREN, 0, 0, qloc.line, qloc.col};
     ir = darray_insert(ir, (size_t)s, &op);
-    ir = re_ir_emit(ir, RE_IR_FORK, 0, 0);
-    ir = re_ir_emit(ir, RE_IR_RPAREN, 0, 0);
+    ir = re_ir_emit(ir, RE_IR_FORK, 0, 0, qloc.line, qloc.col);
+    ir = re_ir_emit(ir, RE_IR_RPAREN, 0, 0, qloc.line, qloc.col);
   } else if (q->term_id == LIT_PLUS) {
     // a+ = (a LOOP_BACK)
     _next(chunk, tpos);
-    ReIrOp op = {RE_IR_LPAREN, 0, 0};
+    Location qloc = _tloc(ps, q);
+    ReIrOp op = {RE_IR_LPAREN, 0, 0, qloc.line, qloc.col};
     ir = darray_insert(ir, (size_t)s, &op);
-    ir = re_ir_emit(ir, RE_IR_LOOP_BACK, 0, 0);
-    ir = re_ir_emit(ir, RE_IR_RPAREN, 0, 0);
+    ir = re_ir_emit(ir, RE_IR_LOOP_BACK, 0, 0, qloc.line, qloc.col);
+    ir = re_ir_emit(ir, RE_IR_RPAREN, 0, 0, qloc.line, qloc.col);
   } else if (q->term_id == LIT_STAR) {
     // a* = (a LOOP_BACK | ε)
     _next(chunk, tpos);
-    ReIrOp op = {RE_IR_LPAREN, 0, 0};
+    Location qloc = _tloc(ps, q);
+    ReIrOp op = {RE_IR_LPAREN, 0, 0, qloc.line, qloc.col};
     ir = darray_insert(ir, (size_t)s, &op);
-    ir = re_ir_emit(ir, RE_IR_LOOP_BACK, 0, 0);
-    ir = re_ir_emit(ir, RE_IR_FORK, 0, 0);
-    ir = re_ir_emit(ir, RE_IR_RPAREN, 0, 0);
+    ir = re_ir_emit(ir, RE_IR_LOOP_BACK, 0, 0, qloc.line, qloc.col);
+    ir = re_ir_emit(ir, RE_IR_FORK, 0, 0, qloc.line, qloc.col);
+    ir = re_ir_emit(ir, RE_IR_RPAREN, 0, 0, qloc.line, qloc.col);
   }
   return ir;
 }
@@ -506,8 +517,10 @@ static ReIr _parse_re_expr(ParseState* ps, TokenChunk* chunk, int32_t* tpos, ReI
     ir = _parse_re_quantified(ps, chunk, tpos, ir, icase);
   }
   while (_at(chunk, *tpos, LIT_OR)) {
+    Token* or_tok = _peek(chunk, *tpos);
+    Location oloc = _tloc(ps, or_tok);
     _next(chunk, tpos);
-    ir = re_ir_emit(ir, RE_IR_FORK, 0, 0);
+    ir = re_ir_emit(ir, RE_IR_FORK, 0, 0, oloc.line, oloc.col);
     while (!_at_end(chunk, *tpos) && _is_re_unit(_peek(chunk, *tpos)->term_id)) {
       ir = _parse_re_quantified(ps, chunk, tpos, ir, icase);
     }
@@ -535,7 +548,9 @@ static bool _parse_re_str(ParseState* ps, TokenChunk* chunk) {
   for (int32_t i = 0; i < (int32_t)darray_size(chunk->tokens); i++) {
     Token* t = &chunk->tokens[i];
     if (_is_str_char(t->term_id)) {
-      ir = re_ir_emit_ch(ir, _decode_cp(ps->src, t));
+      Location loc = _tloc(ps, t);
+      int32_t cp = _decode_cp(ps->src, t);
+      ir = re_ir_emit(ir, RE_IR_APPEND_CH, cp, cp, loc.line, loc.col);
     }
   }
   chunk->value = ir;
@@ -678,10 +693,10 @@ static bool _parse_scope_line(ParseState* ps, TokenChunk* chunk, int32_t* tpos, 
   } else if (t->term_id == TOK_RE_FRAG_ID) {
     _next(chunk, tpos);
     u.kind = VPA_RE;
-    u.re = _lookup_frag(ps, t);
-    if (!u.re) {
-      return false;
-    }
+    int32_t fid = _frag_id(ps, t);
+    Location loc = tt_locate(ps->tree, t->cp_start);
+    u.re = re_ir_new();
+    u.re = re_ir_emit(u.re, RE_IR_FRAG_REF, fid, 0, loc.line, loc.col);
     _parse_actions(ps, chunk, tpos, &u);
   } else if (t->term_id == TOK_VPA_ID) {
     _next(chunk, tpos);
@@ -824,12 +839,16 @@ static bool _parse_define_frag(ParseState* ps, TokenChunk* chunk, int32_t* tpos)
   }
 
   TokenChunk* re_chunk = _scope_chunk(ps, sc);
-  ReFragment frag = {.name = _tok_str(ps, name), .re = (ReIr)re_chunk->value};
-  re_chunk->value = NULL;
+  int32_t fid = _frag_id(ps, name);
+  // grow re_frags to fit fid
   if (!ps->re_frags) {
-    ps->re_frags = darray_new(sizeof(ReFragment), 0);
+    ps->re_frags = darray_new(sizeof(ReIr), 0);
   }
-  darray_push(ps->re_frags, frag);
+  while ((int32_t)darray_size(ps->re_frags) <= fid) {
+    darray_push(ps->re_frags, (ReIr)NULL);
+  }
+  ps->re_frags[fid] = (ReIr)re_chunk->value;
+  re_chunk->value = NULL;
   return true;
 }
 
@@ -889,10 +908,10 @@ static bool _parse_vpa_rule(ParseState* ps, TokenChunk* chunk, int32_t* tpos) {
   } else if (t->term_id == TOK_RE_FRAG_ID) {
     _next(chunk, tpos);
     leader.kind = VPA_RE;
-    leader.re = _lookup_frag(ps, t);
-    if (!leader.re) {
-      return false;
-    }
+    int32_t fid = _frag_id(ps, t);
+    Location loc = tt_locate(ps->tree, t->cp_start);
+    leader.re = re_ir_new();
+    leader.re = re_ir_emit(leader.re, RE_IR_FRAG_REF, fid, 0, loc.line, loc.col);
   } else {
     _error_at(ps, t, "expected re, string, or fragment ref");
     return false;
@@ -1223,10 +1242,10 @@ static void _free_state(ParseState* ps) {
   }
   darray_del(ps->peg_rules);
   for (int32_t i = 0; i < (int32_t)darray_size(ps->re_frags); i++) {
-    free(ps->re_frags[i].name);
-    re_ir_free(ps->re_frags[i].re);
+    re_ir_free(ps->re_frags[i]);
   }
   darray_del(ps->re_frags);
+  symtab_free(&ps->re_frag_names);
   for (int32_t i = 0; i < (int32_t)darray_size(ps->effect_decls); i++) {
     darray_del(ps->effect_decls[i].effects);
   }
@@ -1275,6 +1294,7 @@ bool parse_nest(ParseState* ps, const char* src) {
   symtab_intern(&ps->hooks, ".unparse"); // HOOK_ID_UNPARSE = 3
   symtab_init(&ps->scope_names, SCOPE_START);
   symtab_init(&ps->rule_names, 0);
+  symtab_init(&ps->re_frag_names, 0);
 
   UstrIter it = {0};
   ustr_iter_init(&it, src, 0);
@@ -1299,22 +1319,8 @@ bool parse_nest(ParseState* ps, const char* src) {
     return false;
   }
 
-  // first pass: collect %define fragments
   TokenChunk* vpa_chunk = &ps->tree->table[vpa_idx];
   int32_t tpos = 0;
-  {
-    int32_t saved = tpos;
-    while (!_at_end(vpa_chunk, tpos)) {
-      if (_at(vpa_chunk, tpos, LIT_DEFINE)) {
-        if (!_parse_define_frag(ps, vpa_chunk, &tpos)) {
-          return false;
-        }
-      } else {
-        _next(vpa_chunk, &tpos);
-      }
-    }
-    tpos = saved;
-  }
 
   if (!_parse_vpa(ps, vpa_chunk, &tpos)) {
     return false;
