@@ -72,6 +72,7 @@ typedef struct {
   EffectDecls effect_decls; // owned by ParseState
   Symtab tokens;            // owned by ParseState, can be used to lookup token name, start from 1
   Symtab hooks;             // owned by ParseState, can be used to lookup hook name, start from 0
+  Symtab ignore_names;      // owned by ParseState, names of tokens to suppress from stream
   const char* source_file_name;
   ReFrags re_frags; // owned by ParseState, indexed by frag_id
 } VpaGenInput;

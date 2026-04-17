@@ -2,9 +2,7 @@
   @dquote """
     @interp_open "#{"
     @ident "x"
-    @space " "
     @plus "+"
-    @space " "
     @ident "y"
     @interp_close "}"
   @dquote """
@@ -15,4 +13,13 @@ main
       @dquote
       str_part
         interp
+          @interp_open
+          expr
+            atom
+              value
+                @ident
+            atom
+              value
+                @ident
+          @interp_close
       @dquote

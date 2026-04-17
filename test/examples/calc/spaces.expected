@@ -1,16 +1,17 @@
 ------
 @number "10"
-@space " "
 @minus "-"
-@space " "
 @number "3"
-@space " "
 @slash "/"
-@space " "
 @number "2"
 ------
 main
   expr
     term
+      factor
+        @number
+    term
+      factor
+        @number
       factor
         @number

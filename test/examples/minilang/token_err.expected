@@ -1,9 +1,6 @@
-1:9: token error
+1:8: token error
 ------
 @lit.let "let"
-@space " "
 @ident "x"
-@space " "
 @assign "="
-@space " "
 ------

@@ -1,9 +1,9 @@
 ------
 @word "hello"
-@space " "
 @word "world"
-@space " "
 @word "foo"
 ------
 main
+  @word
+  @word
   @word

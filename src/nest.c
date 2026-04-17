@@ -472,6 +472,16 @@ static void _gen_example_c(FILE* f, const char* prefix, ParseState* ps) {
   fprintf(f, "    Location loc = tt_locate(tt, consumed);\n");
   fprintf(f, "    printf(\"%%d:%%d: token error\\n\", loc.line, loc.col);\n");
   fprintf(f, "  }\n");
+  // syntax error: PEG didn't consume all tokens in its chunk
+  fprintf(f, "  {\n");
+  fprintf(f, "    int64_t peg_end = res.parse_end_col;\n");
+  fprintf(f, "    int32_t n_tok = res.main.tc ? (int32_t)darray_size(res.main.tc->tokens) : 0;\n");
+  fprintf(f, "    if (n_tok > 0 && peg_end >= 0 && peg_end < n_tok) {\n");
+  fprintf(f, "      Token* err_tok = &res.main.tc->tokens[peg_end];\n");
+  fprintf(f, "      Location loc = tt_locate(tt, err_tok->cp_start);\n");
+  fprintf(f, "      printf(\"%%d:%%d: syntax error\\n\", loc.line, loc.col);\n");
+  fprintf(f, "    }\n");
+  fprintf(f, "  }\n");
 
   fprintf(f, "  printf(\"------\\n\");\n");
   fprintf(f, "  print_tokens(tt, tt->root, 0);\n");
@@ -633,6 +643,7 @@ static int32_t _cmd_compile(int32_t argc, char** argv) {
           .effect_decls = ps->effect_decls,
           .tokens = ps->tokens,
           .hooks = ps->hooks,
+          .ignore_names = ps->ignores.names,
           .source_file_name = input,
           .re_frags = ps->re_frags,
       },

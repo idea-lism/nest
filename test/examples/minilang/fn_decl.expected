@@ -1,10 +1,18 @@
 ------
 @lit.fn "fn"
-@space " "
 @ident "foo"
 @lparen "("
 @rparen ")"
-@space " "
 @lparen "("
 @rparen ")"
 ------
+main
+  decl
+    fn_decl
+      @lit.fn
+      @ident
+      @lparen
+      @rparen
+      body
+        @lparen
+        @rparen

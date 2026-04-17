@@ -175,6 +175,14 @@ static void _gen_scope_dfa(VpaGenInput* input, IrWriter* w, VpaScope* scope, Act
 
 // --- Dispatch function ---
 
+static bool _is_ignored_tok(VpaGenInput* input, int32_t tok_id) {
+  if (!input->ignore_names.offsets) {
+    return false;
+  }
+  const char* name = symtab_get(&input->tokens, tok_id);
+  return name && symtab_find(&input->ignore_names, name) >= 0;
+}
+
 static void _gen_dispatch(VpaGenInput* input, IrWriter* w, Actions actions) {
   int32_t n_actions = (int32_t)darray_size(actions);
 
@@ -248,8 +256,10 @@ static void _gen_dispatch(VpaGenInput* input, IrWriter* w, Actions actions) {
     for (int32_t j = 0; j < n_au; j++) {
       int32_t auid = au[j];
       if (auid > 0) {
-        // emit token
-        irwriter_call_void_fmtf(w, "tt_add", "i8* %%tt, i32 %d, i32 %%cp_start, i32 %%cp_size, i32 -1", auid);
+        // emit token (skip ignored tokens)
+        if (!_is_ignored_tok(input, auid)) {
+          irwriter_call_void_fmtf(w, "tt_add", "i8* %%tt, i32 %d, i32 %%cp_start, i32 %%cp_size, i32 -1", auid);
+        }
       } else {
         int32_t hook_id = -auid;
         if (hook_id == HOOK_ID_BEGIN) {
@@ -599,8 +609,8 @@ static void _gen_vpa_lex(VpaGenInput* input, IrWriter* w, const char* prefix) {
 
 // --- {prefix}_parse / {prefix}_cleanup ---
 
-// ParseResult = {PegRef, TokenTree*, ParseErrors} = {i8*, i32, i32, i8*, i8*}
-#define PARSE_RESULT_TY "{i8*, i64, i64, i8*, i8*}"
+// ParseResult = {PegRef, TokenTree*, ParseErrors, parse_end_col} = {i8*, i64, i64, i8*, i8*, i64}
+#define PARSE_RESULT_TY "{i8*, i64, i64, i8*, i8*, i64}"
 
 static void _gen_parse_entry(IrWriter* w, const char* prefix, int32_t main_rule_row) {
   if (!prefix) {
@@ -633,7 +643,8 @@ static void _gen_parse_entry(IrWriter* w, const char* prefix, int32_t main_rule_
   // call parse_main on the root scope
   IrVal stack_buf = (IrVal)(irwriter_next_reg(w));
   irwriter_rawf(w, "  %%r%d = alloca i64, i32 1024\n", (int)stack_buf);
-  irwriter_call_retf(w, "{i64, i64}", "parse_main", "ptr %%r%d, ptr %%r%d", (int)tt, (int)stack_buf);
+  IrVal parse_ret = irwriter_call_retf(w, "{i64, i64}", "parse_main", "ptr %%r%d, ptr %%r%d", (int)tt, (int)stack_buf);
+  IrVal parse_end_col = irwriter_extractvalue(w, "{i64, i64}", parse_ret, 0);
   IrVal tc = irwriter_call_retf(w, "ptr", "tt_current", "ptr %%r%d", (int)tt);
   // store fields to sret pointer: {PegRef.tc, PegRef.col, PegRef.row, tt, errors}
   // field 0: PegRef.tc (ptr) at offset 0
@@ -661,6 +672,11 @@ static void _gen_parse_entry(IrWriter* w, const char* prefix, int32_t main_rule_
                 irwriter_next_reg(w));
   IrVal f4 = (IrVal)(irwriter_next_reg(w) - 1);
   irwriter_store(w, "ptr", irwriter_imm(w, "null"), f4);
+  // field 5: parse_end_col
+  irwriter_rawf(w, "  %%r%d = getelementptr inbounds " PARSE_RESULT_TY ", ptr %%retval, i32 0, i32 5\n",
+                irwriter_next_reg(w));
+  IrVal f5 = (IrVal)(irwriter_next_reg(w) - 1);
+  irwriter_store(w, "i64", parse_end_col, f5);
   irwriter_ret_void(w);
   irwriter_define_end(w);
 
@@ -755,6 +771,7 @@ static void _gen_header(VpaGenInput* input, HeaderWriter* hw, const char* prefix
   hdwriter_puts(hw, "  PegRef main;\n");
   hdwriter_puts(hw, "  TokenTree* tt;\n");
   hdwriter_puts(hw, "  ParseErrors errors;\n");
+  hdwriter_puts(hw, "  int64_t parse_end_col;\n");
   hdwriter_puts(hw, "} ParseResult;\n");
   hdwriter_putc(hw, '\n');
 

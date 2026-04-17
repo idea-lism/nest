@@ -6,7 +6,8 @@
 - **Homebrew available.** `setup.rb` uses `brew install` where possible.
 - **Ruby only.** No Python. Scripts use stdlib only (no gems beyond ERB).
 - **`build/release/nest` already built.** Benchmarks assume `ruby config.rb release && ninja` was run. Don't rebuild nest itself.
-- **Deterministic inputs.** Seeded PRNG, committed to git so runs are reproducible without regeneration.
+- **Internal benchmark inputs deterministic.** Seeded PRNG, committed to git so nest-only ablation runs are reproducible without regeneration.
+- **Comparison inputs/grammars come from PackCC benchmark repo.** For cross-framework comparison, use PackCC benchmark grammars and inputs verbatim instead of generated data.
 - **No incremental/partial runs.** Each subcommand runs its full scope. No resume logic.
 - **Memory via `/usr/bin/time -l`.** External measurement. Runners don't need `getrusage` — the orchestrator wraps with `/usr/bin/time -l` and parses `maximum resident set size` (bytes on macOS).
 - **Timing via `clock_gettime(CLOCK_MONOTONIC)` inside runners.** Each runner prints CSV to stdout. Orchestrator captures it.
@@ -33,10 +34,12 @@ benchmark/
       grammar.peg
       grammar.js        # tree-sitter-kotlin
   inputs/
-    gen_inputs.rb      # deterministic input generator
-    calc/              # generated: xs(1K) sm(10K) md(100K) lg(1M)
-    json/
-    kotlin/
+    gen_inputs.rb      # deterministic generator for internal benchmarks only
+    internal/
+      calc/            # generated: xs(1K) sm(10K) md(100K) lg(1M)
+      json/
+      kotlin/
+    compare/           # copied from PackCC benchmark repo
   runners/
     nest_runner.c.erb  # template: compile-time specialized per grammar
     packcc_runner.c    # generic: packcc reads stdin
@@ -80,7 +83,9 @@ benchmark/
 
 ## Input Generation (`inputs/gen_inputs.rb`)
 
-Deterministic (seeded PRNG). Each grammar × 4 sizes × 2–3 variants.
+Internal benchmarks only. Deterministic (seeded PRNG). Each grammar × 4 sizes × 2–3 variants.
+
+Comparison benchmarks must not use generated inputs. They use grammar/input files from https://github.com/arithy/packcc/tree/main/benchmark verbatim.
 
 ### Sizes
 | Label | Target | Purpose |
@@ -143,7 +148,7 @@ grammar,input,size_bytes,memoize,opt,parse_us,throughput_mbs,rss_kb,token_count,
 
 Nest (best config: `shared -O2`) vs PackCC vs tree-sitter.
 
-Same inputs, same machine, same measurement.
+Use grammar/input from https://github.com/arithy/packcc/tree/main/benchmark for cross-framework comparison. No generated inputs here. Same machine, same measurement.
 
 **Metrics (cross-framework comparable):**
 
@@ -212,7 +217,7 @@ Tasks:
 1. Clone packcc → `benchmark/vendor/packcc/`, build `packcc` binary with `xcrun clang -O2`
 2. `brew install tree-sitter` (skip if already installed)
 3. Clone tree-sitter-json, tree-sitter-kotlin → `benchmark/vendor/`
-4. Copy packcc benchmark inputs to `benchmark/inputs/` (calc.txt, json.json, kotlin.kt)
+4. Copy PackCC benchmark grammars/inputs to `benchmark/inputs/compare/` (for example `calc.txt`, `json.json`, `kotlin.kt`) and keep them verbatim for comparison runs
 
 ## run.rb
 
@@ -220,11 +225,11 @@ Main orchestrator. Subcommands:
 
 ```
 ruby benchmark/run.rb setup          # run setup.rb
-ruby benchmark/run.rb gen            # generate inputs
+ruby benchmark/run.rb gen            # generate internal-only inputs
 ruby benchmark/run.rb internal       # run internal benchmarks
 ruby benchmark/run.rb compare        # run comparison benchmarks
 ruby benchmark/run.rb report         # generate markdown report from CSVs
-ruby benchmark/run.rb all            # gen + internal + compare + report
+ruby benchmark/run.rb all            # gen(internal only) + internal + compare + report
 ```
 
 Each `run` step:
@@ -271,7 +276,7 @@ Each file must be completed fully before moving to the next. No scaffolding stub
 4. `benchmark/grammars/json/grammar.peg` — copy from packcc repo
 5. `benchmark/grammars/calc/grammar.js` — tree-sitter calc grammar
 6. `benchmark/grammars/json/grammar.js` — tree-sitter json grammar (from tree-sitter-json)
-7. `benchmark/inputs/gen_inputs.rb` — full input generator for all grammars and sizes, working end-to-end
+7. `benchmark/inputs/gen_inputs.rb` — full input generator for internal benchmarks / ablation studies only, working end-to-end
 8. `benchmark/setup.rb` — install packcc + tree-sitter + grammar repos into vendor/, fully working
 9. `benchmark/runners/nest_runner.c.erb` — complete timing harness, CSV output, all metrics
 10. `benchmark/runners/packcc_runner.c` — complete timing harness, CSV output

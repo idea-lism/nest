@@ -1,10 +1,18 @@
 ------
 @lit.let "let"
-@space " "
 @ident "x"
-@space " "
 @assign "="
-@space " "
 @number "42"
 @semi ";"
 ------
+main
+  decl
+    let_decl
+      @lit.let
+      @ident
+      @assign
+      expr
+        term
+          factor
+            @number
+      @semi

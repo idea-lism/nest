@@ -1,22 +1,26 @@
 ------
 @lit.fn "fn"
-@space " "
 @ident "add"
 @lparen "("
 @ident "a"
 @comma ","
-@space " "
 @ident "b"
 @rparen ")"
-@space " "
 @lparen "("
 @lit.return "return"
-@space " "
 @ident "a"
-@space " "
 @plus "+"
-@space " "
 @ident "b"
 @semi ";"
 @rparen ")"
 ------
+main
+  decl
+    fn_decl
+      @lit.fn
+      @ident
+      @lparen
+      param
+        @ident
+      @rparen
+      body

@@ -1,28 +1,48 @@
 ------
 @lit.let "let"
-@space " "
 @ident "h"
-@space " "
 @assign "="
-@space " "
 @hex "0xFF"
 @semi ";"
-@space " "
 @lit.let "let"
-@space " "
 @ident "t"
-@space " "
 @assign "="
-@space " "
 @true "TRUE"
 @semi ";"
-@space " "
 @lit.let "let"
-@space " "
 @ident "f"
-@space " "
 @assign "="
-@space " "
 @false "false"
 @semi ";"
 ------
+main
+  decl
+    let_decl
+      @lit.let
+      @ident
+      @assign
+      expr
+        term
+          factor
+            @hex
+      @semi
+  decl
+    let_decl
+      @lit.let
+      @ident
+      @assign
+      expr
+        term
+          factor
+            @true
+      @semi
+  decl
+    let_decl
+      @lit.let
+      @ident
+      @assign
+      expr
+        term
+          factor
+            @false
+      @semi

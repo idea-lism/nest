@@ -1,18 +1,39 @@
 ------
 @lit.fn "fn"
-@space " "
 @ident "main"
 @lparen "("
 @rparen ")"
-@space " "
 @lparen "("
 @ident "foo"
 @lparen "("
 @number "1"
 @comma ","
-@space " "
 @number "2"
 @rparen ")"
 @semi ";"
 @rparen ")"
 ------
+main
+  decl
+    fn_decl
+      @lit.fn
+      @ident
+      @lparen
+      @rparen
+      body
+        @lparen
+        stmt
+          expr_stmt
+            expr
+              term
+                factor
+                  fn_call
+                    @ident
+                    @lparen
+                    expr
+                      term
+                        factor
+                          @number
+                    @rparen
+            @semi
+        @rparen

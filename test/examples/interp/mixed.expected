@@ -1,14 +1,24 @@
 ------
 @ident "foo"
-@space " "
   @dquote """
   @str_char "b"
   @str_char "a"
   @str_char "r"
   @dquote """
-@space " "
 @number "42"
 ------
 main
   value
     @ident
+  value
+    str
+      @dquote
+      str_part
+        @str_char
+      str_part
+        @str_char
+      str_part
+        @str_char
+      @dquote
+  value
+    @number
