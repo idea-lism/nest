@@ -48,10 +48,11 @@ vpa = /\s*\[\[vpa\]\]\n/ .begin {
   /\.fail/ @hook_fail
   /\.unparse/ @hook_unparse
   ID @vpa_id
+  "EOF" @pseudo_frag_eof
   /[A-Z]\w*/ @re_frag_id
-  /\*\{ID}/ @module_id
-  /\.\{ID}/ @user_hook_id
-  /\@\{ID}/ @tok_id
+  /\*#{ID}/ @module_id
+  /\.#{ID}/ @user_hook_id
+  /\@#{ID}/ @tok_id
   re
   re_str
 }
@@ -81,12 +82,12 @@ peg = /\s*\[\[peg\]\]\n/ .begin {
   peg_commons
   branches
   *noise
-  /\z/ .end
+  EOF .end
 }
 
 *peg_commons = {
   /[a-z_]\w*/ @peg_id
-  /\@\{ID}/ @peg_tok_id
+  /\@#{ID}/ @peg_tok_id
   peg_str
   *peg_ops
   *noise
@@ -101,8 +102,8 @@ branches = "[" .begin {
 
 peg_tag = /:/ .begin {
   ID @tag_id
-  // .end
   *noise
+  /./ .unparse .end
 }
 
 *re_ops = @{
@@ -122,8 +123,6 @@ re = /(b|i|ib|bi)?\// .set_re_mode .begin {
   /\\w/ @re_word_class
   /\\d/ @re_digit_class
   /\\h/ @re_hex_class
-  /\\a/ @re_bof
-  /\\z/ @re_eof
   re_ref
   *re_ops
   *chars
@@ -192,7 +191,8 @@ define_frag = "%define" @re_frag_id re
 
 vpa_rule = @vpa_id "=" [
   re
-  peg_str
+  re_str
+  @pseudo_frag_eof
   @re_frag_id
 ] action* scope?
 
@@ -218,6 +218,7 @@ lit_scope = @nl* re_str+<@nl> @nl*
 scope_line = [
   re action*
   re_str action*
+  @pseudo_frag_eof action*
   @re_frag_id action*
   @vpa_id action*
   @module_id
@@ -242,8 +243,6 @@ re_unit = [
   @re_word_class
   @re_digit_class
   @re_hex_class
-  @re_bof
-  @re_eof
   @re_ref
   @char
   @codepoint

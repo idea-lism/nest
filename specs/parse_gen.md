@@ -138,8 +138,6 @@ typedef enum {
   TOK_RE_WORD_CLASS,
   TOK_RE_DIGIT_CLASS,
   TOK_RE_HEX_CLASS,
-  TOK_RE_BOF,
-  TOK_RE_EOF,
 
   // re_ref scope
   TOK_RE_REF,

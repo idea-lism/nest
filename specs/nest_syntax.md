@@ -41,6 +41,7 @@ name = FragName @token_id scope?
 ```
 
 - `name` — lowercase identifier (`[a-z_]\w*`)
+- `EOF` - special identifier, matches end of file
 - `@token_id` — token tag emitted on match
 - Scope `{ ... }` — nested lexer context (pushdown)
 
@@ -98,14 +99,12 @@ b/\x00\xff/       # binary mode
 | `\w` | Word class `[a-zA-Z0-9_]` |
 | `\d` | Digit class `[0-9]` |
 | `\h` | Hex digit class `[0-9a-fA-F]` |
-| `\a` | Beginning of file (BOF) |
-| `\z` | End of file (EOF) |
 | `\n` `\t` `\r` etc. | C escape sequences |
 | `\{XXXX}` | Unicode codepoint (hex) |
 | `[abc]` | Character class |
 | `[^abc]` | Negated character class |
 | `[a-z]` | Character range |
-| `\{FragName}` | Reference to `%define`d fragment |
+| `#{FragName}` | Reference to `%define`d fragment, can't reference EOF |
 
 ### Quantifiers
 

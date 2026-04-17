@@ -18,13 +18,12 @@ On top of aut.
   - `re_append_range(re, range, DebugInfo di)`
   - `re_rparen(re)` pop a stack state
   - `re_action(re, action_id)` make it emit action at current state
-- Define special codepoint (matches spec in aut.md)
-  - `LEX_CP_BOF`: -1
-  - `LEX_CP_EOF`: -2
 - Debug info
   - `re_append_ch` and `re_append_range` accept `DebugInfo di` (line/col in the regexp source file)
   - passed through to `aut_transition` so generated IR has DWARF locations pointing back to the regexp source
   - callers that don't need debug info pass `(DebugInfo){0, 0}` (line 0 means no debug location)
+
+Regexp don't handle EOF or other boundaries, because they are zero width (can stack multiple times but still consumes 0 input). Other DFA-based libraries don't handle this either.
 
 # Ignore-case APIs
 

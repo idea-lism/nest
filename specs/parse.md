@@ -83,7 +83,7 @@ More on the semantics (see also validations in [post_process](post_process.md)):
   - non-vpa peg -- just a peg sub-rule, no special handling
 
 in addition, the `re` scope has interpolation syntax:
-- `\{UPPER_CASED_ID}` references a predefined regexp fragment
+- `#{UPPER_CASED_ID}` references a predefined regexp fragment
 
 token stream at runtime looks like this if `scope1` is used in peg but `scope2` is not used in peg.
 ```
@@ -175,6 +175,10 @@ So after we called a generated `lex_xxx()` and met a mismatch / eof, we check th
 bool _lex_scope(ctx, scope_id) {
   ScopeConfig cfg = configs[scope_id];
   while (take a codepoint from input) {
+    if (scope has eof) {
+      // the scope has EOF (@pseudo_frag_eof)
+      ... check if we are at eof and invoke aciton if needed
+    }
     action_id = feed codepoint to current lexer
     if (action_id is mismatch) {
       if (last_action_id > 0) {
@@ -332,6 +336,7 @@ bool _parse_re_str(const char* src, TokenChunk* chunk, int32_t* tpos) {
 When met `re_ref` sub-scope, insert frag_ref into re_ir, by looking up / create `Symtab re_frag_names` for the index.
 
 The `%define` directives sets the `ReIr` item into the `ReFrags frags`, by looking up / create `Symtab re_frag_names` for the index.
+- Note that `%define` also checks that id should not equal to `EOF`
 
 Then in `re_ir_validate(...)` call, we pass the `frags` darray for the lookup and report regexp syntax errors.
 

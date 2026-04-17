@@ -10,7 +10,6 @@ Can define actions (terminal states) on certain states -- because optimization m
 - `aut_transition(dfa, TransitionDef tdef, DebugInfo di)`
   - arg `tdef`: `{int32_t from_state_id, int32_t to_state_id, int32_t cp_start, int32_t cp_end_inclusive}`
     - init state: 0
-    - special cp: `-1` for beginning of string, `-2` for end of string
   - arg `di`: `{int32_t source_file_line, int32_t source_file_col}`
 - `aut_epsilon(dfa, from_state, to_state)`
   - define epsilon transition
@@ -51,3 +50,5 @@ Can define actions (terminal states) on certain states -- because optimization m
 - IR also encodes debug information so lldb step-by-step can show the regexp source:
   - utilize dfa's `source_file_name`
   - utilize iterator's `line` and `col`
+
+Automata don't handle EOF or other boundaries, because it is zero width (can stack multiple times but still consumes 0 input).
