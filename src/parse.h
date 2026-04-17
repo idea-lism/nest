@@ -119,8 +119,8 @@ typedef struct {
 
   TokenTree* tree;
 
-  ReFrags re_frags;        // darray of ReIr, indexed by frag_id
-  Symtab re_frag_names;    // frag name -> frag_id
+  ReFrags re_frags;     // darray of ReIr, indexed by frag_id
+  Symtab re_frag_names; // frag name -> frag_id
 
   VpaScope* vpa_scopes;
   EffectDecls effect_decls;

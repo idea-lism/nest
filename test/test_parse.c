@@ -13,6 +13,16 @@
     printf("ok\n");                                                                                                    \
   } while (0)
 
+#define ASSERT_PARSE_FAIL(ps, ok)                                                                                      \
+  do {                                                                                                                 \
+    if ((ok)) {                                                                                                        \
+      fprintf(stderr, "expected parse failure but got ok (error: %s)\n",                                               \
+              parse_has_error(ps) ? (ps)->error : "<none>");                                                           \
+    }                                                                                                                  \
+    assert(!(ok));                                                                                                     \
+    assert(parse_has_error(ps));                                                                                       \
+  } while (0)
+
 // Helper: create ustr from C string, call parse_nest, free ustr.
 // For NULL input, passes NULL directly.
 static bool _parse(ParseState* ps, const char* cstr) {
@@ -87,40 +97,35 @@ TEST(test_parse_set_str) {
 TEST(test_empty_input) {
   ParseState* ps = parse_state_new();
   bool ok = _parse(ps, "");
-  assert(!ok);
-  assert(parse_has_error(ps));
+  ASSERT_PARSE_FAIL(ps, ok);
   parse_state_del(ps);
 }
 
 TEST(test_null_src) {
   ParseState* ps = parse_state_new();
   bool ok = _parse(ps, NULL);
-  assert(!ok);
-  assert(parse_has_error(ps));
+  ASSERT_PARSE_FAIL(ps, ok);
   parse_state_del(ps);
 }
 
 TEST(test_garbage_input) {
   ParseState* ps = parse_state_new();
   bool ok = _parse(ps, "not a nest file at all");
-  assert(!ok);
-  assert(parse_has_error(ps));
+  ASSERT_PARSE_FAIL(ps, ok);
   parse_state_del(ps);
 }
 
 TEST(test_vpa_only_no_peg) {
   ParseState* ps = parse_state_new();
   bool ok = _parse(ps, "[[vpa]]\nmain = { *noise }\n*noise = { /[ \\t\\n]+/ @space }\n");
-  assert(!ok);
-  assert(parse_has_error(ps));
+  ASSERT_PARSE_FAIL(ps, ok);
   parse_state_del(ps);
 }
 
 TEST(test_peg_only_no_vpa) {
   ParseState* ps = parse_state_new();
   bool ok = _parse(ps, "[[peg]]\nmain = @peg_id\n");
-  assert(!ok);
-  assert(parse_has_error(ps));
+  ASSERT_PARSE_FAIL(ps, ok);
   parse_state_del(ps);
 }
 
@@ -389,8 +394,7 @@ TEST(test_reparse_fresh_state) {
   ParseState* ps = parse_state_new();
 
   bool ok1 = _parse(ps, "garbage");
-  assert(!ok1);
-  assert(parse_has_error(ps));
+  ASSERT_PARSE_FAIL(ps, ok1);
   parse_state_del(ps);
 
   ps = parse_state_new();
@@ -556,8 +560,7 @@ static const char BAD_RE_NEST[] = "[[vpa]]\n"
 TEST(test_invalid_empty_regexp) {
   ParseState* ps = parse_state_new();
   bool ok = _parse(ps, BAD_RE_NEST);
-  assert(!ok);
-  assert(parse_has_error(ps));
+  ASSERT_PARSE_FAIL(ps, ok);
   parse_state_del(ps);
 }
 
@@ -571,8 +574,7 @@ static const char UNCLOSED_SCOPE_NEST[] = "[[vpa]]\n"
 TEST(test_unclosed_scope) {
   ParseState* ps = parse_state_new();
   bool ok = _parse(ps, UNCLOSED_SCOPE_NEST);
-  assert(!ok);
-  assert(parse_has_error(ps));
+  ASSERT_PARSE_FAIL(ps, ok);
   parse_state_del(ps);
 }
 

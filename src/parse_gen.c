@@ -151,10 +151,11 @@ static ReLex* _build_re_scope(void) {
   return l;
 }
 
-// charclass = /\[\^?/ @charclass_begin .begin { /\]/ .end /-/ @range_sep *chars }
+// charclass = /\[\^?/ .set_cc_kind .begin { "/" .unparse .end /\]/ .end /-/ @range_sep *chars }
 static ReLex* _build_charclass_scope(void) {
   ReLex* l = re_lex_new("lex_charclass", "nest", "");
 
+  re_lex_add(l, "/", __LINE__, 15, ACTION_UNPARSE_END);
   re_lex_add(l, "\\]", __LINE__, 15, ACTION_END);
   re_lex_add(l, "-", __LINE__, 15, TOK_RANGE_SEP);
   _build_chars(l);

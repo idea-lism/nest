@@ -141,6 +141,7 @@ static bool _is_str_char(int32_t id) {
 typedef bool (*ParseFunc)(ParseState*, TokenChunk*);
 
 typedef struct {
+  const char* scope_name;
   LexFunc lex_fn;
   ParseFunc parse_fn;
 } ScopeConfig;
@@ -173,18 +174,18 @@ static bool _parse_peg_str(ParseState* ps, TokenChunk* chunk);
 
 static void _lex_scope(LexCtx* ctx, ScopeId scope_id) {
   static const ScopeConfig configs[] = {
-      [SCOPE_MAIN] = {lex_main, NULL},
-      [SCOPE_VPA] = {lex_vpa, NULL},
-      [SCOPE_SCOPE] = {lex_scope, NULL},
-      [SCOPE_LIT_SCOPE] = {lex_lit_scope, NULL},
-      [SCOPE_PEG] = {lex_peg, NULL},
-      [SCOPE_BRANCHES] = {lex_branches, NULL},
-      [SCOPE_PEG_TAG] = {lex_peg_tag, NULL},
-      [SCOPE_RE] = {lex_re, _parse_re},
-      [SCOPE_RE_REF] = {lex_re_ref, NULL},
-      [SCOPE_CHARCLASS] = {lex_charclass, _parse_charclass},
-      [SCOPE_RE_STR] = {lex_re_str, _parse_re_str},
-      [SCOPE_PEG_STR] = {lex_peg_str, _parse_peg_str},
+      [SCOPE_MAIN] = {"main", lex_main, NULL},
+      [SCOPE_VPA] = {"vpa", lex_vpa, NULL},
+      [SCOPE_SCOPE] = {"scope", lex_scope, NULL},
+      [SCOPE_LIT_SCOPE] = {"lit", lex_lit_scope, NULL},
+      [SCOPE_PEG] = {"peg", lex_peg, NULL},
+      [SCOPE_BRANCHES] = {"branches", lex_branches, NULL},
+      [SCOPE_PEG_TAG] = {"peg_tag", lex_peg_tag, NULL},
+      [SCOPE_RE] = {"regexp", lex_re, _parse_re},
+      [SCOPE_RE_REF] = {"re_ref", lex_re_ref, NULL},
+      [SCOPE_CHARCLASS] = {"charclass", lex_charclass, _parse_charclass},
+      [SCOPE_RE_STR] = {"re_str", lex_re_str, _parse_re_str},
+      [SCOPE_PEG_STR] = {"peg_str", lex_peg_str, _parse_peg_str},
   };
   ScopeConfig cfg = configs[scope_id];
 
@@ -193,6 +194,7 @@ static void _lex_scope(LexCtx* ctx, ScopeId scope_id) {
   int64_t state = 0;
   int32_t last_action = 0;
   int32_t tok_start = ctx->it.cp_idx;
+  bool scope_ended = false;
 
   while (!parse_has_error(ctx->ps) && (ctx->it.cp_idx < ctx->cp_count || last_action != 0)) {
     int32_t saved = ctx->it.cp_idx;
@@ -206,8 +208,10 @@ static void _lex_scope(LexCtx* ctx, ScopeId scope_id) {
     ustr_iter_init(&ctx->it, ctx->ps->src, saved);
 
     if (last_action == ACTION_END) {
+      scope_ended = true;
       break;
     } else if (last_action == ACTION_UNPARSE_END) {
+      scope_ended = true;
       ustr_iter_init(&ctx->it, ctx->ps->src, tok_start);
       break;
     } else if (last_action == ACTION_IGNORE) {
@@ -218,6 +222,7 @@ static void _lex_scope(LexCtx* ctx, ScopeId scope_id) {
       _lex_scope(ctx, child_scope);
     } else if (last_action == ACTION_STR_CHECK_END) {
       if (ustr_cp_at(ctx->ps->src, tok_start) == ctx->shared.last_quote_cp) {
+        scope_ended = true;
         break;
       }
       tt_add(ctx->tree, TOK_CHAR, tok_start, saved - tok_start, -1);
@@ -275,6 +280,11 @@ static void _lex_scope(LexCtx* ctx, ScopeId scope_id) {
 
   TokenChunk* chunk = ctx->tree->current;
   tt_pop(ctx->tree, ctx->it.cp_idx);
+
+  if (scope_id != SCOPE_MAIN && !scope_ended && !parse_has_error(ctx->ps)) {
+    parse_error(ctx->ps, "unexpected end of input inside %s scope", cfg.scope_name);
+  }
+
   if (cfg.parse_fn) {
     cfg.parse_fn(ctx->ps, chunk);
   }
@@ -319,10 +329,7 @@ static TokenChunk* _scope_chunk(ParseState* ps, Token* t) { return &ps->tree->ta
 // --- Fragment lookup ---
 
 // lookup/create frag_id for a fragment name token
-static int32_t _frag_id(ParseState* ps, Token* t) {
-  return _intern_tok(&ps->re_frag_names, ps->src, t);
-}
-
+static int32_t _frag_id(ParseState* ps, Token* t) { return _intern_tok(&ps->re_frag_names, ps->src, t); }
 
 // ============================================================================
 // RE recursive descent — see specs/bootstrap.nest [[peg]] "Regex AST rules"
@@ -536,6 +543,11 @@ static bool _parse_re(ParseState* ps, TokenChunk* chunk) {
 
 static bool _parse_charclass(ParseState* ps, TokenChunk* chunk) {
   int32_t tpos = 0;
+  if (_at_end(chunk, tpos)) {
+    parse_error(ps, "empty character class");
+    chunk->value = re_ir_new();
+    return false;
+  }
   chunk->value =
       _parse_charclass_body(ps, chunk, &tpos, re_ir_new(), ps->shared->cc_kind_neg, ps->shared->re_mode_icase);
   return true;
@@ -987,6 +999,49 @@ static bool _parse_vpa(ParseState* ps, TokenChunk* chunk, int32_t* tpos) {
   return true;
 }
 
+// validate all ReIr in vpa scopes after %define resolves
+static bool _validate_re_unit(ParseState* ps, VpaUnit* u) {
+  if (!u->re || u->kind != VPA_RE) {
+    return true;
+  }
+  ReIrValidateResult res = re_ir_validate(u->re, ps->re_frags);
+  if (res.err_type == RE_IR_OK) {
+    return true;
+  }
+  switch (res.err_type) {
+  case RE_IR_ERR_RECURSION: {
+    const char* name = symtab_get(&ps->re_frag_names, res.frag_id);
+    parse_error(ps, "%d:%d: recursive fragment reference '%s'", res.line, res.col, name ? name : "?");
+    break;
+  }
+  case RE_IR_ERR_MISSING_FRAG_ID: {
+    const char* name = symtab_get(&ps->re_frag_names, res.frag_id);
+    parse_error(ps, "%d:%d: undefined fragment reference '%s'", res.line, res.col, name ? name : "?");
+    break;
+  }
+  default:
+    break;
+  }
+  return false;
+}
+
+static bool _validate_all_re_ir(ParseState* ps) {
+  int32_t n = (int32_t)darray_size(ps->vpa_scopes);
+  for (int32_t i = 0; i < n; i++) {
+    VpaScope* scope = &ps->vpa_scopes[i];
+    if (!_validate_re_unit(ps, &scope->leader)) {
+      return false;
+    }
+    int32_t m = (int32_t)darray_size(scope->children);
+    for (int32_t j = 0; j < m; j++) {
+      if (!_validate_re_unit(ps, &scope->children[j])) {
+        return false;
+      }
+    }
+  }
+  return true;
+}
+
 // ============================================================================
 // PEG recursive descent
 // ============================================================================
@@ -1323,6 +1378,10 @@ bool parse_nest(ParseState* ps, const char* src) {
   int32_t tpos = 0;
 
   if (!_parse_vpa(ps, vpa_chunk, &tpos)) {
+    return false;
+  }
+
+  if (!_validate_all_re_ir(ps)) {
     return false;
   }
 

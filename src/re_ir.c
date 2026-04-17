@@ -45,25 +45,22 @@ ReIr re_ir_build_literal(const char* src, int32_t cp_off, int32_t cp_len) {
   return ir;
 }
 
-// --- re_ir_exec: recursive interpreter with frag inlining ---
+// --- re_ir_validate: frag ref validation ---
 
 typedef struct {
-  Re* re;
-  const char* source_file_name;
   ReFrags frags;
   int32_t* ref_stack; // darray of frag_ids for recursion detect
-  int32_t paren_depth;
-  ReIrExecResult result;
-} ExecCtx;
+  ReIrValidateResult result;
+} ValidateCtx;
 
-static void _exec_ir(ExecCtx* ctx, ReIr ir);
+static void _validate_ir(ValidateCtx* ctx, ReIr ir);
 
-static void _exec_frag_ref(ExecCtx* ctx, ReIrOp* op) {
+static void _validate_frag_ref(ValidateCtx* ctx, ReIrOp* op) {
   int32_t frag_id = op->start;
   int32_t n_frags = ctx->frags ? (int32_t)darray_size(ctx->frags) : 0;
   if (frag_id < 0 || frag_id >= n_frags || !ctx->frags[frag_id]) {
     ctx->result.err_type = RE_IR_ERR_MISSING_FRAG_ID;
-    ctx->result.missing_frag_id = frag_id;
+    ctx->result.frag_id = frag_id;
     ctx->result.line = op->line;
     ctx->result.col = op->col;
     return;
@@ -73,50 +70,80 @@ static void _exec_frag_ref(ExecCtx* ctx, ReIrOp* op) {
   for (int32_t i = 0; i < stack_size; i++) {
     if (ctx->ref_stack[i] == frag_id) {
       ctx->result.err_type = RE_IR_ERR_RECURSION;
+      ctx->result.frag_id = frag_id;
       ctx->result.line = op->line;
       ctx->result.col = op->col;
       return;
     }
   }
   darray_push(ctx->ref_stack, frag_id);
-  _exec_ir(ctx, ctx->frags[frag_id]);
+  _validate_ir(ctx, ctx->frags[frag_id]);
   // pop
   ctx->ref_stack = darray_grow(ctx->ref_stack, darray_size(ctx->ref_stack) - 1);
+}
+
+static void _validate_ir(ValidateCtx* ctx, ReIr ir) {
+  int32_t n = (int32_t)darray_size(ir);
+  for (int32_t i = 0; i < n && ctx->result.err_type == RE_IR_OK; i++) {
+    ReIrOp* op = &ir[i];
+    if (op->kind == RE_IR_FRAG_REF) {
+      _validate_frag_ref(ctx, op);
+    }
+  }
+}
+
+ReIrValidateResult re_ir_validate(ReIr ir, ReFrags frags) {
+  ValidateCtx ctx = {
+      .frags = frags,
+      .ref_stack = darray_new(sizeof(int32_t), 0),
+      .result = {.err_type = RE_IR_OK},
+  };
+  if (ir && darray_size(ir) > 0) {
+    _validate_ir(&ctx, ir);
+  }
+  darray_del(ctx.ref_stack);
+  return ctx.result;
+}
+
+// --- re_ir_exec: recursive interpreter with frag inlining ---
+
+typedef struct {
+  Re* re;
+  const char* source_file_name;
+  ReFrags frags;
+} ExecCtx;
+
+static void _exec_ir(ExecCtx* ctx, ReIr ir);
+
+static void _exec_frag_ref(ExecCtx* ctx, ReIrOp* op) {
+  int32_t frag_id = op->start;
+  _exec_ir(ctx, ctx->frags[frag_id]);
 }
 
 static void _exec_ir(ExecCtx* ctx, ReIr ir) {
   ReRange* range = NULL;
   int32_t n = (int32_t)darray_size(ir);
-  for (int32_t i = 0; i < n && ctx->result.err_type == RE_IR_OK; i++) {
+  for (int32_t i = 0; i < n; i++) {
     ReIrOp* op = &ir[i];
     DebugInfo di = {op->line, op->col};
     switch (op->kind) {
     case RE_IR_RANGE_BEGIN:
-      if (range) {
-        ctx->result.err_type = RE_IR_ERR_BRACKET_MISMATCH;
-        ctx->result.line = op->line;
-        ctx->result.col = op->col;
-        if (range) { re_range_del(range); }
-        return;
-      }
       range = re_range_new();
       break;
     case RE_IR_RANGE_END:
-      if (!range) {
-        ctx->result.err_type = RE_IR_ERR_BRACKET_MISMATCH;
-        ctx->result.line = op->line;
-        ctx->result.col = op->col;
-        return;
-      }
       re_append_range(ctx->re, range, di);
       re_range_del(range);
       range = NULL;
       break;
     case RE_IR_RANGE_NEG:
-      if (range) { re_range_neg(range); }
+      if (range) {
+        re_range_neg(range);
+      }
       break;
     case RE_IR_RANGE_IC:
-      if (range) { re_range_ic(range); }
+      if (range) {
+        re_range_ic(range);
+      }
       break;
     case RE_IR_APPEND_CH:
       if (range) {
@@ -133,19 +160,29 @@ static void _exec_ir(ExecCtx* ctx, ReIr ir) {
       }
       break;
     case RE_IR_APPEND_GROUP_S:
-      if (range) { re_append_group_s(ctx->re, range); }
+      if (range) {
+        re_append_group_s(ctx->re, range);
+      }
       break;
     case RE_IR_APPEND_GROUP_W:
-      if (range) { re_append_group_w(ctx->re, range); }
+      if (range) {
+        re_append_group_w(ctx->re, range);
+      }
       break;
     case RE_IR_APPEND_GROUP_D:
-      if (range) { re_append_group_d(ctx->re, range); }
+      if (range) {
+        re_append_group_d(ctx->re, range);
+      }
       break;
     case RE_IR_APPEND_GROUP_H:
-      if (range) { re_append_group_h(ctx->re, range); }
+      if (range) {
+        re_append_group_h(ctx->re, range);
+      }
       break;
     case RE_IR_APPEND_GROUP_DOT:
-      if (range) { re_append_group_dot(ctx->re, range); }
+      if (range) {
+        re_append_group_dot(ctx->re, range);
+      }
       break;
     case RE_IR_APPEND_C_ESCAPE:
       re_append_ch(ctx->re, re_c_escape((char)op->start), di);
@@ -154,17 +191,9 @@ static void _exec_ir(ExecCtx* ctx, ReIr ir) {
       re_append_ch(ctx->re, op->start, di);
       break;
     case RE_IR_LPAREN:
-      ctx->paren_depth++;
       re_lparen(ctx->re);
       break;
     case RE_IR_RPAREN:
-      if (ctx->paren_depth <= 0) {
-        ctx->result.err_type = RE_IR_ERR_PAREN_MISMATCH;
-        ctx->result.line = op->line;
-        ctx->result.col = op->col;
-        return;
-      }
-      ctx->paren_depth--;
       re_rparen(ctx->re);
       break;
     case RE_IR_FORK:
@@ -181,29 +210,13 @@ static void _exec_ir(ExecCtx* ctx, ReIr ir) {
       break;
     }
   }
-  if (range) {
-    re_range_del(range);
-    if (ctx->result.err_type == RE_IR_OK) {
-      ctx->result.err_type = RE_IR_ERR_BRACKET_MISMATCH;
-    }
-  }
 }
 
-ReIrExecResult re_ir_exec(Re* re, ReIr ir, const char* source_file_name, ReFrags frags) {
-  if (!ir || darray_size(ir) == 0) {
-    return (ReIrExecResult){.err_type = RE_IR_ERR_EMPTY};
-  }
+void re_ir_exec(Re* re, ReIr ir, const char* source_file_name, ReFrags frags) {
   ExecCtx ctx = {
       .re = re,
       .source_file_name = source_file_name,
       .frags = frags,
-      .ref_stack = darray_new(sizeof(int32_t), 0),
-      .result = {.err_type = RE_IR_OK},
   };
   _exec_ir(&ctx, ir);
-  if (ctx.result.err_type == RE_IR_OK && ctx.paren_depth > 0) {
-    ctx.result.err_type = RE_IR_ERR_PAREN_MISMATCH;
-  }
-  darray_del(ctx.ref_stack);
-  return ctx.result;
 }

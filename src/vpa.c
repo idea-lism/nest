@@ -131,14 +131,7 @@ static void _gen_scope_dfa(VpaGenInput* input, IrWriter* w, VpaScope* scope, Act
     }
     started = true;
 
-    ReIrExecResult res = re_ir_exec(re, ir, input->source_file_name, input->re_frags);
-    if (res.err_type != RE_IR_OK) {
-      re_rparen(re);
-      re_del(re);
-      aut_del(aut);
-      free(func_name);
-      return;
-    }
+    re_ir_exec(re, ir, input->source_file_name, input->re_frags);
     re_action(re, aid);
   }
 

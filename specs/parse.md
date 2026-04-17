@@ -128,6 +128,7 @@ in the bootstraping `parse.c`, define `bool _lex_scope(ctx, scope_id)` function,
 typedef ScopeConfig* ScopeConfigs;
 
 struct ScopeConfig {
+  const char* scope_name;
   int32_t scope_id;
   LexFunc lex_fn;
   ParseFunc parse_fn;

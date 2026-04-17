@@ -331,8 +331,7 @@ static char* _exec_to_ir(ReIr ir) {
 
   Aut* aut = aut_new("match", "test.rules");
   Re* re = re_new(aut);
-  ReIrExecResult res = re_ir_exec(re, ir, "test", NULL);
-  assert(res.err_type == RE_IR_OK);
+  re_ir_exec(re, ir, "test", NULL);
   re_action(re, 1);
   aut_gen_dfa(aut, w, false);
   re_del(re);
@@ -354,8 +353,7 @@ static char* _exec_to_ir_frags(ReIr ir, ReFrags frags) {
 
   Aut* aut = aut_new("match", "test.rules");
   Re* re = re_new(aut);
-  ReIrExecResult res = re_ir_exec(re, ir, "test", frags);
-  assert(res.err_type == RE_IR_OK);
+  re_ir_exec(re, ir, "test", frags);
   re_action(re, 1);
   aut_gen_dfa(aut, w, false);
   re_del(re);
@@ -537,7 +535,7 @@ TEST(test_exec_action) {
   irwriter_start(w, "test.rules", ".");
   Aut* aut = aut_new("match", "test.rules");
   Re* re = re_new(aut);
-  { ReIrExecResult r = re_ir_exec(re, ir, "test", NULL); assert(r.err_type == RE_IR_OK); }
+  re_ir_exec(re, ir, "test", NULL);
   aut_gen_dfa(aut, w, false);
   re_del(re);
   aut_del(aut);
@@ -614,7 +612,7 @@ TEST(test_exec_complex) {
   irwriter_start(w, "test.rules", ".");
   Aut* aut = aut_new("match", "test.rules");
   Re* re = re_new(aut);
-  { ReIrExecResult r = re_ir_exec(re, ir, "test", NULL); assert(r.err_type == RE_IR_OK); }
+  re_ir_exec(re, ir, "test", NULL);
   aut_gen_dfa(aut, w, false);
   re_del(re);
   aut_del(aut);
@@ -629,74 +627,184 @@ TEST(test_exec_complex) {
   free(buf);
 }
 
-// --- Malformed IR (should crash/abort) ---
+// --- re_ir_validate ---
 
-TEST(test_exec_malformed_range_end_no_begin) {
-  Aut* aut = aut_new("test", "test.re");
-  Re* re = re_new(aut);
+TEST(test_validate_ok_single_ch) {
   ReIr ir = re_ir_new();
-  ir = re_ir_emit(ir, RE_IR_RANGE_END, 0, 0, 0, 0);
-  ReIrExecResult res = re_ir_exec(re, ir, "test", NULL);
-  assert(res.err_type == RE_IR_ERR_BRACKET_MISMATCH);
-  re_ir_free(ir);
-  re_del(re);
-  aut_del(aut);
-}
-
-TEST(test_exec_malformed_range_neg_no_begin) {
-  // RE_IR_RANGE_NEG without RANGE_BEGIN is silently ignored (no range to negate)
-  Aut* aut = aut_new("test", "test.re");
-  Re* re = re_new(aut);
-  ReIr ir = re_ir_new();
-  ir = re_ir_emit(ir, RE_IR_RANGE_NEG, 0, 0, 0, 0);
-  ReIrExecResult res = re_ir_exec(re, ir, "test", NULL);
+  ir = re_ir_emit_ch(ir, 'a');
+  ReIrValidateResult res = re_ir_validate(ir, NULL);
   assert(res.err_type == RE_IR_OK);
   re_ir_free(ir);
-  re_del(re);
-  aut_del(aut);
 }
 
-TEST(test_exec_malformed_range_ic_no_begin) {
-  // RE_IR_RANGE_IC without RANGE_BEGIN is silently ignored
-  Aut* aut = aut_new("test", "test.re");
-  Re* re = re_new(aut);
-  ReIr ir = re_ir_new();
-  ir = re_ir_emit(ir, RE_IR_RANGE_IC, 0, 0, 0, 0);
-  ReIrExecResult res = re_ir_exec(re, ir, "test", NULL);
-  assert(res.err_type == RE_IR_OK);
-  re_ir_free(ir);
-  re_del(re);
-  aut_del(aut);
-}
-
-TEST(test_exec_malformed_nested_range_begin) {
-  Aut* aut = aut_new("test", "test.re");
-  Re* re = re_new(aut);
-  ReIr ir = re_ir_new();
-  ir = re_ir_emit(ir, RE_IR_RANGE_BEGIN, 0, 0, 0, 0);
-  ir = re_ir_emit(ir, RE_IR_RANGE_BEGIN, 0, 0, 0, 0);
-  ReIrExecResult res = re_ir_exec(re, ir, "test", NULL);
-  assert(res.err_type == RE_IR_ERR_BRACKET_MISMATCH);
-  re_ir_free(ir);
-  re_del(re);
-  aut_del(aut);
-}
-
-TEST(test_exec_malformed_unclosed_range) {
-  Aut* aut = aut_new("test", "test.re");
-  Re* re = re_new(aut);
+TEST(test_validate_ok_range) {
   ReIr ir = re_ir_new();
   ir = re_ir_emit(ir, RE_IR_RANGE_BEGIN, 0, 0, 0, 0);
   ir = re_ir_emit(ir, RE_IR_APPEND_CH, 'a', 'z', 0, 0);
-  // missing RANGE_END
-  ReIrExecResult res = re_ir_exec(re, ir, "test", NULL);
-  assert(res.err_type == RE_IR_ERR_BRACKET_MISMATCH);
+  ir = re_ir_emit(ir, RE_IR_RANGE_END, 0, 0, 0, 0);
+  ReIrValidateResult res = re_ir_validate(ir, NULL);
+  assert(res.err_type == RE_IR_OK);
   re_ir_free(ir);
-  re_del(re);
-  aut_del(aut);
 }
 
-// --- Frag ref tests ---
+TEST(test_validate_ok_parens) {
+  ReIr ir = re_ir_new();
+  ir = re_ir_emit(ir, RE_IR_LPAREN, 0, 0, 0, 0);
+  ir = re_ir_emit_ch(ir, 'a');
+  ir = re_ir_emit(ir, RE_IR_FORK, 0, 0, 0, 0);
+  ir = re_ir_emit_ch(ir, 'b');
+  ir = re_ir_emit(ir, RE_IR_RPAREN, 0, 0, 0, 0);
+  ReIrValidateResult res = re_ir_validate(ir, NULL);
+  assert(res.err_type == RE_IR_OK);
+  re_ir_free(ir);
+}
+
+TEST(test_validate_ok_nested_parens) {
+  ReIr ir = re_ir_new();
+  ir = re_ir_emit(ir, RE_IR_LPAREN, 0, 0, 0, 0);
+  ir = re_ir_emit(ir, RE_IR_LPAREN, 0, 0, 0, 0);
+  ir = re_ir_emit_ch(ir, 'a');
+  ir = re_ir_emit(ir, RE_IR_RPAREN, 0, 0, 0, 0);
+  ir = re_ir_emit(ir, RE_IR_RPAREN, 0, 0, 0, 0);
+  ReIrValidateResult res = re_ir_validate(ir, NULL);
+  assert(res.err_type == RE_IR_OK);
+  re_ir_free(ir);
+}
+
+TEST(test_validate_ok_all_ops) {
+  // exercise all op kinds in valid sequence
+  ReIr ir = re_ir_new();
+  ir = re_ir_emit(ir, RE_IR_LPAREN, 0, 0, 0, 0);
+  ir = re_ir_emit(ir, RE_IR_RANGE_BEGIN, 0, 0, 0, 0);
+  ir = re_ir_emit(ir, RE_IR_APPEND_CH, 'a', 'z', 0, 0);
+  ir = re_ir_emit(ir, RE_IR_APPEND_CH_IC, 'A', 'A', 0, 0);
+  ir = re_ir_emit(ir, RE_IR_APPEND_GROUP_S, 0, 0, 0, 0);
+  ir = re_ir_emit(ir, RE_IR_APPEND_GROUP_W, 0, 0, 0, 0);
+  ir = re_ir_emit(ir, RE_IR_APPEND_GROUP_D, 0, 0, 0, 0);
+  ir = re_ir_emit(ir, RE_IR_APPEND_GROUP_H, 0, 0, 0, 0);
+  ir = re_ir_emit(ir, RE_IR_APPEND_GROUP_DOT, 0, 0, 0, 0);
+  ir = re_ir_emit(ir, RE_IR_RANGE_NEG, 0, 0, 0, 0);
+  ir = re_ir_emit(ir, RE_IR_RANGE_IC, 0, 0, 0, 0);
+  ir = re_ir_emit(ir, RE_IR_RANGE_END, 0, 0, 0, 0);
+  ir = re_ir_emit(ir, RE_IR_FORK, 0, 0, 0, 0);
+  ir = re_ir_emit(ir, RE_IR_APPEND_C_ESCAPE, 'n', 0, 0, 0);
+  ir = re_ir_emit(ir, RE_IR_APPEND_HEX, 0x41, 0x41, 0, 0);
+  ir = re_ir_emit(ir, RE_IR_RPAREN, 0, 0, 0, 0);
+  ir = re_ir_emit(ir, RE_IR_LOOP_BACK, 0, 0, 0, 0);
+  ir = re_ir_emit(ir, RE_IR_ACTION, 1, 0, 0, 0);
+  ReIrValidateResult res = re_ir_validate(ir, NULL);
+  assert(res.err_type == RE_IR_OK);
+  re_ir_free(ir);
+}
+
+TEST(test_validate_empty_ir) {
+  ReIr ir = re_ir_new();
+  ReIrValidateResult res = re_ir_validate(ir, NULL);
+  assert(res.err_type == RE_IR_OK);
+  re_ir_free(ir);
+}
+
+TEST(test_validate_null_ir) {
+  ReIrValidateResult res = re_ir_validate(NULL, NULL);
+  assert(res.err_type == RE_IR_OK);
+}
+
+TEST(test_validate_frag_missing) {
+  ReFrags frags = darray_new(sizeof(ReIr), 0);
+  ReIr ir = re_ir_new();
+  ir = re_ir_emit(ir, RE_IR_FRAG_REF, 0, 0, 5, 3);
+  ReIrValidateResult res = re_ir_validate(ir, frags);
+  assert(res.err_type == RE_IR_ERR_MISSING_FRAG_ID);
+  assert(res.frag_id == 0);
+  assert(res.line == 5);
+  assert(res.col == 3);
+  re_ir_free(ir);
+  darray_del(frags);
+}
+
+TEST(test_validate_frag_null_frags) {
+  ReIr ir = re_ir_new();
+  ir = re_ir_emit(ir, RE_IR_FRAG_REF, 0, 0, 0, 0);
+  ReIrValidateResult res = re_ir_validate(ir, NULL);
+  assert(res.err_type == RE_IR_ERR_MISSING_FRAG_ID);
+  assert(res.frag_id == 0);
+  re_ir_free(ir);
+}
+
+TEST(test_validate_frag_recursion) {
+  ReIr frag0 = re_ir_new();
+  frag0 = re_ir_emit(frag0, RE_IR_FRAG_REF, 0, 0, 10, 1);
+  ReFrags frags = darray_new(sizeof(ReIr), 0);
+  darray_push(frags, frag0);
+
+  ReIr ir = re_ir_new();
+  ir = re_ir_emit(ir, RE_IR_FRAG_REF, 0, 0, 0, 0);
+  ReIrValidateResult res = re_ir_validate(ir, frags);
+  assert(res.err_type == RE_IR_ERR_RECURSION);
+  assert(res.line == 10);
+  assert(res.col == 1);
+  re_ir_free(ir);
+  re_ir_free(frag0);
+  darray_del(frags);
+}
+
+TEST(test_validate_frag_mutual_recursion) {
+  ReIr frag0 = re_ir_new();
+  frag0 = re_ir_emit(frag0, RE_IR_FRAG_REF, 1, 0, 0, 0);
+  ReIr frag1 = re_ir_new();
+  frag1 = re_ir_emit(frag1, RE_IR_FRAG_REF, 0, 0, 7, 2);
+  ReFrags frags = darray_new(sizeof(ReIr), 0);
+  darray_push(frags, frag0);
+  darray_push(frags, frag1);
+
+  ReIr ir = re_ir_new();
+  ir = re_ir_emit(ir, RE_IR_FRAG_REF, 0, 0, 0, 0);
+  ReIrValidateResult res = re_ir_validate(ir, frags);
+  assert(res.err_type == RE_IR_ERR_RECURSION);
+  re_ir_free(ir);
+  re_ir_free(frag0);
+  re_ir_free(frag1);
+  darray_del(frags);
+}
+
+TEST(test_validate_frag_ok) {
+  ReIr frag0 = re_ir_new();
+  frag0 = re_ir_emit(frag0, RE_IR_RANGE_BEGIN, 0, 0, 0, 0);
+  frag0 = re_ir_emit(frag0, RE_IR_APPEND_CH, 'a', 'z', 0, 0);
+  frag0 = re_ir_emit(frag0, RE_IR_RANGE_END, 0, 0, 0, 0);
+  ReFrags frags = darray_new(sizeof(ReIr), 0);
+  darray_push(frags, frag0);
+
+  ReIr ir = re_ir_new();
+  ir = re_ir_emit(ir, RE_IR_FRAG_REF, 0, 0, 0, 0);
+  ReIrValidateResult res = re_ir_validate(ir, frags);
+  assert(res.err_type == RE_IR_OK);
+  re_ir_free(ir);
+  re_ir_free(frag0);
+  darray_del(frags);
+}
+
+TEST(test_validate_frag_chain_ok) {
+  ReIr frag0 = re_ir_new();
+  frag0 = re_ir_emit_ch(frag0, 'x');
+  ReIr frag1 = re_ir_new();
+  frag1 = re_ir_emit(frag1, RE_IR_FRAG_REF, 0, 0, 0, 0);
+  frag1 = re_ir_emit_ch(frag1, 'y');
+  ReFrags frags = darray_new(sizeof(ReIr), 0);
+  darray_push(frags, frag0);
+  darray_push(frags, frag1);
+
+  ReIr ir = re_ir_new();
+  ir = re_ir_emit(ir, RE_IR_FRAG_REF, 1, 0, 0, 0);
+  ReIrValidateResult res = re_ir_validate(ir, frags);
+  assert(res.err_type == RE_IR_OK);
+  re_ir_free(ir);
+  re_ir_free(frag0);
+  re_ir_free(frag1);
+  darray_del(frags);
+}
+
+// --- Frag ref exec tests ---
 
 // Simple frag: IR with single FRAG_REF inlines the frag content
 TEST(test_exec_frag_simple) {
@@ -749,8 +857,7 @@ TEST(test_exec_frag_inline_with_quantifier) {
 
   Aut* aut = aut_new("test", "test");
   Re* re = re_new(aut);
-  ReIrExecResult res = re_ir_exec(re, ir, "test", frags);
-  assert(res.err_type == RE_IR_OK);
+  re_ir_exec(re, ir, "test", frags);
   re_del(re);
   aut_del(aut);
   re_ir_free(ir);
@@ -789,106 +896,6 @@ TEST(test_exec_frag_chain) {
   darray_del(frags);
 }
 
-// Missing frag: FRAG_REF to non-existent id
-TEST(test_exec_frag_missing) {
-  ReFrags frags = darray_new(sizeof(ReIr), 0);
-
-  ReIr ir = re_ir_new();
-  ir = re_ir_emit(ir, RE_IR_FRAG_REF, 0, 0, 5, 3);
-
-  Aut* aut = aut_new("test", "test");
-  Re* re = re_new(aut);
-  ReIrExecResult res = re_ir_exec(re, ir, "test", frags);
-  assert(res.err_type == RE_IR_ERR_MISSING_FRAG_ID);
-  assert(res.missing_frag_id == 0);
-  assert(res.line == 5);
-  assert(res.col == 3);
-  re_del(re);
-  aut_del(aut);
-  re_ir_free(ir);
-  darray_del(frags);
-}
-
-// NULL frags with FRAG_REF → missing frag error
-TEST(test_exec_frag_null_frags) {
-  ReIr ir = re_ir_new();
-  ir = re_ir_emit(ir, RE_IR_FRAG_REF, 0, 0, 0, 0);
-
-  Aut* aut = aut_new("test", "test");
-  Re* re = re_new(aut);
-  ReIrExecResult res = re_ir_exec(re, ir, "test", NULL);
-  assert(res.err_type == RE_IR_ERR_MISSING_FRAG_ID);
-  assert(res.missing_frag_id == 0);
-  re_del(re);
-  aut_del(aut);
-  re_ir_free(ir);
-}
-
-// Recursive frag: frag 0 refs itself
-TEST(test_exec_frag_recursion) {
-  ReIr frag0 = re_ir_new();
-  frag0 = re_ir_emit(frag0, RE_IR_FRAG_REF, 0, 0, 10, 1);
-
-  ReFrags frags = darray_new(sizeof(ReIr), 0);
-  darray_push(frags, frag0);
-
-  ReIr ir = re_ir_new();
-  ir = re_ir_emit(ir, RE_IR_FRAG_REF, 0, 0, 0, 0);
-
-  Aut* aut = aut_new("test", "test");
-  Re* re = re_new(aut);
-  ReIrExecResult res = re_ir_exec(re, ir, "test", frags);
-  assert(res.err_type == RE_IR_ERR_RECURSION);
-  assert(res.line == 10);
-  assert(res.col == 1);
-  re_del(re);
-  aut_del(aut);
-  re_ir_free(ir);
-  re_ir_free(frag0);
-  darray_del(frags);
-}
-
-// Mutual recursion: frag 0 → frag 1 → frag 0
-TEST(test_exec_frag_mutual_recursion) {
-  ReIr frag0 = re_ir_new();
-  frag0 = re_ir_emit(frag0, RE_IR_FRAG_REF, 1, 0, 0, 0);
-
-  ReIr frag1 = re_ir_new();
-  frag1 = re_ir_emit(frag1, RE_IR_FRAG_REF, 0, 0, 7, 2);
-
-  ReFrags frags = darray_new(sizeof(ReIr), 0);
-  darray_push(frags, frag0);
-  darray_push(frags, frag1);
-
-  ReIr ir = re_ir_new();
-  ir = re_ir_emit(ir, RE_IR_FRAG_REF, 0, 0, 0, 0);
-
-  Aut* aut = aut_new("test", "test");
-  Re* re = re_new(aut);
-  ReIrExecResult res = re_ir_exec(re, ir, "test", frags);
-  assert(res.err_type == RE_IR_ERR_RECURSION);
-  re_del(re);
-  aut_del(aut);
-  re_ir_free(ir);
-  re_ir_free(frag0);
-  re_ir_free(frag1);
-  darray_del(frags);
-}
-
-// No error: exec with no FRAG_REF and NULL frags is fine
-TEST(test_exec_ok_result) {
-  ReIr ir = re_ir_new();
-  ir = re_ir_emit_ch(ir, 'a');
-
-  Aut* aut = aut_new("test", "test");
-  Re* re = re_new(aut);
-  ReIrExecResult res = re_ir_exec(re, ir, "test", NULL);
-  assert(res.err_type == RE_IR_OK);
-  re_del(re);
-  aut_del(aut);
-  re_ir_free(ir);
-}
-
 // Frag as standalone VPA-level reference (single FRAG_REF op = entire pattern)
 TEST(test_exec_frag_standalone) {
   // frag 0 = [a-z_]\w*  (simplified as [a-z])
@@ -915,59 +922,6 @@ TEST(test_exec_frag_standalone) {
 
   re_ir_free(frag0);
   darray_del(frags);
-}
-
-// Empty IR
-TEST(test_exec_empty_ir) {
-  ReIr ir = re_ir_new();
-  Aut* aut = aut_new("test", "test");
-  Re* re = re_new(aut);
-  ReIrExecResult res = re_ir_exec(re, ir, "test", NULL);
-  assert(res.err_type == RE_IR_ERR_EMPTY);
-  re_del(re);
-  aut_del(aut);
-  re_ir_free(ir);
-}
-
-TEST(test_exec_null_ir) {
-  Aut* aut = aut_new("test", "test");
-  Re* re = re_new(aut);
-  ReIrExecResult res = re_ir_exec(re, NULL, "test", NULL);
-  assert(res.err_type == RE_IR_ERR_EMPTY);
-  re_del(re);
-  aut_del(aut);
-}
-
-// Extra RPAREN without LPAREN
-TEST(test_exec_paren_extra_rparen) {
-  ReIr ir = re_ir_new();
-  ir = re_ir_emit_ch(ir, 'a');
-  ir = re_ir_emit(ir, RE_IR_RPAREN, 0, 0, 3, 7);
-
-  Aut* aut = aut_new("test", "test");
-  Re* re = re_new(aut);
-  ReIrExecResult res = re_ir_exec(re, ir, "test", NULL);
-  assert(res.err_type == RE_IR_ERR_PAREN_MISMATCH);
-  assert(res.line == 3);
-  assert(res.col == 7);
-  re_del(re);
-  aut_del(aut);
-  re_ir_free(ir);
-}
-
-// Unclosed LPAREN at end
-TEST(test_exec_paren_unclosed) {
-  ReIr ir = re_ir_new();
-  ir = re_ir_emit(ir, RE_IR_LPAREN, 0, 0, 0, 0);
-  ir = re_ir_emit_ch(ir, 'a');
-
-  Aut* aut = aut_new("test", "test");
-  Re* re = re_new(aut);
-  ReIrExecResult res = re_ir_exec(re, ir, "test", NULL);
-  assert(res.err_type == RE_IR_ERR_PAREN_MISMATCH);
-  re_del(re);
-  aut_del(aut);
-  re_ir_free(ir);
 }
 
 int main(void) {
@@ -1028,27 +982,26 @@ int main(void) {
   RUN(test_exec_debug_info_passthrough);
   RUN(test_exec_complex);
 
-  // Malformed IR (error result)
-  RUN(test_exec_malformed_range_end_no_begin);
-  RUN(test_exec_malformed_range_neg_no_begin);
-  RUN(test_exec_malformed_range_ic_no_begin);
-  RUN(test_exec_malformed_nested_range_begin);
-  RUN(test_exec_malformed_unclosed_range);
+  // Validate (structural checks)
+  RUN(test_validate_ok_single_ch);
+  RUN(test_validate_ok_range);
+  RUN(test_validate_ok_parens);
+  RUN(test_validate_ok_nested_parens);
+  RUN(test_validate_ok_all_ops);
+  RUN(test_validate_empty_ir);
+  RUN(test_validate_null_ir);
+  RUN(test_validate_frag_missing);
+  RUN(test_validate_frag_null_frags);
+  RUN(test_validate_frag_recursion);
+  RUN(test_validate_frag_mutual_recursion);
+  RUN(test_validate_frag_ok);
+  RUN(test_validate_frag_chain_ok);
 
-  // Frag ref
+  // Frag ref exec
   RUN(test_exec_frag_simple);
   RUN(test_exec_frag_inline_with_quantifier);
   RUN(test_exec_frag_chain);
-  RUN(test_exec_frag_missing);
-  RUN(test_exec_frag_null_frags);
-  RUN(test_exec_frag_recursion);
-  RUN(test_exec_frag_mutual_recursion);
-  RUN(test_exec_ok_result);
   RUN(test_exec_frag_standalone);
-  RUN(test_exec_empty_ir);
-  RUN(test_exec_null_ir);
-  RUN(test_exec_paren_extra_rparen);
-  RUN(test_exec_paren_unclosed);
 
   printf("all ok\n");
   return 0;

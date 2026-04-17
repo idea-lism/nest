@@ -185,7 +185,6 @@ void irwriter_define_startf(IrWriter* w, const char* name, const char* sig_fmt, 
   fprintf(w->out, " !dbg !%d {\n", w->dbg_sub_id);
 }
 
-
 void irwriter_define_end(IrWriter* w) {
   fprintf(w->out, "}\n\n");
   for (int i = 0; i < (int)darray_size(w->locs); i++) {

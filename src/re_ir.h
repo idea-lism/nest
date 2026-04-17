@@ -42,19 +42,16 @@ typedef ReIr* ReFrags; // darray of ReIr, indexed by frag_id
 
 typedef enum {
   RE_IR_OK,
-  RE_IR_ERR_EMPTY,
   RE_IR_ERR_RECURSION,       // frag_ref recurses
   RE_IR_ERR_MISSING_FRAG_ID, // frags size too small or frags[frag_id] is empty
-  RE_IR_ERR_PAREN_MISMATCH,  // too many right-paren, or missing right-paren at end
-  RE_IR_ERR_BRACKET_MISMATCH,
 } ReIrErrKind;
 
 typedef struct {
   ReIrErrKind err_type;
-  int missing_frag_id; // set when RE_IR_ERR_MISSING_FRAG_ID
+  int frag_id; // the missing or recursed fragment id
   int line;
   int col;
-} ReIrExecResult;
+} ReIrValidateResult;
 
 void re_ir_free(ReIr ir);
 ReIr re_ir_clone(ReIr src);
@@ -69,8 +66,11 @@ ReIr re_ir_emit_ch(ReIr ir, int32_t cp);
 // build literal IR from UTF-8 source slice
 ReIr re_ir_build_literal(const char* src, int32_t cp_off, int32_t cp_len);
 
+// validate IR structure: empty, paren/bracket balance, frag recursion/missing
+ReIrValidateResult re_ir_validate(ReIr ir, ReFrags frags);
+
 // interpret IR into re.h calls, when met with frag_ref,
 // lookup the ReIr in frags and recursively execute it (frags may ref frags too)
 // frags can be NULL if no fragments are defined
-ReIrExecResult re_ir_exec(Re* re, ReIr ir, const char* source_file_name, ReFrags frags);
-
+// no validate, we already validated
+void re_ir_exec(Re* re, ReIr ir, const char* source_file_name, ReFrags frags);
