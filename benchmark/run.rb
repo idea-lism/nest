@@ -66,13 +66,13 @@ def build_packcc_compare(grammar, build_dir)
 
   # We need to strip the embedded main() from parser.c for linking with our runner.
   # PackCC puts main() after the %% marker; we compile parser.c with -DPACKCC_RUNNER_SKIP_MAIN
-  # Actually, simpler: compile parser.c as object, then link runner with it.
-  # But the generated parser.c has main(). We strip it by compiling with -Dmain=packcc_original_main
+  # PackCC's generated parser.c contains main(). Compile it as .o with -Dmain
+  # renamed, then link separately with our runner.
   runner_src = File.join(RUNNERS_DIR, "packcc_runner.c")
 
   build_ms = timed_command(
-    "#{CC} -O2 -Dmain=_packcc_original_main -DPACKCC_PREFIX=#{prefix} " \
-    "#{runner_src} parser.c -o runner",
+    "#{CC} -O2 -Dmain=_packcc_original_main -DPACKCC_PREFIX=#{prefix} -c parser.c -o parser.o && " \
+    "#{CC} -O2 -DPACKCC_PREFIX=#{prefix} #{runner_src} parser.o -o runner",
     chdir: build_dir
   )
 
@@ -145,7 +145,8 @@ def cmd_compare
         result = builder.call(grammar, build_dir)
         iters = adaptive_iterations(result[:bin], input_path)
         out, rss_kb, = run_with_rss([result[:bin], input_path, iters.to_s])
-        parse_us = out.strip.split(",").first.to_f
+        csv_line = out.strip.lines.last&.strip || ""
+        parse_us = csv_line.split(",").first.to_f
         throughput = size_bytes / (parse_us / 1e6) / 1e6
 
         row = {
@@ -209,6 +210,12 @@ def cmd_report
   puts "  wrote #{md_path}"
 end
 
+# ---------- summary ----------
+
+def cmd_summary
+  load File.join(ROOT, "summary.rb")
+end
+
 # ---------- all ----------
 
 def cmd_all
@@ -216,6 +223,7 @@ def cmd_all
   cmd_internal
   cmd_compare
   cmd_report
+  cmd_summary
 end
 
 # ---------- main ----------
@@ -226,6 +234,7 @@ COMMANDS = {
   "internal" => method(:cmd_internal),
   "compare"  => method(:cmd_compare),
   "report"   => method(:cmd_report),
+  "summary"  => method(:cmd_summary),
   "all"      => method(:cmd_all)
 }.freeze
 

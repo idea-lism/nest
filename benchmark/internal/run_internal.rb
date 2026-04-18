@@ -73,7 +73,8 @@ def run_internal
           begin
             iters = adaptive_iterations(runner_bin, input[:path])
             out, rss_kb, = run_with_rss([runner_bin, input[:path], iters.to_s])
-            fields = out.strip.split(",")
+            csv_line = out.strip.lines.last&.strip || ""
+            fields = csv_line.split(",")
             parse_us = fields[0].to_f
             token_count = fields[2].to_i
             chunk_count = fields[3].to_i

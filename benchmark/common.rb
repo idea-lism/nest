@@ -113,7 +113,8 @@ module BenchmarkCommon
 
   def adaptive_iterations(bin_path, input_path, chdir: nil)
     out, = run_with_rss([bin_path, input_path, "1"], chdir: chdir)
-    parse_us = out.strip.split(",", 2).first.to_f
+    csv_line = out.strip.lines.last&.strip || ""
+    parse_us = csv_line.split(",", 2).first.to_f
     return 5 if parse_us <= 0.0
 
     [[(1_000_000.0 / parse_us).ceil, 5].max, 1000].min
