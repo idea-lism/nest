@@ -65,7 +65,9 @@ static TestCtx _setup(const char* fn_name) {
       .parse_result = parse_result,
       .tag_bits = tag_bits,
       .parsed_tokens = parsed_tokens,
-      .ret_labels = darray_new(sizeof(IrLabel), 0),
+      .current_rule_id = -1,
+      .call_site_counter = 0,
+      .current_rule_call_sites = NULL,
   };
   return t;
 }
@@ -75,7 +77,6 @@ static char* _finish(TestCtx* t) {
   irwriter_end(t->w);
   irwriter_del(t->w);
   compat_close_memstream(t->f, &t->buf, &t->len);
-  darray_del(t->ctx.ret_labels);
   return t->buf;
 }
 
@@ -130,6 +131,13 @@ TEST(test_emit_call_blockaddress) {
   ScopedUnit unit = {.kind = SCOPED_UNIT_CALL, .tag_bit_local_offset = -1};
   unit.as.callee = "scope$rule1";
 
+  // set up call_sites: this rule is called from entry
+  CallSite* call_sites = darray_new(sizeof(CallSite), 0);
+  CallSite entry = {.caller_id = -1, .site = 0};
+  darray_push(call_sites, entry);
+  t.ctx.current_rule_call_sites = call_sites;
+  t.ctx.current_rule_id = 0;
+
   IrLabel fail = irwriter_label(t.w);
   peg_ir_emit_parse(&t.ctx, &unit, fail);
 
@@ -148,8 +156,8 @@ TEST(test_emit_call_blockaddress) {
   assert(strstr(out, "blockaddress(@parse_scope,"));
   assert(!strstr(out, "@current_fn"));
 
-  // blockaddress label must be a valid label (numeric)
-  assert(strstr(out, "blockaddress(@parse_scope, %L"));
+  // blockaddress label uses callsite$ naming convention
+  assert(strstr(out, "blockaddress(@parse_scope, %callsite$"));
 
   // indirectbr destination list must not be empty
   char* ibr = strstr(out, "indirectbr");
@@ -162,6 +170,10 @@ TEST(test_emit_call_blockaddress) {
   assert(end_bracket != NULL);
   assert(end_bracket > bracket + 1); // not empty []
 
+  // indirectbr should contain the entry callsite label
+  assert(strstr(ibr, "label %callsite$entry$0"));
+
+  darray_del(call_sites);
   free(out);
 }
 

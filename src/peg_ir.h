@@ -25,8 +25,10 @@ typedef struct {
   IrVal parsed_tokens;
   IrVal token_size;
 
-  // accumulated return labels for indirectbr destination list
-  IrLabels ret_labels; // darray, owned
+  // call site tracking for indirectbr
+  CallSite* current_rule_call_sites; // not owned, points to current rule's call_sites darray
+  int32_t call_site_counter;         // local counter for current caller rule
+  int32_t current_rule_id;           // scoped_rule index of the rule being emitted
 } PegIrCtx;
 
 // emit IR for a ScopedUnit tree; on success falls through with parsed_tokens set; on failure branches to fail_label

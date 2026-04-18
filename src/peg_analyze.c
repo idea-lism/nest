@@ -1148,9 +1148,74 @@ static void _free_closure(ScopeClosure* cl) {
       bitset_del(cl->scoped_rules[i].last_set);
     }
     _free_node_fields(cl->scoped_rules[i].node_fields);
+    if (cl->scoped_rules[i].call_sites) {
+      darray_del(cl->scoped_rules[i].call_sites);
+    }
   }
   darray_del(cl->scoped_rules);
   symtab_free(&cl->scoped_rule_names);
+}
+
+// ============================================================
+// Call site analysis
+// ============================================================
+
+static void _walk_call_sites(ScopeClosure* cl, int32_t caller_id, int32_t* site_counter, ScopedUnit* su) {
+  switch (su->kind) {
+  case SCOPED_UNIT_CALL: {
+    int32_t cid = symtab_find(&cl->scoped_rule_names, su->as.callee);
+    if (cid >= 0) {
+      int32_t callee_idx = cid - cl->scoped_rule_names.start_num;
+      CallSite cs = {.caller_id = caller_id, .site = (*site_counter)++};
+      darray_push(cl->scoped_rules[callee_idx].call_sites, cs);
+    }
+    break;
+  }
+  case SCOPED_UNIT_SEQ:
+  case SCOPED_UNIT_BRANCHES:
+    for (size_t i = 0; i < darray_size(su->as.children); i++) {
+      _walk_call_sites(cl, caller_id, site_counter, &su->as.children[i]);
+    }
+    break;
+  case SCOPED_UNIT_MAYBE:
+    _walk_call_sites(cl, caller_id, site_counter, su->as.base);
+    break;
+  case SCOPED_UNIT_STAR:
+    // star without interlace: lhs called once (loop)
+    // star with interlace: lhs called twice (first elem + loop), rhs once (loop)
+    _walk_call_sites(cl, caller_id, site_counter, su->as.interlace.lhs);
+    if (su->as.interlace.rhs) {
+      _walk_call_sites(cl, caller_id, site_counter, su->as.interlace.lhs);
+      _walk_call_sites(cl, caller_id, site_counter, su->as.interlace.rhs);
+    }
+    break;
+  case SCOPED_UNIT_PLUS:
+    // plus: lhs called twice (first elem + loop), rhs once if interlaced
+    _walk_call_sites(cl, caller_id, site_counter, su->as.interlace.lhs);
+    _walk_call_sites(cl, caller_id, site_counter, su->as.interlace.lhs);
+    if (su->as.interlace.rhs) {
+      _walk_call_sites(cl, caller_id, site_counter, su->as.interlace.rhs);
+    }
+    break;
+  case SCOPED_UNIT_TERM:
+    break;
+  }
+}
+
+static void _compute_call_sites(ScopeClosure* cl) {
+  int32_t rule_size = (int32_t)darray_size(cl->scoped_rules);
+  for (int32_t i = 0; i < rule_size; i++) {
+    cl->scoped_rules[i].call_sites = darray_new(sizeof(CallSite), 0);
+  }
+
+  // entrance call: scope calls scoped_rules[0]
+  CallSite entry = {.caller_id = -1, .site = 0};
+  darray_push(cl->scoped_rules[0].call_sites, entry);
+
+  for (int32_t i = 0; i < rule_size; i++) {
+    int32_t site_counter = 0;
+    _walk_call_sites(cl, i, &site_counter, &cl->scoped_rules[i].body);
+  }
 }
 
 // ============================================================
@@ -1211,6 +1276,7 @@ PegGenInput peg_analyze(PegAnalyzeInput* input, int memoize_mode, const char* pr
   }
 
   for (int32_t c = 0; c < closure_size; c++) {
+    _compute_call_sites(&closures[c]);
   }
 
   _free_rule_lookup(&lu);

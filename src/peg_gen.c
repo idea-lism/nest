@@ -638,7 +638,9 @@ static void _gen_scope_ir(IrWriter* w, ScopeClosure* cl, int memoize_mode) {
       .parse_result = parse_result,
       .tag_bits = tag_bits,
       .parsed_tokens = parsed_tokens,
-      .ret_labels = darray_new(sizeof(IrLabel), 0),
+      .current_rule_id = -1,
+      .call_site_counter = 0,
+      .current_rule_call_sites = NULL,
   };
 
   MemoizeReadFn memoize_read = _memoize_read_fns[memoize_mode];
@@ -653,6 +655,9 @@ static void _gen_scope_ir(IrWriter* w, ScopeClosure* cl, int memoize_mode) {
 
     int32_t tag_size = symtab_count(&sr->tags);
     ctx.tag_bit_offset = (int64_t)sr->tag_bit_offset;
+    ctx.current_rule_id = i;
+    ctx.call_site_counter = 0;
+    ctx.current_rule_call_sites = sr->call_sites;
     ctx.has_tags = tag_size > 0;
 
     PegIrScopeCtx sc = {
@@ -723,7 +728,6 @@ static void _gen_scope_ir(IrWriter* w, ScopeClosure* cl, int memoize_mode) {
   IrVal ret_with_col = irwriter_insertvalue(w, "{i64, i64}", ret_with_result, "i64", final_col, 1);
   irwriter_ret(w, "{i64, i64}", ret_with_col);
   irwriter_define_end(w);
-  darray_del(ctx.ret_labels);
   free(fn_name);
 }
 

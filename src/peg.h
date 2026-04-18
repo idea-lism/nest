@@ -113,6 +113,11 @@ typedef struct {
 typedef NodeField* NodeFields; // darray
 
 typedef struct {
+  int32_t caller_id; // scoped_rule index of the caller, -1 for entrance
+  int32_t site;      // nth call site within that caller (0-based)
+} CallSite;
+
+typedef struct {
   const char* scoped_rule_name; // not owned
   ScopedUnit body;              // tree clone
   Symtab tags;                  // total tags for this rule
@@ -138,6 +143,9 @@ typedef struct {
   uint64_t segment_mask;
   uint64_t rule_bit_mask;
   uint64_t slot_index;
+
+  // call site analysis (computed by peg_analyze)
+  CallSite* call_sites; // darray
 } ScopedRule;
 
 typedef ScopedRule* ScopedRules; // darray

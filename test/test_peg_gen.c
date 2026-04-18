@@ -1045,8 +1045,7 @@ TEST(test_none_memoize_alternation_crash) {
   assert(ret == 0);
 
   // Empty array
-  snprintf(cmd, sizeof(cmd),
-           BUILD_DIR "/test_peg_none_alt_bin \"[]\" > " BUILD_DIR "/test_peg_none_alt.out 2>&1");
+  snprintf(cmd, sizeof(cmd), BUILD_DIR "/test_peg_none_alt_bin \"[]\" > " BUILD_DIR "/test_peg_none_alt.out 2>&1");
   ret = system(cmd);
   assert(ret == 0);
 
@@ -1062,8 +1061,7 @@ TEST(test_none_memoize_alternation_crash) {
   assert(strstr(buf, "@rbracket") != NULL);
 
   // Non-empty array
-  snprintf(cmd, sizeof(cmd),
-           BUILD_DIR "/test_peg_none_alt_bin \"[1,2,3]\" > " BUILD_DIR "/test_peg_none_alt.out 2>&1");
+  snprintf(cmd, sizeof(cmd), BUILD_DIR "/test_peg_none_alt_bin \"[1,2,3]\" > " BUILD_DIR "/test_peg_none_alt.out 2>&1");
   ret = system(cmd);
   assert(ret == 0);
 

@@ -9,20 +9,12 @@
 
 static void _emit_call_save(PegIrCtx* ctx) {
   IrWriter* w = ctx->ir_writer;
-  irwriter_raw(w, "  call void @save(ptr ");
-  irwriter_emit_val(w, ctx->stack_ptr);
-  irwriter_raw(w, ", ptr ");
-  irwriter_emit_val(w, ctx->col);
-  irwriter_raw(w, ")\n");
+  irwriter_call_void_fmtf(w, "save", "ptr %%r%d, ptr %%col", (int)ctx->stack_ptr);
 }
 
 static void _emit_call_restore(PegIrCtx* ctx) {
   IrWriter* w = ctx->ir_writer;
-  irwriter_raw(w, "  call void @restore(ptr ");
-  irwriter_emit_val(w, ctx->stack_ptr);
-  irwriter_raw(w, ", ptr ");
-  irwriter_emit_val(w, ctx->col);
-  irwriter_raw(w, ")\n");
+  irwriter_call_void_fmtf(w, "restore", "ptr %%r%d, ptr %%col", (int)ctx->stack_ptr);
 }
 
 // discard: stack-- without restoring col
@@ -112,9 +104,14 @@ static void _emit_term(PegIrCtx* ctx, ScopedUnit* unit, IrLabel fail_label) {
 
 IrLabel peg_ir_emit_call(PegIrCtx* ctx, const char* callee_name) {
   IrWriter* w = ctx->ir_writer;
-  IrLabel ret_label = irwriter_label(w);
 
-  darray_push(ctx->ret_labels, ret_label);
+  // label follows convention: callsite${caller_id}${site}
+  IrLabel ret_label;
+  if (ctx->current_rule_id < 0) {
+    ret_label = irwriter_label_f(w, "callsite$entry$%d", ctx->call_site_counter++);
+  } else {
+    ret_label = irwriter_label_f(w, "callsite$%d$%d", ctx->current_rule_id, ctx->call_site_counter++);
+  }
 
   IrVal sp = irwriter_load(w, "ptr", ctx->stack_ptr);
 
@@ -412,15 +409,19 @@ void peg_ir_emit_ret(PegIrCtx* ctx) {
   irwriter_store(w, "i64", result, ctx->parse_result);
   // spec: stack = bp
   irwriter_store(w, "ptr", bp, ctx->stack_ptr);
-  // spec: indirectbr ret_addr
+  // spec: indirectbr ret_addr, [caller_ret_labels...]
   irwriter_rawf(w, "  indirectbr ptr %%r%d, [", (int)ret_addr);
-  int32_t n = (int32_t)darray_size(ctx->ret_labels);
+  int32_t n = (int32_t)darray_size(ctx->current_rule_call_sites);
   for (int32_t i = 0; i < n; i++) {
     if (i > 0) {
       irwriter_rawf(w, ", ");
     }
-    irwriter_rawf(w, "label %%");
-    irwriter_emit_label(w, ctx->ret_labels[i]);
+    CallSite* cs = &ctx->current_rule_call_sites[i];
+    if (cs->caller_id < 0) {
+      irwriter_rawf(w, "label %%callsite$entry$%d", cs->site);
+    } else {
+      irwriter_rawf(w, "label %%callsite$%d$%d", cs->caller_id, cs->site);
+    }
   }
   irwriter_rawf(w, "]\n");
 }
