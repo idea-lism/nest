@@ -1008,6 +1008,81 @@ TEST(test_none_memoize_O2_exec) {
   remove(BUILD_DIR "/test_peg_none_o2.out");
 }
 
+TEST(test_none_memoize_alternation_crash) {
+  // Regression: memoize=none crashes (bus error) when alternation contains a rule
+  // call whose body uses star-interlace, and the repeated element recurses back
+  // through the alternation. Minimal repro: value = [@number, array],
+  // array = @lbracket value*<@comma> @rbracket. Input "[]" triggers the bug.
+  const char* nest_path = BUILD_DIR "/test_peg_none_alt.nest";
+  FILE* nf = fopen(nest_path, "w");
+  assert(nf);
+  fprintf(nf, "[[vpa]]\n"
+              "%%ignore @space\n"
+              "main = {\n"
+              "  /\\s+/ @space\n"
+              "  /\\[/ @lbracket\n"
+              "  /\\]/ @rbracket\n"
+              "  /,/ @comma\n"
+              "  /[0-9]+/ @number\n"
+              "}\n"
+              "[[peg]]\n"
+              "main = value\n"
+              "value = [\n"
+              "  @number\n"
+              "  array\n"
+              "]\n"
+              "array = @lbracket value*<@comma> @rbracket\n");
+  fclose(nf);
+
+  char cmd[2048];
+  snprintf(cmd, sizeof(cmd), BUILD_DIR "/nest c %s -p test_alt -m none 2>&1", nest_path);
+  int ret = system(cmd);
+  assert(ret == 0);
+
+  snprintf(cmd, sizeof(cmd), "%s -O0 test_alt.c test_alt.ll -o " BUILD_DIR "/test_peg_none_alt_bin 2>&1",
+           compat_llvm_cc());
+  ret = system(cmd);
+  assert(ret == 0);
+
+  // Empty array
+  snprintf(cmd, sizeof(cmd),
+           BUILD_DIR "/test_peg_none_alt_bin \"[]\" > " BUILD_DIR "/test_peg_none_alt.out 2>&1");
+  ret = system(cmd);
+  assert(ret == 0);
+
+  FILE* out = fopen(BUILD_DIR "/test_peg_none_alt.out", "r");
+  assert(out);
+  char buf[4096];
+  size_t n = fread(buf, 1, sizeof(buf) - 1, out);
+  buf[n] = '\0';
+  fclose(out);
+  assert(strstr(buf, "main") != NULL);
+  assert(strstr(buf, "array") != NULL);
+  assert(strstr(buf, "@lbracket") != NULL);
+  assert(strstr(buf, "@rbracket") != NULL);
+
+  // Non-empty array
+  snprintf(cmd, sizeof(cmd),
+           BUILD_DIR "/test_peg_none_alt_bin \"[1,2,3]\" > " BUILD_DIR "/test_peg_none_alt.out 2>&1");
+  ret = system(cmd);
+  assert(ret == 0);
+
+  out = fopen(BUILD_DIR "/test_peg_none_alt.out", "r");
+  assert(out);
+  n = fread(buf, 1, sizeof(buf) - 1, out);
+  buf[n] = '\0';
+  fclose(out);
+  assert(strstr(buf, "@number") != NULL);
+  assert(strstr(buf, "value") != NULL);
+
+  remove("test_alt.c");
+  remove("test_alt.h");
+  remove("test_alt.ll");
+  remove(nest_path);
+  remove(BUILD_DIR "/test_peg_none_alt_bin");
+  remove(BUILD_DIR "/test_peg_none_alt.out");
+}
+
 TEST(test_multi_bucket_tags) {
   PegGenInput input = {0};
   symtab_init(&input.rule_names, 0);
@@ -1159,6 +1234,7 @@ int main(void) {
   RUN(test_scope_link_field);
   RUN(test_multi_bucket_tags);
   RUN(test_none_memoize_O2_exec);
+  RUN(test_none_memoize_alternation_crash);
   printf("test_peg_gen: OK\n");
   return 0;
 }

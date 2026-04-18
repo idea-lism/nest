@@ -300,6 +300,25 @@ struct ScopedRule {
 
 And we also update `ScopeClosure.bits_bucket_size = bucket_count_after_alloc` and `ScopeClosure.slots_size = segment_count`, so the runtime `Col${scope_name}` will have this packed layout.
 
+# Call site analysis
+
+Compute for each scoped rule the call sites that target it. A single caller rule can call the same callee multiple times (e.g. `value*<@comma>` generates two call sites to `value`). This is used by [peg_ir](peg_ir.md) to emit correct `indirectbr` destination lists.
+
+Create function `_compute_call_sites()` after all other analysis passes. Walk each `ScopedRule.body` tree. For each `SCOPED_UNIT_CALL` node, append a `CallSite` to the callee's list. Also record the entrance call (the scope calls `scoped_rules[0]`).
+
+```c
+typedef struct {
+  int32_t caller_id; // scoped_rule index of the caller
+  int32_t site;      // nth call site within that caller (0-based)
+} CallSite;
+```
+
+Store in `ScopedRule`:
+
+```c
+CallSite* call_sites; // darray
+```
+
 # Node field layout
 
 After all analysis passes, compute `NodeField` layout for each `ScopedRule` with `original_global_id >= 0`. This precomputes all information codegen needs to emit `Node_xxx` structs and loader functions, so codegen doesn't need to walk the original `PegUnit` tree.

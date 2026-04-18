@@ -95,8 +95,13 @@ ret_label:
   %ret_addr = stack->ret_site;
   stack--;
   %ret = ...
-  indirectbr %ret_addr;
+  indirectbr %ret_addr, [caller_ret_labels...];
 ```
+
+The `indirectbr` destination list must include return labels from **all** call sites that target this rule. Labels follow the naming convention `callsite$${caller_id}$${site}`, derived from the callee's `call_sites` darray (see [peg_analyze](peg_analyze.md#call-site-analysis)).
+
+- `peg_ir_emit_call`: the caller tracks a local site counter. Emits `blockaddress` and return label as `callsite$${caller_id}$${n}`.
+- `peg_ir_emit_ret`: iterates the current rule's `call_sites` darray to emit the complete `indirectbr` label list.
 
 # Code gen
 
@@ -238,6 +243,18 @@ end_bb:
 - `?` and `*` always succeed — they never branch to `fail`.
 - `+` and `*` are possessive (no backtracking).
 - `+<sep>` / `*<sep>` interlace: the separator is only consumed when followed by a successful element match. The loop exits before accumulating the separator, discarding both `sr` and `er`.
+
+# Stack depth tracking in PegIrCtx (compiler-side assertion)
+
+ Add int32_t stack_depth to PegIrCtx. Instrument every stack operation in peg_ir.c:
+
+ - _emit_call_save → ctx->stack_depth++
+ - _emit_call_restore → ctx->stack_depth--
+ - _emit_discard → ctx->stack_depth--
+ - peg_ir_emit_call → ctx->stack_depth += 2 (or 3 with tags)
+ - Return-site in _emit_call → corresponding decrements
+
+ At every fail_label branch and done_bb branch, assert(ctx->stack_depth == entry_depth). This catches imbalanced codegen at compile time (when nest runs), not at parse time.
 
 # Acceptance criteria
 
