@@ -149,7 +149,7 @@ TEST(test_iter_ascii) {
   assert(ustr_iter_next(&it) == 'l');
   assert(ustr_iter_next(&it) == 'l');
   assert(ustr_iter_next(&it) == 'o');
-  assert(it.cp_idx == 5);
+  assert(it.cp_index == 5);
   assert(ustr_iter_next(&it) == -1);
   ustr_del(s);
 }
@@ -168,7 +168,7 @@ TEST(test_iter_multibyte) {
   assert(ustr_iter_next(&it) == 0x1F600);
   assert(ustr_iter_next(&it) == 'b');
   assert(ustr_iter_next(&it) == -1);
-  assert(it.cp_idx == 5);
+  assert(it.cp_index == 5);
   ustr_del(s);
 }
 
@@ -179,7 +179,7 @@ TEST(test_iter_from_middle) {
 
   UstrIter it;
   ustr_iter_init(&it, s, 3);
-  assert(it.cp_idx == 3);
+  assert(it.cp_index == 3);
   assert(ustr_iter_next(&it) == 'd');
   assert(ustr_iter_next(&it) == 'e');
   assert(ustr_iter_next(&it) == 'f');
@@ -195,7 +195,7 @@ TEST(test_iter_from_middle_multibyte) {
 
   UstrIter it;
   ustr_iter_init(&it, s, 2);
-  assert(it.cp_idx == 2);
+  assert(it.cp_index == 2);
   assert(ustr_iter_next(&it) == 0x20AC);
   assert(ustr_iter_next(&it) == 'b');
   assert(ustr_iter_next(&it) == -1);
@@ -213,10 +213,10 @@ TEST(test_iter_seek_ascii_close) {
   assert(ustr_iter_next(&it) == 'b');
   assert(ustr_iter_next(&it) == 'c');
   assert(ustr_iter_next(&it) == 'd');
-  assert(it.cp_idx == 4);
+  assert(it.cp_index == 4);
   // seek back to cp 1
   ustr_iter_seek(&it, 1);
-  assert(it.cp_idx == 1);
+  assert(it.cp_index == 1);
   assert(ustr_iter_next(&it) == 'b');
   assert(ustr_iter_next(&it) == 'c');
   ustr_del(s);
@@ -229,7 +229,7 @@ TEST(test_iter_seek_ascii_to_zero) {
   ustr_iter_next(&it);
   ustr_iter_next(&it);
   ustr_iter_seek(&it, 0);
-  assert(it.cp_idx == 0);
+  assert(it.cp_index == 0);
   assert(ustr_iter_next(&it) == 'h');
   ustr_del(s);
 }
@@ -245,10 +245,10 @@ TEST(test_iter_seek_multibyte_close) {
   assert(ustr_iter_next(&it) == 0xE9);
   assert(ustr_iter_next(&it) == 0x20AC);
   assert(ustr_iter_next(&it) == 0x1F600);
-  assert(it.cp_idx == 4);
+  assert(it.cp_index == 4);
   // seek back to cp 1 (e\u0301)
   ustr_iter_seek(&it, 1);
-  assert(it.cp_idx == 1);
+  assert(it.cp_index == 1);
   assert(ustr_iter_next(&it) == 0xE9);
   assert(ustr_iter_next(&it) == 0x20AC);
   ustr_del(s);
@@ -259,10 +259,10 @@ TEST(test_iter_seek_forward) {
   UstrIter it;
   ustr_iter_init(&it, s, 0);
   ustr_iter_next(&it); // a
-  assert(it.cp_idx == 1);
+  assert(it.cp_index == 1);
   // seek forward to cp 4
   ustr_iter_seek(&it, 4);
-  assert(it.cp_idx == 4);
+  assert(it.cp_index == 4);
   assert(ustr_iter_next(&it) == 'e');
   assert(ustr_iter_next(&it) == 'f');
   assert(ustr_iter_next(&it) == -1);
@@ -276,7 +276,7 @@ TEST(test_iter_seek_same_pos) {
   ustr_iter_next(&it); // a
   ustr_iter_next(&it); // b
   ustr_iter_seek(&it, 2);
-  assert(it.cp_idx == 2);
+  assert(it.cp_index == 2);
   assert(ustr_iter_next(&it) == 'c');
   ustr_del(s);
 }
@@ -294,10 +294,10 @@ TEST(test_iter_seek_far_back) {
   for (int i = 0; i < 80; i++) {
     ustr_iter_next(&it);
   }
-  assert(it.cp_idx == 80);
+  assert(it.cp_index == 80);
   // seek to cp 5 -- far back (5 + 64 = 69 < 80), takes re-init path
   ustr_iter_seek(&it, 5);
-  assert(it.cp_idx == 5);
+  assert(it.cp_index == 5);
   assert(ustr_iter_next(&it) == 'a' + 5);
   ustr_del(s);
 }

@@ -74,11 +74,11 @@ void parse_error(ParseState* ps, const char* fmt, ...) {
 static char* _cp_strdup(const char* src, int32_t cp_start, int32_t cp_size) {
   UstrIter it = {0};
   ustr_iter_init(&it, src, cp_start);
-  int32_t start_byte = it.byte_off;
+  int32_t start_byte = it.byte_index;
   for (int32_t i = 0; i < cp_size; i++) {
     ustr_iter_next(&it);
   }
-  int32_t byte_len = it.byte_off - start_byte;
+  int32_t byte_len = it.byte_index - start_byte;
   char* s = malloc((size_t)byte_len + 1);
   memcpy(s, src + start_byte, (size_t)byte_len);
   s[byte_len] = '\0';
@@ -90,11 +90,11 @@ static char* _tok_str(ParseState* ps, Token* t) { return _cp_strdup(ps->src, t->
 static int32_t _intern_tok(Symtab* st, const char* src, Token* t) {
   UstrIter it = {0};
   ustr_iter_init(&it, src, t->cp_start);
-  int32_t start_byte = it.byte_off;
+  int32_t start_byte = it.byte_index;
   for (int32_t i = 0; i < t->cp_size; i++) {
     ustr_iter_next(&it);
   }
-  return symtab_intern_f(st, "%.*s", it.byte_off - start_byte, src + start_byte);
+  return symtab_intern_f(st, "%.*s", it.byte_index - start_byte, src + start_byte);
 }
 
 __attribute__((format(printf, 1, 2))) char* parse_sfmt(const char* fmt, ...) {
@@ -117,7 +117,7 @@ void parse_set_str(char** dst, char* s) {
 static int32_t _decode_cp(const char* src, Token* t) {
   UstrIter it = {0};
   ustr_iter_init(&it, src, t->cp_start);
-  const char* p = src + it.byte_off;
+  const char* p = src + it.byte_index;
   if (t->term_id == TOK_CODEPOINT) {
     return re_hex_to_codepoint(p + 2, (size_t)(t->cp_size - 3));
   }
@@ -155,10 +155,10 @@ typedef struct {
 } LexCtx;
 
 static int32_t _next_cp(LexCtx* ctx) {
-  if (ctx->it.cp_idx >= ctx->cp_count) {
+  if (ctx->it.cp_index >= ctx->cp_count) {
     return -2;
   }
-  int32_t idx = ctx->it.cp_idx;
+  int32_t idx = ctx->it.cp_index;
   int32_t cp = ustr_iter_next(&ctx->it);
   if (cp == '\n') {
     ctx->tree->newline_map[idx / 64] |= (1ULL << (idx % 64));
@@ -193,11 +193,11 @@ static void _lex_scope(LexCtx* ctx, ScopeId scope_id) {
 
   int64_t state = 0;
   int32_t last_action = 0;
-  int32_t tok_start = ctx->it.cp_idx;
+  int32_t tok_start = ctx->it.cp_index;
   bool scope_ended = false;
 
-  while (!parse_has_error(ctx->ps) && (ctx->it.cp_idx < ctx->cp_count || last_action != 0)) {
-    int32_t saved = ctx->it.cp_idx;
+  while (!parse_has_error(ctx->ps) && (ctx->it.cp_index < ctx->cp_count || last_action != 0)) {
+    int32_t saved = ctx->it.cp_index;
     LexResult r = cfg.lex_fn(state, _next_cp(ctx));
 
     if (r.action != LEX_ACTION_NOMATCH) {
@@ -257,7 +257,7 @@ static void _lex_scope(LexCtx* ctx, ScopeId scope_id) {
       _lex_scope(ctx, SCOPE_CHARCLASS);
     } else if (last_action > 0 && last_action < SCOPE_COUNT) {
       _lex_scope(ctx, last_action);
-      saved = ctx->it.cp_idx;
+      saved = ctx->it.cp_index;
     } else if (last_action >= LIT_START) {
       tt_add(ctx->tree, last_action, tok_start, saved - tok_start, -1);
     } else if (last_action == 0) {
@@ -279,10 +279,10 @@ static void _lex_scope(LexCtx* ctx, ScopeId scope_id) {
   }
 
   TokenChunk* chunk = ctx->tree->current;
-  tt_pop(ctx->tree, ctx->it.cp_idx);
+  tt_pop(ctx->tree, ctx->it.cp_index);
 
   // EOF .end — PEG scope ends cleanly at end of file
-  if (scope_id == SCOPE_PEG && !scope_ended && ctx->it.cp_idx >= ctx->cp_count) {
+  if (scope_id == SCOPE_PEG && !scope_ended && ctx->it.cp_index >= ctx->cp_count) {
     scope_ended = true;
   }
 

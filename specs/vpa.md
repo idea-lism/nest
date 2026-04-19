@@ -126,7 +126,7 @@ generated header defines interface to interact with the LLVM-IR defined parser.
 Assume there are 2 hooks `.foo` and `.bar` in lexer definition, generated header should have this interface
 
 ```c
-typedef int32_t (*LexHook)(void* userdata, Token* token, const char* token_str_start);
+typedef int32_t (*LexHook)(void* userdata, size_t pattern_bytesize, const char* pattern_start);
 
 typedef struct {
   void* userdata;
@@ -171,8 +171,17 @@ int32_t my_foo_hook(void* userdata, Token* token, const char* token_str_start) {
   } else {
     return HOOK_FAIL;
   }
+  return HOOK_NOOP;
 }
 ```
+
+To make implementation simpler, a hook can only emit one of the effect. If user have to emit multiple hooks:
+
+```nest
+/some-pattern/ .hook1 .hook2 .hook3
+```
+
+They will be executed in order.
 
 A typical usage example (the load_xxx functions are defined by [PEG GEN](peg_gen.md)):
 

@@ -223,34 +223,34 @@ int32_t ustr_size(const char* s) {
 }
 
 void ustr_iter_init(UstrIter* it, const char* s, int32_t char_offset) {
-  int32_t size = ustr_bytesize(s);
-  const uint8_t* marks = _marks_ptr_const(s, size);
+  int32_t bytesize = ustr_bytesize(s);
+  const uint8_t* marks = _marks_ptr_const(s, bytesize);
   int32_t byte_off;
   if (char_offset == 0) {
     byte_off = 0;
   } else {
-    byte_off = _marks_nth_cp(marks, size, char_offset);
+    byte_off = _marks_nth_cp(marks, bytesize, char_offset);
     if (byte_off < 0) {
-      int32_t cplen = _marks_popcount(marks, size);
+      int32_t cplen = _marks_popcount(marks, bytesize);
       assert(char_offset == cplen);
-      byte_off = size;
+      byte_off = bytesize;
     }
   }
   it->s = s;
-  it->size = size;
+  it->bytesize = bytesize;
   it->marks = marks;
-  it->byte_off = byte_off;
-  it->cp_idx = char_offset;
+  it->byte_index = byte_off;
+  it->cp_index = char_offset;
 }
 
 void ustr_iter_seek(UstrIter* it, int32_t cp_offset) {
-  if (cp_offset == it->cp_idx) {
+  if (cp_offset == it->cp_index) {
     return;
   }
-  if (cp_offset + 64 > it->cp_idx && cp_offset < it->cp_idx) {
+  if (cp_offset + 64 > it->cp_index && cp_offset < it->cp_index) {
     // close backtrack: scan marks backwards from current byte_off
-    int32_t delta = it->cp_idx - cp_offset;
-    int32_t byte_pos = it->byte_off;
+    int32_t delta = it->cp_index - cp_offset;
+    int32_t byte_pos = it->byte_index;
     while (delta > 0 && byte_pos > 0) {
       byte_pos--;
       int32_t mark_byte = byte_pos / 8;
@@ -259,8 +259,8 @@ void ustr_iter_seek(UstrIter* it, int32_t cp_offset) {
         delta--;
       }
     }
-    it->byte_off = byte_pos;
-    it->cp_idx = cp_offset;
+    it->byte_index = byte_pos;
+    it->cp_index = cp_offset;
   } else {
     // far seek or forward: re-init from 0
     ustr_iter_init(it, it->s, cp_offset);
@@ -285,14 +285,14 @@ static inline int32_t _decode_cp(const char* p, int32_t* out_decoded_bytes) {
 }
 
 int32_t ustr_iter_next(UstrIter* it) {
-  if (it->byte_off >= it->size) {
+  if (it->byte_index >= it->bytesize) {
     return -1;
   }
 
   int32_t adv;
-  int32_t cp = _decode_cp(it->s + it->byte_off, &adv);
-  it->byte_off += adv;
-  it->cp_idx++;
+  int32_t cp = _decode_cp(it->s + it->byte_index, &adv);
+  it->byte_index += adv;
+  it->cp_index++;
 
   return cp;
 }

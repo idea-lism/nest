@@ -22,7 +22,7 @@ Resulting code:
   - Basic API `ustr_new(size_t sz, char* data)`, `ustr_del(char* s)`
     - when `new` returns `NULL` indicating an error, provide a helper procedure: `ErrType ustr_find_error(size_t, char* data, size_t* pos)` to get the error position and problem type.
   - Read from file `ustr_from_file(FILE* file)`, which reduces malloc to only once.
-  - Codepoint iterator `ustr_iter_init(it, ustr, char_offset), ustr_iter_next` by scanning marks
+  - Codepoint iterator `ustr_iter_init(&it, ustr, char_offset), ustr_iter_next` by scanning marks
     - iterator can start from middle of string by an offset
     - if the init offset is out of range, `assert(false)`
   - Slicing `ustr_slice(char* s, int32_t cp_start, int32_t cp_end)`
@@ -35,6 +35,19 @@ Extra iterator interface:
 
 - `ustr_iter_seek(it, int32_t cp_offset)`: seek iterator to cp_offset.
   - for faster backtracking, if `cp_offset + 64 > it->cp_idx`, scan starts from cp_offset, else start from 0 (re-init).
+
+Iterator structure:
+
+```c
+// iterator works on the codepoint level, not byte level
+typedef struct {
+  const char* s;        // the ustr start
+  const uint8_t* marks; // point to ustr's bit marks
+  int32_t bytesize;     // ustr's byte size
+  int32_t byte_index;
+  int32_t cp_index;
+} UstrIter;
+```
 
 Also add tests in:
 

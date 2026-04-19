@@ -24,9 +24,9 @@ int32_t ustr_size(const char* s);
 typedef struct {
   const char* s;
   const uint8_t* marks;
-  int32_t size;
-  int32_t byte_off;
-  int32_t cp_idx;
+  int32_t bytesize;
+  int32_t byte_index;
+  int32_t cp_index;
 } UstrIter;
 
 void ustr_iter_init(UstrIter* it, const char* s, int32_t cp_offset);
