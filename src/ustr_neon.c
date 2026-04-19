@@ -89,7 +89,7 @@ static const uint8_t bit_tbl_data[16] = {
     0x01, 0x02, 0x04, 0x08, 0x10, 0x20, 0x40, 0x80, 0x01, 0x02, 0x04, 0x08, 0x10, 0x20, 0x40, 0x80,
 };
 
-static inline uint8x16_t _check_special_cases(uint8x16_t input, uint8x16_t prev1) {
+static uint8x16_t _check_special_cases(uint8x16_t input, uint8x16_t prev1) {
   uint8x16_t b1h_tbl = vld1q_u8(byte_1_high_tbl);
   uint8x16_t b1l_tbl = vld1q_u8(byte_1_low_tbl);
   uint8x16_t b2h_tbl = vld1q_u8(byte_2_high_tbl);
@@ -105,7 +105,7 @@ static inline uint8x16_t _check_special_cases(uint8x16_t input, uint8x16_t prev1
   return vandq_u8(vandq_u8(byte_1_high, byte_1_low), byte_2_high);
 }
 
-static inline uint8x16_t _check_multibyte_lengths(uint8x16_t input, uint8x16_t prev_input, uint8x16_t sc) {
+static uint8x16_t _check_multibyte_lengths(uint8x16_t input, uint8x16_t prev_input, uint8x16_t sc) {
   uint8x16_t prev2 = vextq_u8(prev_input, input, 16 - 2);
   uint8x16_t prev3 = vextq_u8(prev_input, input, 16 - 3);
 
@@ -117,7 +117,7 @@ static inline uint8x16_t _check_multibyte_lengths(uint8x16_t input, uint8x16_t p
   return veorq_u8(must23_80, sc);
 }
 
-static inline uint8x16_t _is_incomplete(uint8x16_t input) {
+static uint8x16_t _is_incomplete(uint8x16_t input) {
   static const uint8_t max_arr[16] = {255, 255, 255, 255, 255, 255,      255,      255,
                                       255, 255, 255, 255, 255, 0xF0 - 1, 0xE0 - 1, 0xC0 - 1};
   uint8x16_t max_val = vld1q_u8(max_arr);
@@ -125,7 +125,7 @@ static inline uint8x16_t _is_incomplete(uint8x16_t input) {
 }
 
 // Compress 16 lanes of 0x00/0xFF to a 16-bit mask, stored as 2 bytes
-static inline void _extract_marks(uint8x16_t is_lead, uint8_t* out) {
+static void _extract_marks(uint8x16_t is_lead, uint8_t* out) {
   uint8x16_t bit_mask = vld1q_u8(bit_tbl_data);
   uint8x16_t bits = vandq_u8(is_lead, bit_mask);
   uint8x16_t p0 = vpaddq_u8(bits, bits);
@@ -136,7 +136,7 @@ static inline void _extract_marks(uint8x16_t is_lead, uint8_t* out) {
 }
 
 // NOT a continuation byte (10xxxxxx)
-static inline uint8x16_t _detect_leads(uint8x16_t input) {
+static uint8x16_t _detect_leads(uint8x16_t input) {
   uint8x16_t shifted = vshrq_n_u8(input, 6);
   uint8x16_t is_cont = vceqq_u8(shifted, vmovq_n_u8(0x02));
   return vmvnq_u8(is_cont);

@@ -179,7 +179,7 @@ static void _gen_loader(HeaderWriter* hw, const char* rule_name, RuleScopeEntry*
   }
   int32_t tag_size = symtab_count(&first_scoped_rule->tags);
   bool has_tags = (tag_size > 0);
-  hdwriter_printf(hw, "static inline Node_%s %s_load_%s(PegRef ref)", rule_name, prefix, rule_name);
+  hdwriter_printf(hw, "static Node_%s %s_load_%s(PegRef ref)", rule_name, prefix, rule_name);
   hdwriter_begin(hw);
   hdwriter_printf(hw, "Node_%s $1 = {0};\n", rule_name);
   if (has_tags) {
@@ -297,7 +297,7 @@ static void _gen_iter_preamble(HeaderWriter* hw) {
   hdwriter_puts(hw, "#endif\n\n");
 }
 static void _gen_has_elem(HeaderWriter* hw, const char* prefix, int memoize_mode) {
-  hdwriter_printf(hw, "static inline bool %s_has_elem(PegLink* l)", prefix);
+  hdwriter_printf(hw, "static bool %s_has_elem(PegLink* l)", prefix);
   hdwriter_begin(hw);
   hdwriter_puts(hw, "if (l->col >= (int64_t)darray_size(l->tc->tokens)) return false;\n");
   // term LHS: check term_id
@@ -314,7 +314,7 @@ static void _gen_has_elem(HeaderWriter* hw, const char* prefix, int memoize_mode
   hdwriter_putc(hw, '\n');
 }
 static void _gen_get_next(HeaderWriter* hw, const char* prefix, int memoize_mode) {
-  hdwriter_printf(hw, "static inline void %s_get_next(PegLink* l)", prefix);
+  hdwriter_printf(hw, "static void %s_get_next(PegLink* l)", prefix);
   hdwriter_begin(hw);
   // LHS advance: if lhs_row == -2 it's a term (advance by 1), else read slot
   hdwriter_puts(hw, "if (l->lhs_row == -2) { l->col += 1; }\n");
@@ -343,14 +343,14 @@ static void _gen_get_next(HeaderWriter* hw, const char* prefix, int memoize_mode
   hdwriter_putc(hw, '\n');
 }
 static void _gen_get_lhs(HeaderWriter* hw, const char* prefix) {
-  hdwriter_printf(hw, "static inline PegRef %s_get_lhs(PegLink* l)", prefix);
+  hdwriter_printf(hw, "static PegRef %s_get_lhs(PegLink* l)", prefix);
   hdwriter_begin(hw);
   hdwriter_puts(hw, "return (PegRef){l->tc, l->col, l->lhs_row};\n");
   hdwriter_end(hw);
   hdwriter_putc(hw, '\n');
 }
 static void _gen_get_rhs(HeaderWriter* hw, const char* prefix) {
-  hdwriter_printf(hw, "static inline PegRef %s_get_rhs(PegLink* l)", prefix);
+  hdwriter_printf(hw, "static PegRef %s_get_rhs(PegLink* l)", prefix);
   hdwriter_begin(hw);
   hdwriter_puts(hw, "if (l->lhs_row == -2) return (PegRef){l->tc, l->col + 1, l->rhs_row};\n");
   hdwriter_puts(hw, "int32_t* $col = (int32_t*)l->tc->value + l->col_size_in_i32 * l->col;\n");
@@ -359,7 +359,7 @@ static void _gen_get_rhs(HeaderWriter* hw, const char* prefix) {
   hdwriter_putc(hw, '\n');
 }
 static void _gen_peg_size(HeaderWriter* hw, ScopeClosure* closures, int32_t closure_size, const char* prefix) {
-  hdwriter_printf(hw, "static inline int64_t %s_peg_size(PegRef ref)", prefix);
+  hdwriter_printf(hw, "static int64_t %s_peg_size(PegRef ref)", prefix);
   hdwriter_begin(hw);
   hdwriter_puts(hw, "if (!ref.tc || !ref.tc->value) return -1;\n");
   hdwriter_puts(hw, "if (ref.col >= (int64_t)darray_size(ref.tc->tokens)) return -1;\n");

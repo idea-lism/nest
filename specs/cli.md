@@ -15,7 +15,8 @@ Command line tool that generates
     - `none`: parse not using memoize table, this mode is only for testing parser correctness, no memoize output.
     - `naive`: direct memoize table
     - `shared`: using row-shared memoize table, this is the default value.
-  - `-p <prefix>`, or `--prefix=<prefix>`. generated functions should have `<prefix>_`
+  - `-p <prefix>`, or `--prefix=<prefix>`. generated functions must have `<prefix>_`
+    - if not given, default to `"nest"`
     - prefix must match `[a-zA-Z]\w*`, with a limit of 64 chars.
     - to prevent conflicts: if prefix be any of `parse`, `ustr`, `load`, `lex`, report "prefix name preserved" and exit instantly.
 

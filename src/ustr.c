@@ -4,15 +4,15 @@
 #include <stdlib.h>
 #include <string.h>
 
-static inline int32_t* _size_ptr(char* s) { return (int32_t*)(s - sizeof(int32_t)); }
+static int32_t* _size_ptr(char* s) { return (int32_t*)(s - sizeof(int32_t)); }
 
-static inline const int32_t* _size_ptr_const(const char* s) { return (const int32_t*)(s - sizeof(int32_t)); }
+static const int32_t* _size_ptr_const(const char* s) { return (const int32_t*)(s - sizeof(int32_t)); }
 
-static inline uint8_t* _marks_ptr(char* s, int32_t size) { return (uint8_t*)(s + size + 1); }
+static uint8_t* _marks_ptr(char* s, int32_t size) { return (uint8_t*)(s + size + 1); }
 
-static inline const uint8_t* _marks_ptr_const(const char* s, int32_t size) { return (const uint8_t*)(s + size + 1); }
+static const uint8_t* _marks_ptr_const(const char* s, int32_t size) { return (const uint8_t*)(s + size + 1); }
 
-static inline size_t _alloc_size(int32_t size) { return sizeof(int32_t) + (size_t)size + 1 + ((size_t)size + 7) / 8; }
+static size_t _alloc_size(int32_t size) { return sizeof(int32_t) + (size_t)size + 1 + ((size_t)size + 7) / 8; }
 
 enum { S_ACC = 0, S_1, S_2, S_3, S_E0, S_ED, S_F0, S_F4, S_ERR = 8 };
 
@@ -155,7 +155,7 @@ void ustr_del(char* s) {
 
 int32_t ustr_bytesize(const char* s) { return *_size_ptr_const(s); }
 
-static inline uint64_t _marks_read64(const uint8_t* marks, size_t byte_off) {
+static uint64_t _marks_read64(const uint8_t* marks, size_t byte_off) {
   uint64_t v;
   memcpy(&v, marks + byte_off, 8);
   return v;
@@ -267,7 +267,7 @@ void ustr_iter_seek(UstrIter* it, int32_t cp_offset) {
   }
 }
 
-static inline int32_t _decode_cp(const char* p, int32_t* out_decoded_bytes) {
+static int32_t _decode_cp(const char* p, int32_t* out_decoded_bytes) {
   uint8_t b = (uint8_t)p[0];
   if (b < 0x80) {
     *out_decoded_bytes = 1;

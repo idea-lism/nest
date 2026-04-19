@@ -291,7 +291,7 @@ static void _run_vpa_gen(VpaGenInput* input, const char* h_path, const char* ir_
   IrWriter* w = irwriter_new(irf, NULL);
 
   irwriter_start(w, "test_vpa.c", ".");
-  vpa_gen(input, hw, w, NULL, 0);
+  vpa_gen(input, hw, w, "nest", 0);
   irwriter_end(w);
 
   hdwriter_del(hw);
@@ -322,7 +322,7 @@ TEST(test_vpa_gen_empty_rules) {
 
   char* h_buf = _read_file(BUILD_DIR "/test_vpa_gen_empty.h");
   assert(strstr(h_buf, "#pragma once") != NULL);
-  assert(strstr(h_buf, "vpa_lex") != NULL);
+  assert(strstr(h_buf, "vpa_lex") == NULL);
   free(h_buf);
 
   _compile_test(BUILD_DIR "/test_vpa_gen_empty.h", BUILD_DIR "/test_vpa_gen_empty.ll");
@@ -427,10 +427,12 @@ TEST(test_vpa_gen_exec) {
               "#include <string.h>\n"
               "#include \"test_vpa_gen_scope.h\"\n"
               "\n"
-              "int32_t vpa_rt_read_cp(void* userdata) {\n"
+              "extern void vpa_lex(void*, int64_t, void*, void*, void*, void*);\n"
+              "int32_t nest_next_cp(void* userdata) {\n"
               "  return ustr_iter_next((UstrIter*)userdata);\n"
               "}\n"
               "int32_t tt_depth(void* tt) { return 1; }\n"
+              "struct { int64_t a; int64_t b; } parse_main(void* tt, void* sp) { return (typeof(parse_main(0,0))){0,0}; }\n"
               "\n"
               "int main(void) {\n"
               "  const char* input = \"aabb\";\n"
@@ -439,7 +441,7 @@ TEST(test_vpa_gen_exec) {
               "  TokenTree* tt = tt_tree_new(us);\n"
               "  UstrIter it;\n"
               "  ustr_iter_init(&it, us, 0);\n"
-              "  vpa_lex((void*)&it, len, (void*)tt, (void*)0, (void*)0, (void*)0);\n"
+              "  vpa_lex((void*)&it, (int64_t)len, (void*)tt, (void*)0, (void*)0, (void*)0);\n"
               "  int32_t n = (int32_t)darray_size(tt->root->tokens);\n"
               "  assert(n == 4);\n"
               "  assert(tt->root->tokens[0].term_id == TOK_TOK_A);\n"
@@ -926,10 +928,12 @@ TEST(test_vpa_scope_switch_exec) {
       "#include <string.h>\n"
       "#include \"test_vpa_scope_switch.h\"\n"
       "\n"
-      "int32_t vpa_rt_read_cp(void* userdata) {\n"
+      "extern void vpa_lex(void*, int64_t, void*, void*, void*, void*);\n"
+      "int32_t nest_next_cp(void* userdata) {\n"
       "  return ustr_iter_next((UstrIter*)userdata);\n"
       "}\n"
       "int32_t tt_depth(void* tt) { return 1; }\n"
+      "struct { int64_t a; int64_t b; } parse_main(void* tt, void* sp) { return (typeof(parse_main(0,0))){0,0}; }\n"
       "struct { int64_t a; int64_t b; } parse_block(void* tt, void* sp) { return (typeof(parse_block(0,0))){0,0}; }\n"
       "\n"
       "int main(void) {\n"
@@ -939,7 +943,7 @@ TEST(test_vpa_scope_switch_exec) {
       "  TokenTree* tt = tt_tree_new(us);\n"
       "  UstrIter it;\n"
       "  ustr_iter_init(&it, us, 0);\n"
-      "  vpa_lex((void*)&it, len, (void*)tt, (void*)0, (void*)0, (void*)0);\n"
+      "  vpa_lex((void*)&it, (int64_t)len, (void*)tt, (void*)0, (void*)0, (void*)0);\n"
       "  /* root chunk: @tok_a, <scope ref>, @tok_a */\n"
       "  int32_t rn = (int32_t)darray_size(tt->root->tokens);\n"
       "  assert(rn == 3);\n"

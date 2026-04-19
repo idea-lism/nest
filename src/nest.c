@@ -508,11 +508,11 @@ static int32_t _cmd_compile(int32_t argc, char** argv) {
     _usage();
   }
 
-  if (!input || !arg_p) {
+  if (!input) {
     _usage();
   }
 
-  const char* prefix = arg_p;
+  const char* prefix = arg_p ? arg_p : "nest";
   const char* triple = (arg_t && arg_t != cmdopt_set) ? arg_t : _detect_triple();
 
   size_t prefix_len = strlen(prefix);
@@ -532,7 +532,7 @@ static int32_t _cmd_compile(int32_t argc, char** argv) {
   }
   if (strcmp(prefix, "parse") == 0 || strcmp(prefix, "ustr") == 0 || strcmp(prefix, "load") == 0 ||
       strcmp(prefix, "lex") == 0) {
-    fprintf(stderr, "nest: prefix name reserved\n");
+    fprintf(stderr, "nest: prefix name preserved\n");
     return 1;
   }
   FILE* fin = fopen(input, "r");

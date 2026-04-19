@@ -23,7 +23,7 @@
 
 // Tables are duplicated across both 128-bit lanes for _mm256_shuffle_epi8.
 
-static inline __m256i _load_tbl(const uint8_t tbl[16]) {
+static __m256i _load_tbl(const uint8_t tbl[16]) {
   __m128i lo = _mm_loadu_si128((const __m128i*)tbl);
   return _mm256_broadcastsi128_si256(lo);
 }
@@ -88,7 +88,7 @@ static const uint8_t byte_2_high_tbl[16] = {
 // _mm256_shuffle_epi8 uses only the low 4 bits as index (and zeros lane if bit 7 is set).
 // So we can use it as a 16-entry table lookup per 128-bit lane.
 
-static inline __m256i _check_special_cases(__m256i input, __m256i prev1) {
+static __m256i _check_special_cases(__m256i input, __m256i prev1) {
   __m256i b1h_tbl = _load_tbl(byte_1_high_tbl);
   __m256i b1l_tbl = _load_tbl(byte_1_low_tbl);
   __m256i b2h_tbl = _load_tbl(byte_2_high_tbl);
@@ -108,7 +108,7 @@ static inline __m256i _check_special_cases(__m256i input, __m256i prev1) {
 // Shift input right by N bytes across the 256-bit boundary, filling from prev_input.
 // prev_combined = [prev_input[16..31], input[0..15]]
 // Then _mm256_alignr_epi8(input, prev_combined, 16-N) gives the cross-chunk shift.
-static inline __m256i _prev_n(__m256i prev_combined, __m256i input, int n) {
+static __m256i _prev_n(__m256i prev_combined, __m256i input, int n) {
   // _mm256_alignr_epi8 operates per 128-bit lane:
   //   low lane:  alignr(input[0..15],  prev_input[16..31], 16-n)
   //   high lane: alignr(input[16..31], input[0..15],       16-n)
@@ -124,7 +124,7 @@ static inline __m256i _prev_n(__m256i prev_combined, __m256i input, int n) {
   }
 }
 
-static inline __m256i _check_multibyte_lengths(__m256i input, __m256i prev_combined, __m256i sc) {
+static __m256i _check_multibyte_lengths(__m256i input, __m256i prev_combined, __m256i sc) {
   __m256i prev2 = _prev_n(prev_combined, input, 2);
   __m256i prev3 = _prev_n(prev_combined, input, 3);
 
@@ -139,7 +139,7 @@ static inline __m256i _check_multibyte_lengths(__m256i input, __m256i prev_combi
   return _mm256_xor_si256(must23_80, sc);
 }
 
-static inline __m256i _is_incomplete(__m256i input) {
+static __m256i _is_incomplete(__m256i input) {
   // Only the last 3 bytes matter; rest are 0xFF so vcgt always false.
   static const uint8_t max_arr[32] __attribute__((aligned(32))) = {
       255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255,      255,      255,
@@ -152,14 +152,14 @@ static inline __m256i _is_incomplete(__m256i input) {
   return _mm256_andnot_si256(eq, ge);
 }
 
-static inline __m256i _detect_leads(__m256i input) {
+static __m256i _detect_leads(__m256i input) {
   __m256i shifted = _mm256_and_si256(_mm256_srli_epi16(input, 6), _mm256_set1_epi8(0x03));
   __m256i is_cont = _mm256_cmpeq_epi8(shifted, _mm256_set1_epi8(0x02));
   // Invert: NOT is_cont
   return _mm256_xor_si256(is_cont, _mm256_set1_epi8(-1));
 }
 
-static inline void _extract_marks(__m256i is_lead, uint8_t* out) {
+static void _extract_marks(__m256i is_lead, uint8_t* out) {
   // _mm256_movemask_epi8 extracts the high bit of each byte -> 32-bit mask
   uint32_t mask = (uint32_t)_mm256_movemask_epi8(is_lead);
   memcpy(out, &mask, 4);

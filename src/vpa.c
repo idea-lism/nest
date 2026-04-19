@@ -345,17 +345,12 @@ static void _gen_dispatch(VpaGenInput* input, IrWriter* w, Actions actions) {
 static void _gen_vpa_lex(VpaGenInput* input, IrWriter* w, const char* prefix) {
   int32_t n_scopes = (int32_t)darray_size(input->scopes);
 
-  char* read_cp_name;
-  if (prefix) {
-    int read_cp_len = snprintf(NULL, 0, "%s_next_cp", prefix);
-    read_cp_name = malloc((size_t)read_cp_len + 1);
-    snprintf(read_cp_name, (size_t)read_cp_len + 1, "%s_next_cp", prefix);
-  } else {
-    read_cp_name = strdup("vpa_rt_read_cp");
-  }
+  char* read_cp_name = NULL;
+  int read_cp_len = snprintf(NULL, 0, "%s_next_cp", prefix);
+  read_cp_name = malloc((size_t)read_cp_len + 1);
+  snprintf(read_cp_name, (size_t)read_cp_len + 1, "%s_next_cp", prefix);
   irwriter_declare(w, "i32", read_cp_name, "i8*");
   irwriter_declare(w, "void", "ustr_iter_seek", "i8*, i32");
-  irwriter_declare(w, "i32", "tt_depth", "i8*");
   irwriter_declare(w, "void", "tt_add", "i8*, i32, i32, i32, i32");
   irwriter_declare(w, "void", "tt_mark_newline", "i8*, i32");
 
@@ -617,10 +612,6 @@ static void _gen_vpa_lex(VpaGenInput* input, IrWriter* w, const char* prefix) {
 #define PARSE_RESULT_TY "{i8*, i64, i64, i8*, i8*, i64}"
 
 static void _gen_parse_entry(IrWriter* w, const char* prefix, int32_t main_rule_row) {
-  if (!prefix) {
-    return;
-  }
-
   // vpa_lex is already defined in this module; no declare needed
   irwriter_declare(w, "i8*", "tt_tree_new", "i8*");
   irwriter_declare(w, "i32", "ustr_size", "i8*");
@@ -797,16 +788,9 @@ static void _gen_header(VpaGenInput* input, HeaderWriter* hw, const char* prefix
   hdwriter_puts(hw, "} ParseContext;\n");
   hdwriter_putc(hw, '\n');
 
-  // extern declarations
-  hdwriter_puts(hw,
-                "extern void vpa_lex(void* src, int64_t len, void* tt, void* errors, void* ctx, void* stack_ptr);\n");
+  hdwriter_printf(hw, "extern ParseResult %s_parse(ParseContext $parse_context, char* src);\n", prefix);
+  hdwriter_printf(hw, "extern void %s_cleanup(ParseResult r);\n", prefix);
   hdwriter_putc(hw, '\n');
-
-  if (prefix) {
-    hdwriter_printf(hw, "extern ParseResult %s_parse(ParseContext $parse_context, char* src);\n", prefix);
-    hdwriter_printf(hw, "extern void %s_cleanup(ParseResult r);\n", prefix);
-    hdwriter_putc(hw, '\n');
-  }
 }
 
 // --- Main entry point ---
