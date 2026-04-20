@@ -89,7 +89,7 @@ TEST(test_no_extra_defines) {
 
 // --- IR structure tests ---
 
-TEST(test_omits_target_triple) { assert(!strstr(ll_buf, "target triple")); }
+TEST(test_has_target_triple) { assert(strstr(ll_buf, "target triple")); }
 
 TEST(test_has_source_filename) { assert(strstr(ll_buf, "source_filename")); }
 
@@ -128,7 +128,7 @@ int main(void) {
   RUN(test_has_lex_re_str);
   RUN(test_has_lex_peg_str);
   RUN(test_no_extra_defines);
-  RUN(test_omits_target_triple);
+  RUN(test_has_target_triple);
   RUN(test_has_source_filename);
   RUN(test_compiles);
 

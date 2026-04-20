@@ -94,7 +94,7 @@ For each directory, for each memoize mode (`naive`, `shared`):
 
 1. Run `nest c grammar.nest -p <name> -m <mode>` (prefix = directory name).
 2. Compile `<name>.c` + `<name>.ll` with clang.
-3. For each `*.input` file, run the binary with the file's contents as `argv[1]`.
+3. For each `*.input` file, run the binary with the file name as `argv[1]`.
 4. Diff combined output against the matching `*.expected` file.
 5. Report pass/fail per case; exit non-zero if anything failed.
 

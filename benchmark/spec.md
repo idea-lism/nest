@@ -173,7 +173,6 @@ ERB template. For each grammar, `nest c` generates `<prefix>.h` + `<prefix>.ll`.
 Runner links against them.
 
 ```c
-#define NEST_RT_IMPLEMENTATION
 #include "<%= prefix %>.h"
 #include <time.h>
 

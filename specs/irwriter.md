@@ -7,14 +7,17 @@ Features:
 - auto numbering labels
 - emits debug information
 - can create debugtrap
+- for module prelude, user has to include `rt_ir_begin()` / `rt_ir_begin_simple()` ([rt_ir](rt_ir.md)). Or irwriter will print error message and `abort()`.
 
 Basic Creation:
-- `irwriter_new(FILE*, char* target_triple)`
+- `irwriter_new(FILE*)` — takes an open FILE* (may already contain a prelude), plus source file name and directory for debug metadata
 - `irwriter_del()`
 
-Module prelude and epilogue
-- `irwriter_start()`, 
-- `irwriter_end()`
+Module-level:
+- `irwriter_end()` — emits trailing debug metadata if any
+
+Pre-define:
+- `irwriter_pre_define(w, name)`: mark a function name as already defined earlier in the file, so `irwriter_declare` skips it. Interns into `w->decls` symtab.
 
 Function prelude and epilogue
 - `irwriter_define_start()`
@@ -74,7 +77,6 @@ We target DFA generation, so there are no loops and no need for a complex Domina
 
 - check file_name should not contain `"` or `\\`
 - check function_name should not contain `"` or `\\`
-- check target_triple: must be non-empty, only `[a-zA-Z0-9._-]`
 - check directory should not contain `"` or `\\`
 - abort on violation
 
@@ -89,3 +91,16 @@ if (v < 0) {
   fprintf(out, "... %%%r ...", v);
 }
 ```
+
+### Debug Info tracing
+
+We have `irwriter_start` and `irwriter_end` to trace emitting state.
+
+```c
+// only call this in irwriter_gen_rt()
+irwriter_start(w, starting_debug_info_number, source_file, directory);
+// check if all debug info emitted, if not, abort()
+irwriter_end(w);
+```
+
+Only after `irwriter_start()` we can call `irwriter_define_start()`, else it prints error and `abort()`.

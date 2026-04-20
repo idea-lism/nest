@@ -326,8 +326,8 @@ static char* _exec_to_ir(ReIr ir) {
   size_t sz = 0;
   FILE* f = compat_open_memstream(&buf, &sz);
   assert(f);
-  IrWriter* w = irwriter_new(f, NULL);
-  irwriter_start(w, "test.rules", ".");
+  IrWriter* w = irwriter_new(f);
+  irwriter_start(w, 5, "test.rules", ".");
 
   Aut* aut = aut_new("match", "test.rules");
   Re* re = re_new(aut);
@@ -348,8 +348,8 @@ static char* _exec_to_ir_frags(ReIr ir, ReFrags frags) {
   size_t sz = 0;
   FILE* f = compat_open_memstream(&buf, &sz);
   assert(f);
-  IrWriter* w = irwriter_new(f, NULL);
-  irwriter_start(w, "test.rules", ".");
+  IrWriter* w = irwriter_new(f);
+  irwriter_start(w, 5, "test.rules", ".");
 
   Aut* aut = aut_new("match", "test.rules");
   Re* re = re_new(aut);
@@ -531,8 +531,8 @@ TEST(test_exec_action) {
   size_t sz = 0;
   FILE* f = compat_open_memstream(&buf, &sz);
   assert(f);
-  IrWriter* w = irwriter_new(f, NULL);
-  irwriter_start(w, "test.rules", ".");
+  IrWriter* w = irwriter_new(f);
+  irwriter_start(w, 5, "test.rules", ".");
   Aut* aut = aut_new("match", "test.rules");
   Re* re = re_new(aut);
   re_ir_exec(re, ir, "test", NULL);
@@ -608,8 +608,8 @@ TEST(test_exec_complex) {
   size_t sz = 0;
   FILE* f = compat_open_memstream(&buf, &sz);
   assert(f);
-  IrWriter* w = irwriter_new(f, NULL);
-  irwriter_start(w, "test.rules", ".");
+  IrWriter* w = irwriter_new(f);
+  irwriter_start(w, 5, "test.rules", ".");
   Aut* aut = aut_new("match", "test.rules");
   Re* re = re_new(aut);
   re_ir_exec(re, ir, "test", NULL);

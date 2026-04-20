@@ -30,9 +30,11 @@ struct IrWriter {
   int32_t last_dbg_col;
   int last_dbg_scope_id;
   int dbg_file_id;
+  int dbg_type_id;
+  int dbg_cu_id;
   int dbg_flags_emitted;
+  int started;
   int switch_dbg_id;
-  const char* target_triple;
   const char* source_file;
   const char* directory;
   Symtab decls;
@@ -47,32 +49,9 @@ static void _validate_name(const char* s, const char* label) {
   }
 }
 
-static void _validate_triple(const char* s) {
-  if (!s) {
-    return;
-  }
-  if (!*s) {
-    fprintf(stderr, "irwriter: target_triple is empty\n");
-    abort();
-  }
-  for (const char* p = s; *p; p++) {
-    char c = *p;
-    if ((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '.' || c == '_' ||
-        c == '-') {
-      continue;
-    }
-    fprintf(stderr, "irwriter: target_triple contains invalid character '%c'\n", c);
-    abort();
-  }
-}
-
-IrWriter* irwriter_new(FILE* out, const char* target_triple) {
-  if (target_triple) {
-    _validate_triple(target_triple);
-  }
+IrWriter* irwriter_new(FILE* out) {
   IrWriter* w = calloc(1, sizeof(IrWriter));
   w->out = out;
-  w->target_triple = target_triple;
   symtab_init(&w->decls, 0);
   w->dbg_line = -1;
   w->last_dbg_id = -1;
@@ -95,21 +74,23 @@ void irwriter_del(IrWriter* w) {
   free(w);
 }
 
-void irwriter_start(IrWriter* w, const char* source_file, const char* directory) {
+void irwriter_start(IrWriter* w, int32_t starting_debug_info_number, const char* source_file, const char* directory) {
   _validate_name(source_file, "source_file");
   _validate_name(directory, "directory");
   w->source_file = source_file;
   w->directory = directory;
-  fprintf(w->out, "source_filename = \"%s\"\n", source_file);
-  if (w->target_triple) {
-    fprintf(w->out, "target triple = \"%s\"\n", w->target_triple);
-  }
-  fprintf(w->out, "\n");
+  w->started = 1;
+  w->dbg_next_id = starting_debug_info_number;
 }
 
 void irwriter_end(IrWriter* w) {
   if (!w->dbg_flags_emitted) {
     return;
+  }
+  // Check all pending debug locs were emitted (define_end should have flushed them)
+  if (w->locs && darray_size(w->locs) > 0) {
+    fprintf(stderr, "irwriter_end: %zu pending debug locations not emitted\n", darray_size(w->locs));
+    abort();
   }
 }
 
@@ -161,31 +142,52 @@ static void _emit_dbg_suffix(IrWriter* w, int id) {
   }
 }
 
+void irwriter_pre_define(IrWriter* w, const char* name) { symtab_intern(&w->decls, name); }
+
+void irwriter_set_dbg_base(IrWriter* w, int32_t file_id, int32_t cu_id, int32_t type_id) {
+  w->dbg_flags_emitted = 1;
+  w->dbg_file_id = file_id;
+  w->dbg_cu_id = cu_id;
+  w->dbg_type_id = type_id;
+}
+
 void irwriter_define_startf(IrWriter* w, const char* name, const char* sig_fmt, ...) {
+  if (!w->started) {
+    fprintf(stderr, "irwriter: irwriter_start() must be called before irwriter_define_startf()\n");
+    abort();
+  }
   _validate_name(name, "function_name");
   symtab_intern(&w->decls, name);
   if (!w->dbg_flags_emitted) {
     w->dbg_flags_emitted = 1;
-    w->dbg_next_id = 5;
-    w->dbg_file_id = 2;
+    int file_id = w->dbg_next_id++;
+    int cu_id = w->dbg_next_id++;
+    int type_id = w->dbg_next_id++;
+    w->dbg_file_id = file_id;
+    w->dbg_type_id = type_id;
+    w->dbg_cu_id = cu_id;
 
-    fprintf(w->out, "!llvm.module.flags = !{!0, !1}\n");
-    fprintf(w->out, "!llvm.dbg.cu = !{!3}\n\n");
-    fprintf(w->out, "!0 = !{i32 7, !\"Dwarf Version\", i32 5}\n");
-    fprintf(w->out, "!1 = !{i32 2, !\"Debug Info Version\", i32 3}\n");
-    fprintf(w->out, "!2 = !DIFile(filename: \"%s\", directory: \"%s\")\n", w->source_file, w->directory);
-    fprintf(w->out, "!3 = distinct !DICompileUnit(language: DW_LANG_C11, file: !2,"
-                    " producer: \"dfa_gen\", isOptimized: true, runtimeVersion: 0,"
-                    " emissionKind: FullDebug)\n");
-    fprintf(w->out, "!4 = !DISubroutineType(types: !{null})\n\n");
+    int dwarf_id = w->dbg_next_id++;
+    int dbgver_id = w->dbg_next_id++;
+    fprintf(w->out, "!llvm.module.flags = !{!%d, !%d}\n", dwarf_id, dbgver_id);
+    fprintf(w->out, "!llvm.dbg.cu = !{!%d}\n\n", cu_id);
+    fprintf(w->out, "!%d = !{i32 7, !\"Dwarf Version\", i32 5}\n", dwarf_id);
+    fprintf(w->out, "!%d = !{i32 2, !\"Debug Info Version\", i32 3}\n", dbgver_id);
+    fprintf(w->out, "!%d = !DIFile(filename: \"%s\", directory: \"%s\")\n", file_id, w->source_file, w->directory);
+    fprintf(w->out,
+            "!%d = distinct !DICompileUnit(language: DW_LANG_C11, file: !%d,"
+            " producer: \"dfa_gen\", isOptimized: true, runtimeVersion: 0,"
+            " emissionKind: FullDebug)\n",
+            cu_id, file_id);
+    fprintf(w->out, "!%d = !DISubroutineType(types: !{null})\n\n", type_id);
   }
 
   w->dbg_sub_id = w->dbg_next_id++;
   fprintf(w->out,
           "!%d = distinct !DISubprogram(name: \"%s\", scope: !%d, file: !%d,"
-          " line: 1, type: !4, scopeLine: 1,"
-          " spFlags: DISPFlagDefinition | DISPFlagOptimized, unit: !3)\n\n",
-          w->dbg_sub_id, name, w->dbg_file_id, w->dbg_file_id);
+          " line: 1, type: !%d, scopeLine: 1,"
+          " spFlags: DISPFlagDefinition | DISPFlagOptimized, unit: !%d)\n\n",
+          w->dbg_sub_id, name, w->dbg_file_id, w->dbg_file_id, w->dbg_type_id, w->dbg_cu_id);
 
   w->reg = 0;
   w->label = 0;
@@ -470,6 +472,8 @@ void irwriter_rawf(IrWriter* w, const char* fmt, ...) {
 }
 
 void irwriter_vrawf(IrWriter* w, const char* fmt, va_list ap) { vfprintf(w->out, fmt, ap); }
+
+FILE* irwriter_get_file(IrWriter* w) { return w->out; }
 
 void irwriter_comment(IrWriter* w, const char* fmt, ...) {
   fprintf(w->out, "  ; ");

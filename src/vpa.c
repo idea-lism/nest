@@ -10,8 +10,6 @@
 #include <stdlib.h>
 #include <string.h>
 
-#include "../build/nest_rt.inc"
-
 // --- Actions table (deduplication) ---
 
 typedef struct {
@@ -702,14 +700,7 @@ static void _print_upper(HeaderWriter* hw, const char* s) {
 }
 
 static void _gen_header(VpaGenInput* input, HeaderWriter* hw, const char* prefix) {
-  hdwriter_puts(hw, "#pragma once\n");
-  hdwriter_putc(hw, '\n');
-  hdwriter_puts(hw, "#include <stdbool.h>\n");
-  hdwriter_putc(hw, '\n');
-
-  // inline amalgamated runtime
-  hdwriter_puts(hw, (const char*)NEST_RT);
-  hdwriter_putc(hw, '\n');
+  // caller (nest.c) has already written #pragma once, includes, and runtime header
 
   int32_t n_scopes = (int32_t)darray_size(input->scopes);
 
@@ -761,11 +752,7 @@ static void _gen_header(VpaGenInput* input, HeaderWriter* hw, const char* prefix
   hdwriter_puts(hw, "typedef ParseError* ParseErrors;\n");
   hdwriter_putc(hw, '\n');
 
-  // PegRef — already defined by PEG header when PEG rules are present; guarded to avoid redefinition.
-  hdwriter_puts(hw, "#ifndef _NEST_PEGREF\n#define _NEST_PEGREF\n");
-  hdwriter_puts(hw, "typedef struct {\n  TokenChunk* tc;\n  int64_t col;\n  int64_t row;\n} PegRef;\n");
-  hdwriter_puts(hw, "#endif\n");
-  hdwriter_putc(hw, '\n');
+  // PegRef and PegLink already emitted by common_header_gen
 
   // ParseResult
   hdwriter_puts(hw, "typedef struct {\n");

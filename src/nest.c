@@ -1,5 +1,7 @@
 // specs/cli.md
+#include "common_header_gen.h"
 #include "darray.h"
+#include "irwriter.h"
 #include "parse.h"
 #include "post_process.h"
 #include "re.h"
@@ -45,26 +47,29 @@ static const char* const cmdopt_set = "set";
 
 // --- CLI ---
 
-static const char* _detect_triple(void) {
-#ifdef _WIN32
-  FILE* p = popen("clang --print-target-triple", "r");
-#else
-  FILE* p = popen("clang --print-target-triple 2>/dev/null", "r");
-#endif
+// Check that the resolved compiler is clang. Prints error and returns false if not.
+static bool _check_clang(void) {
+  const char* cc = getenv("CC");
+  if (!cc || !*cc) {
+    cc = "clang";
+  }
+  // Run --version and check output contains "clang"
+  char cmd[512];
+  snprintf(cmd, sizeof(cmd), "%s --version 2>/dev/null", cc);
+  FILE* p = popen(cmd, "r");
   if (!p) {
-    return DEFAULT_TRIPLE;
+    fprintf(stderr, "nest: cannot run compiler: %s\n", cc);
+    return false;
   }
-  static char buf[128];
-  if (!fgets(buf, sizeof(buf), p)) {
-    pclose(p);
-    return DEFAULT_TRIPLE;
+  char buf[1024] = {0};
+  size_t n = fread(buf, 1, sizeof(buf) - 1, p);
+  buf[n] = '\0';
+  int status = pclose(p);
+  if (status != 0 || strstr(buf, "clang") == NULL) {
+    fprintf(stderr, "nest: compiler must be clang (resolved: %s)\n", cc);
+    return false;
   }
-  pclose(p);
-  size_t len = strlen(buf);
-  if (len > 0 && buf[len - 1] == '\n') {
-    buf[len - 1] = '\0';
-  }
-  return buf;
+  return true;
 }
 
 static void _usage(void) {
@@ -121,7 +126,6 @@ static int32_t _cmd_lex(int32_t argc, char** argv) {
   const char* output = arg_o;
   const char* func_name = arg_f ? arg_f : "lex";
   const char* mode = arg_m ? arg_m : "";
-  const char* triple = (arg_t && arg_t != cmdopt_set) ? arg_t : _detect_triple();
   FILE* fin = fopen(input, "r");
   if (!fin) {
     perror(input);
@@ -159,8 +163,13 @@ static int32_t _cmd_lex(int32_t argc, char** argv) {
     return 1;
   }
 
-  IrWriter* w = irwriter_new(fout, triple);
-  irwriter_start(w, input, ".");
+  IrWriter* w = irwriter_new(fout);
+  if (!_check_clang()) {
+    fclose(fout);
+    re_lex_del(l);
+    return 1;
+  }
+  irwriter_gen_rt_simple(w);
   re_lex_gen(l, w, false);
   irwriter_end(w);
   irwriter_del(w);
@@ -290,9 +299,7 @@ static void _gen_example_c(FILE* f, const char* prefix, ParseState* ps) {
   PegRules rules = ps->peg_rules;
 
   fprintf(f, "#include <stdint.h>\n");
-  fprintf(f, "#include <stdio.h>\n");
-  fprintf(f, "#include <string.h>\n\n");
-  fprintf(f, "#define NEST_RT_IMPLEMENTATION\n");
+  fprintf(f, "#include <stdio.h>\n\n");
   fprintf(f, "#include \"%s.h\"\n\n", prefix);
 
   fprintf(f, "int32_t %s_next_cp(void* userdata) {\n", prefix);
@@ -450,9 +457,13 @@ static void _gen_example_c(FILE* f, const char* prefix, ParseState* ps) {
   fprintf(f, "    fprintf(stderr, \"usage: %%s <input>\\n\", argv[0]);\n");
   fprintf(f, "    return 1;\n");
   fprintf(f, "  }\n\n");
-  fprintf(f, "  const char* input = argv[1];\n");
-  fprintf(f, "  int32_t len = (int32_t)strlen(input);\n");
-  fprintf(f, "  char* ustr = ustr_new(len, input);\n");
+  fprintf(f, "  FILE* fp = fopen(argv[1], \"rb\");\n");
+  fprintf(f, "  if (!fp) {\n");
+  fprintf(f, "    fprintf(stderr, \"cannot open %%s\\n\", argv[1]);\n");
+  fprintf(f, "    return 1;\n");
+  fprintf(f, "  }\n");
+  fprintf(f, "  char* ustr = ustr_from_file(fp);\n");
+  fprintf(f, "  fclose(fp);\n");
   fprintf(f, "  int32_t total_cps = ustr_size(ustr);\n");
   fprintf(f, "  ParseContext ctx = {0};\n");
   fprintf(f, "  ParseResult res = %s_parse(ctx, ustr);\n", prefix);
@@ -513,7 +524,6 @@ static int32_t _cmd_compile(int32_t argc, char** argv) {
   }
 
   const char* prefix = arg_p ? arg_p : "nest";
-  const char* triple = (arg_t && arg_t != cmdopt_set) ? arg_t : _detect_triple();
 
   size_t prefix_len = strlen(prefix);
   if (prefix_len == 0 || prefix_len > 64) {
@@ -568,9 +578,20 @@ static int32_t _cmd_compile(int32_t argc, char** argv) {
     return 1;
   }
 
-  IrWriter* w = irwriter_new(fout, triple);
-  irwriter_start(w, input, ".");
+  if (!_check_clang()) {
+    fclose(fout);
+    fclose(fhdr);
+    ustr_del(src);
+    return 1;
+  }
+
+  IrWriter* w = irwriter_new(fout);
+  irwriter_gen_rt(w, input, ".");
   HeaderWriter* hw = hdwriter_new(fhdr);
+
+  // 1. Common header (runtime types, PegRef, PegLink)
+  common_header_gen(hw);
+
   ParseState* ps = parse_state_new();
 
   int verbose = arg_v ? atoi(arg_v) : 0;

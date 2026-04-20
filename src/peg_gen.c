@@ -53,32 +53,6 @@ static char* _sanitize_field_name(const char* name) {
 // Header generation
 // ============================================================
 
-static void _gen_header_types(HeaderWriter* hw) {
-  hdwriter_puts(hw, "#include <stdint.h>\n#include <stdbool.h>\n#include <string.h>\n\n");
-  hdwriter_puts(hw, "#ifndef _NEST_TOKEN_TYPES\n#define _NEST_TOKEN_TYPES\n");
-  hdwriter_puts(hw,
-                "typedef struct { int32_t term_id; int32_t cp_start; int32_t cp_size; int32_t chunk_id; } Token;\n");
-  hdwriter_puts(hw, "typedef Token* Tokens;\n");
-  hdwriter_puts(hw, "typedef struct TokenChunk {\n"
-                    "  int32_t scope_id; int32_t parent_id;\n"
-                    "  void* value; void* aux_value; Tokens tokens;\n"
-                    "} TokenChunk;\n");
-  hdwriter_puts(hw, "typedef TokenChunk* TokenChunks;\n");
-  hdwriter_puts(hw, "typedef struct TokenTree {\n"
-                    "  const char* src; uint64_t* newline_map;\n"
-                    "  TokenChunk* root; TokenChunk* current; TokenChunks table;\n"
-                    "} TokenTree;\n");
-  hdwriter_puts(hw, "#endif\n\n");
-  hdwriter_puts(hw, "#ifndef _NEST_PEGREF\n#define _NEST_PEGREF\n");
-  hdwriter_puts(hw, "typedef struct { TokenChunk* tc; int64_t col; int64_t row; } PegRef;\n");
-  hdwriter_puts(hw, "#endif\n\n");
-  hdwriter_puts(hw, "typedef struct { TokenChunk* tc; int64_t col; int64_t col_size_in_i32;"
-                    " int64_t lhs_bit_index; int64_t lhs_bit_mask; int64_t lhs_row;"
-                    " int64_t lhs_term_id;"
-                    " int64_t rhs_bit_index; int64_t rhs_bit_mask; int64_t rhs_row; } PegLink;\n");
-  hdwriter_putc(hw, '\n');
-}
-
 static void _gen_node_struct(HeaderWriter* hw, ScopedRule* sr, const char* rule_name) {
   if (!sr->node_fields) {
     return;
@@ -382,8 +356,6 @@ static void _gen_header(PegGenInput* input, HeaderWriter* hw, RuleScopeMap* scop
   ScopeClosure* closures = input->scope_closures;
   int32_t closure_size = (int32_t)darray_size(closures);
   const char* prefix = input->prefix;
-
-  _gen_header_types(hw);
 
   // emit node structs and loaders for each distinct global rule
   for (int32_t gid = 0; gid < scope_map->size; gid++) {

@@ -9,11 +9,22 @@ typedef int32_t IrVal;
 typedef int32_t IrLabel;
 typedef IrLabel* IrLabels; // darray
 
-IrWriter* irwriter_new(FILE* out, const char* target_triple);
+IrWriter* irwriter_new(FILE* out);
 void irwriter_del(IrWriter* w);
 
-void irwriter_start(IrWriter* w, const char* source_file, const char* directory);
+void irwriter_start(IrWriter* w, int32_t starting_debug_info_number, const char* source_file, const char* directory);
 void irwriter_end(IrWriter* w);
+
+// mark a function name as already defined (e.g. by rt prelude), so irwriter_declare skips it
+void irwriter_pre_define(IrWriter* w, const char* name);
+
+// set debug base IDs (file, compile unit, subroutine type) — called by irwriter_gen_rt after emitting debug base
+void irwriter_set_dbg_base(IrWriter* w, int32_t file_id, int32_t cu_id, int32_t type_id);
+
+// compile nest runtime to LLVM IR and write to IrWriter's stream
+void irwriter_gen_rt(IrWriter* w, const char* source_file, const char* directory);
+// simple version: pipes empty string to cc for module prelude only
+void irwriter_gen_rt_simple(IrWriter* w);
 
 // sig_fmt: everything after "define" and before "{"
 // e.g. "internal void @save(ptr %%stack_ptr, ptr %%col)"
@@ -69,5 +80,7 @@ void irwriter_type_def(IrWriter* w, const char* name, const char* body);
 void irwriter_raw(IrWriter* w, const char* text);
 void irwriter_rawf(IrWriter* w, const char* fmt, ...) __attribute__((format(printf, 2, 3)));
 void irwriter_vrawf(IrWriter* w, const char* fmt, va_list ap);
+
+FILE* irwriter_get_file(IrWriter* w);
 
 void irwriter_comment(IrWriter* w, const char* fmt, ...) __attribute__((format(printf, 2, 3)));

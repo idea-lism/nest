@@ -26,8 +26,8 @@ def exe name, srcs:, deps: [], ext_libs: [], extra_objs: [], order_deps: []
   $exes << { name: name, srcs: srcs, deps: deps, ext_libs: ext_libs, extra_objs: extra_objs, order_deps: order_deps }
 end
 
-def amalgamate name, input:, include_dirs: []
-  $amalgamates << { input: input, output: name, include_dirs: include_dirs }
+def amalgamate name, src:, include_dirs: []
+  $amalgamates << { src: src, output: name, include_dirs: include_dirs }
 end
 
 def debug cflags:
@@ -80,6 +80,17 @@ unless IS_WINDOWS || File.exist?(KISSAT_LIB)
   puts "Done: #{KISSAT_LIB}"
 end
 
+# --- Ensure subprocess.h is available ---
+SUBPROCESS_H = "build/subprocess.h"
+unless File.exist?(SUBPROCESS_H)
+  require 'open-uri'
+  FileUtils.mkdir_p("build")
+  url = "https://raw.githubusercontent.com/sheredom/subprocess.h/b49c56e9fe214488493021017bf3954b91c7c1f5/subprocess.h"
+  puts "Downloading subprocess.h..."
+  URI.open(url) { |src| File.binwrite(SUBPROCESS_H, src.read) }
+  puts "Done: #{SUBPROCESS_H}"
+end
+
 # --- Detect toolchain ---
 CC = ENV["CC"] || (RUBY_PLATFORM =~ /darwin/ ? "xcrun clang" : "clang")
 AR = ENV["AR"] || "ar"
@@ -88,37 +99,10 @@ ALL_SRCS = (Dir.glob '{src,test}/**/*.{c,h}').join ' '
 
 ARCH_CFLAGS = RUBY_PLATFORM =~ /x86_64|amd64/ ? "-mavx2" : ""
 
-def default_host_triple
-  triple_cmd =
-    if IS_WINDOWS
-      "#{CC} --print-target-triple 2>nul"
-    else
-      "#{CC} --print-target-triple 2>/dev/null"
-    end
-  t = `#{triple_cmd}`.strip
-  return t unless t.empty?
-
-  case RUBY_PLATFORM
-  when /darwin/
-    arch = `uname -m`.strip
-    arch == "arm64" ? "arm64-apple-darwin" : "x86_64-apple-darwin"
-  when /mingw|mswin|cygwin/
-    "x86_64-pc-windows-msvc"
-  when /linux/
-    arch = `uname -m`.strip
-    arch = "x86_64" if arch.empty?
-    "#{arch}-unknown-linux-gnu"
-  else
-    "x86_64-unknown-linux-gnu"
-  end
-end
-
-DEFAULT_HOST_TRIPLE = default_host_triple
-
 llvm_cc = (RUBY_PLATFORM =~ /darwin/ ? "xcrun clang" : (ENV["CC"] || "clang"))
 
 BASE_CFLAGS = %<
-  -std=c23 -D_POSIX_C_SOURCE=200809L -DDEFAULT_TRIPLE=\\"#{DEFAULT_HOST_TRIPLE}\\" -DLLVM_CC="\\"#{llvm_cc}\\"" -Wall -Wextra -Werror -fvisibility=hidden #{ARCH_CFLAGS}
+  -std=c23 -D_POSIX_C_SOURCE=200809L -DLLVM_CC="\\"#{llvm_cc}\\"" -Wall -Wextra -Werror -fvisibility=hidden #{ARCH_CFLAGS}
 >.strip
 
 BUILDDIR = "build/#{MODE}"
@@ -127,38 +111,6 @@ require_relative "config.in.rb"
 
 EXTRA_CFLAGS = $mode_cflags.fetch(MODE, "")
 CFLAGS = "#{BASE_CFLAGS} #{EXTRA_CFLAGS}".strip
-
-# --- Ensure amalgamate tool is available ---
-
-def amalgamate_url
-  base = "https://github.com/rindeal/Amalgamate/releases/download/v0.99.0"
-  case RUBY_PLATFORM
-  when /darwin/
-    "#{base}/amalgamate-v0.99.0-darwin-arm64.zip"
-  when /mingw|mswin|cygwin/
-    "#{base}/amalgamate-v0.99.0-windows-amd64.zip"
-  else
-    "#{base}/amalgamate-v0.99.0-linux-amd64.zip"
-  end
-end
-
-AMALGAMATE = "build/tools/amalgamate"
-
-unless File.executable?(AMALGAMATE)
-  FileUtils.mkdir_p("build/tools")
-  zip_path = "build/tools/amalgamate.zip"
-  puts "Downloading amalgamate..."
-  URI.open(amalgamate_url) do |remote|
-    File.binwrite(zip_path, remote.read)
-  end
-  sh "unzip", "-o", zip_path, "-d", "build/tools/", out: File::NULL
-  # The zip contains a subdirectory; move the binary up
-  Dir.glob("build/tools/*/amalgamate").each do |bin|
-    FileUtils.mv(bin, AMALGAMATE)
-  end
-  FileUtils.chmod(0o755, AMALGAMATE) unless RUBY_PLATFORM =~ /mingw|mswin|cygwin/
-  FileUtils.rm_f(zip_path)
-end
 
 link_flags = (EXTRA_CFLAGS.include?("sanitize") || EXTRA_CFLAGS.include?("coverage")) ? EXTRA_CFLAGS : ""
 
@@ -210,6 +162,9 @@ build format: format #{ALL_SRCS}
 
 build #{BUILDDIR}/nest_lex.ll: gen_nest_lex #{BUILDDIR}/parse_gen
 build #{BUILDDIR}/nest_lex.o: ll_cc #{BUILDDIR}/nest_lex.ll
+
+build #{BUILDDIR}/llir_lex.ll: gen_nest_lex #{BUILDDIR}/llir_parse_gen
+build #{BUILDDIR}/llir_lex.o: ll_cc #{BUILDDIR}/llir_lex.ll
 
   NINJA
 
@@ -266,8 +221,9 @@ build #{BUILDDIR}/nest_lex.o: ll_cc #{BUILDDIR}/nest_lex.ll
   # Amalgamate
   $amalgamates.each do |am|
     flags = am[:include_dirs].map { |d| "-i #{d}" }.join(' ')
-    src_files = Dir.glob(am[:include_dirs].map { |d| "#{d}/*.{c,h}" }).sort.join(' ')
-    f.puts "build #{am[:output]}: amalgamate #{am[:input]} | #{src_files}"
+    src_files = am[:src].join(' ')
+    dep_files = Dir.glob(am[:include_dirs].map { |d| "#{d}/*.{c,h}" }).sort.join(' ')
+    f.puts "build #{am[:output]}: amalgamate #{src_files} | #{dep_files}"
     f.puts "  flags = #{flags}"
     f.puts ""
   end

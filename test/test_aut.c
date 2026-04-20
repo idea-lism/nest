@@ -18,8 +18,8 @@ static char* _gen_ir(void (*fn)(Aut*, IrWriter*)) {
   size_t sz = 0;
   FILE* f = compat_open_memstream(&buf, &sz);
   assert(f);
-  IrWriter* w = irwriter_new(f, NULL);
-  irwriter_start(w, "test.rules", ".");
+  IrWriter* w = irwriter_new(f);
+  irwriter_start(w, 5, "test.rules", ".");
 
   Aut* a = aut_new("match", "test.rules");
   fn(a, w);
@@ -320,8 +320,8 @@ TEST(test_optimize_preserves_action) {
     size_t sz = 0;
     FILE* f = compat_open_memstream(&buf, &sz);
     assert(f);
-    IrWriter* w = irwriter_new(f, NULL);
-    irwriter_start(w, "test.rules", ".");
+    IrWriter* w = irwriter_new(f);
+    irwriter_start(w, 5, "test.rules", ".");
     Aut* a = aut_new("match", "test.rules");
     aut_transition(a, (TransitionDef){0, 1, 'a', 'a'}, (DebugInfo){1, 1});
     aut_action(a, 1, 3);
@@ -346,8 +346,8 @@ TEST(test_optimize_preserves_action) {
     size_t sz = 0;
     FILE* f = compat_open_memstream(&buf, &sz);
     assert(f);
-    IrWriter* w = irwriter_new(f, NULL);
-    irwriter_start(w, "test.rules", ".");
+    IrWriter* w = irwriter_new(f);
+    irwriter_start(w, 5, "test.rules", ".");
     Aut* a = aut_new("match", "test.rules");
     aut_transition(a, (TransitionDef){0, 1, 'a', 'a'}, (DebugInfo){1, 1});
     aut_action(a, 1, 3);
@@ -388,8 +388,8 @@ static void _write_and_compile(void (*fn)(Aut*, IrWriter*), const char* test_nam
     fprintf(stderr, "fopen failed: %s\n", ll_path);
   }
   assert(f);
-  IrWriter* w = irwriter_new(f, NULL);
-  irwriter_start(w, "test.rules", ".");
+  IrWriter* w = irwriter_new(f);
+  irwriter_start(w, 5, "test.rules", ".");
 
   Aut* a = aut_new("match", "test.rules");
   fn(a, w);
@@ -460,8 +460,8 @@ TEST(test_empty_aut) {
   size_t sz = 0;
   FILE* f = compat_open_memstream(&buf, &sz);
   assert(f);
-  IrWriter* w = irwriter_new(f, NULL);
-  irwriter_start(w, "test.rules", ".");
+  IrWriter* w = irwriter_new(f);
+  irwriter_start(w, 5, "test.rules", ".");
 
   Aut* a = aut_new("empty", "test.rules");
   aut_gen_dfa(a, w, false);

@@ -93,8 +93,8 @@ typedef struct {
 static GenResult _gen(PegGenInput* input) {
   GenResult r = {0};
   FILE* ir_f = compat_open_memstream(&r.ir_buf, &r.ir_len);
-  IrWriter* w = irwriter_new(ir_f, NULL);
-  irwriter_start(w, "test.c", ".");
+  IrWriter* w = irwriter_new(ir_f);
+  irwriter_gen_rt_simple(w);
   FILE* hdr_f = compat_open_memstream(&r.hdr_buf, &r.hdr_len);
   HeaderWriter* hw = hdwriter_new(hdr_f);
 
@@ -983,9 +983,16 @@ TEST(test_none_memoize_O2_exec) {
   ret = system(cmd);
   assert(ret == 0);
 
-  // Run with "hello world"
-  snprintf(cmd, sizeof(cmd),
-           BUILD_DIR "/test_peg_none_o2_bin \"hello world\" > " BUILD_DIR "/test_peg_none_o2.out 2>&1");
+  // Write input to file
+  const char* input_path = BUILD_DIR "/test_peg_none_o2.input";
+  FILE* inf = fopen(input_path, "w");
+  assert(inf);
+  fprintf(inf, "hello world");
+  fclose(inf);
+
+  // Run with input file
+  snprintf(cmd, sizeof(cmd), BUILD_DIR "/test_peg_none_o2_bin %s > " BUILD_DIR "/test_peg_none_o2.out 2>&1",
+           input_path);
   ret = system(cmd);
   assert(ret == 0);
 
@@ -1004,6 +1011,7 @@ TEST(test_none_memoize_O2_exec) {
   remove("test_none.h");
   remove("test_none.ll");
   remove(nest_path);
+  remove(input_path);
   remove(BUILD_DIR "/test_peg_none_o2_bin");
   remove(BUILD_DIR "/test_peg_none_o2.out");
 }
@@ -1044,8 +1052,15 @@ TEST(test_none_memoize_alternation_crash) {
   ret = system(cmd);
   assert(ret == 0);
 
-  // Empty array
-  snprintf(cmd, sizeof(cmd), BUILD_DIR "/test_peg_none_alt_bin \"[]\" > " BUILD_DIR "/test_peg_none_alt.out 2>&1");
+  // Write input to file: empty array
+  const char* input_path = BUILD_DIR "/test_peg_none_alt.input";
+  FILE* inf = fopen(input_path, "w");
+  assert(inf);
+  fprintf(inf, "[]");
+  fclose(inf);
+
+  snprintf(cmd, sizeof(cmd), BUILD_DIR "/test_peg_none_alt_bin %s > " BUILD_DIR "/test_peg_none_alt.out 2>&1",
+           input_path);
   ret = system(cmd);
   assert(ret == 0);
 
@@ -1060,8 +1075,14 @@ TEST(test_none_memoize_alternation_crash) {
   assert(strstr(buf, "@lbracket") != NULL);
   assert(strstr(buf, "@rbracket") != NULL);
 
-  // Non-empty array
-  snprintf(cmd, sizeof(cmd), BUILD_DIR "/test_peg_none_alt_bin \"[1,2,3]\" > " BUILD_DIR "/test_peg_none_alt.out 2>&1");
+  // Write input to file: non-empty array
+  inf = fopen(input_path, "w");
+  assert(inf);
+  fprintf(inf, "[1,2,3]");
+  fclose(inf);
+
+  snprintf(cmd, sizeof(cmd), BUILD_DIR "/test_peg_none_alt_bin %s > " BUILD_DIR "/test_peg_none_alt.out 2>&1",
+           input_path);
   ret = system(cmd);
   assert(ret == 0);
 
@@ -1077,6 +1098,7 @@ TEST(test_none_memoize_alternation_crash) {
   remove("test_alt.h");
   remove("test_alt.ll");
   remove(nest_path);
+  remove(input_path);
   remove(BUILD_DIR "/test_peg_none_alt_bin");
   remove(BUILD_DIR "/test_peg_none_alt.out");
 }

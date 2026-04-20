@@ -30,8 +30,8 @@ typedef struct {
 static TestCtx _setup(const char* fn_name) {
   TestCtx t = {0};
   t.f = compat_open_memstream(&t.buf, &t.len);
-  t.w = irwriter_new(t.f, NULL);
-  irwriter_start(t.w, "test_peg_ir.ll", ".");
+  t.w = irwriter_new(t.f);
+  irwriter_gen_rt_simple(t.w);
   irwriter_type_def(t.w, "Token", "{i32}");
 
   // emit save/restore so calls can reference them
@@ -86,8 +86,8 @@ TEST(test_helpers_define_internal) {
   char* buf = NULL;
   size_t len = 0;
   FILE* f = compat_open_memstream(&buf, &len);
-  IrWriter* w = irwriter_new(f, NULL);
-  irwriter_start(w, "test.ll", ".");
+  IrWriter* w = irwriter_new(f);
+  irwriter_gen_rt_simple(w);
   peg_ir_emit_helpers(w);
   peg_ir_emit_bit_helpers(w);
   peg_ir_emit_gep_helpers(w);

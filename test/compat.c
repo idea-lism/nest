@@ -60,4 +60,4 @@ const char* compat_devnull_path(void) {
 #endif
 }
 
-const char* compat_llvm_cc(void) { return LLVM_CC " -DNEST_RT_IMPLEMENTATION"; }
+const char* compat_llvm_cc(void) { return LLVM_CC; }

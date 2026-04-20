@@ -2,7 +2,6 @@
 // ERB template. Compiled per grammar via: nest c grammar.nest -p <prefix> -m <mode>
 // Then: clang -O2 nest_runner.c <prefix>.ll -o runner
 
-#define NEST_RT_IMPLEMENTATION
 #include "<%= prefix %>.h"
 
 #include <stdio.h>

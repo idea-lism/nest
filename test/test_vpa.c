@@ -1,3 +1,4 @@
+#include "../src/common_header_gen.h"
 #include "../src/darray.h"
 #include "../src/header_writer.h"
 #include "../src/irwriter.h"
@@ -261,7 +262,8 @@ static void _free_gen_input(VpaGenInput* input) {
 static void _compile_test(const char* h_file, const char* ir_file) {
   const char* null_out = compat_devnull_path();
   char cmd[512];
-  snprintf(cmd, sizeof(cmd), "%s -c -x c %s -o %s 2>&1", compat_llvm_cc(), h_file, null_out);
+  // Compile header via a trivial .c that includes it (avoids #pragma once warning)
+  snprintf(cmd, sizeof(cmd), "echo '#include \"%s\"' | %s -c -x c - -o %s 2>&1", h_file, compat_llvm_cc(), null_out);
   int ret = system(cmd);
   assert(ret == 0);
 
@@ -288,9 +290,12 @@ static void _run_vpa_gen(VpaGenInput* input, const char* h_path, const char* ir_
   FILE* irf = fopen(ir_path, "w");
   assert(hf && irf);
   HeaderWriter* hw = hdwriter_new(hf);
-  IrWriter* w = irwriter_new(irf, NULL);
+  IrWriter* w = irwriter_new(irf);
 
-  irwriter_start(w, "test_vpa.c", ".");
+  // Write header prelude (normally done by nest.c)
+  common_header_gen(hw);
+
+  irwriter_gen_rt(w, "test_vpa.c", ".");
   vpa_gen(input, hw, w, "nest", 0);
   irwriter_end(w);
 
@@ -360,7 +365,7 @@ TEST(test_vpa_gen_single_scope) {
   assert(strstr(h_buf, "SCOPE_MAIN") != NULL);
   assert(strstr(h_buf, "TOK_TOK_A") != NULL);
   assert(strstr(h_buf, "TOK_TOK_B") != NULL);
-  assert(strstr(h_buf, "tt_tree_new") != NULL);
+  assert(strstr(h_buf, "TokenTree") != NULL);
   free(h_buf);
 
   _compile_test(BUILD_DIR "/test_vpa_gen_scope.h", BUILD_DIR "/test_vpa_gen_scope.ll");
@@ -427,21 +432,20 @@ TEST(test_vpa_gen_exec) {
               "#include <string.h>\n"
               "#include \"test_vpa_gen_scope.h\"\n"
               "\n"
-              "extern void vpa_lex(void*, int64_t, void*, void*, void*, void*);\n"
               "int32_t nest_next_cp(void* userdata) {\n"
               "  return ustr_iter_next((UstrIter*)userdata);\n"
               "}\n"
-              "int32_t tt_depth(void* tt) { return 1; }\n"
-              "struct { int64_t a; int64_t b; } parse_main(void* tt, void* sp) { return (typeof(parse_main(0,0))){0,0}; }\n"
+              "int32_t tt_depth(void* tt) { (void)tt; return 1; }\n"
+              "struct { int64_t a; int64_t b; } parse_main(void* tt, void* sp) { (void)tt; (void)sp; return "
+              "(typeof(parse_main(0,0))){0,0}; }\n"
               "\n"
               "int main(void) {\n"
               "  const char* input = \"aabb\";\n"
               "  int32_t len = 4;\n"
               "  char* us = ustr_new(len, input);\n"
-              "  TokenTree* tt = tt_tree_new(us);\n"
-              "  UstrIter it;\n"
-              "  ustr_iter_init(&it, us, 0);\n"
-              "  vpa_lex((void*)&it, (int64_t)len, (void*)tt, (void*)0, (void*)0, (void*)0);\n"
+              "  ParseContext ctx = {0};\n"
+              "  ParseResult res = nest_parse(ctx, us);\n"
+              "  TokenTree* tt = res.tt;\n"
               "  int32_t n = (int32_t)darray_size(tt->root->tokens);\n"
               "  assert(n == 4);\n"
               "  assert(tt->root->tokens[0].term_id == TOK_TOK_A);\n"
@@ -451,7 +455,7 @@ TEST(test_vpa_gen_exec) {
               "  assert(tt->root->tokens[0].cp_start == 0);\n"
               "  assert(tt->root->tokens[0].cp_size == 1);\n"
               "  assert(tt->root->tokens[3].cp_start == 3);\n"
-              "  tt_tree_del(tt, false);\n"
+              "  nest_cleanup(res);\n"
               "  ustr_del(us);\n"
               "  return 0;\n"
               "}\n");
@@ -622,9 +626,12 @@ static void _run_vpa_gen_prefixed(VpaGenInput* input, const char* h_path, const 
   FILE* irf = fopen(ir_path, "w");
   assert(hf && irf);
   HeaderWriter* hw = hdwriter_new(hf);
-  IrWriter* w = irwriter_new(irf, NULL);
+  IrWriter* w = irwriter_new(irf);
 
-  irwriter_start(w, "test_vpa.c", ".");
+  // Write header prelude (normally done by nest.c)
+  common_header_gen(hw);
+
+  irwriter_gen_rt(w, "test_vpa.c", ".");
   vpa_gen(input, hw, w, prefix, 0);
   irwriter_end(w);
 
@@ -921,54 +928,52 @@ TEST(test_vpa_scope_switch_exec) {
   const char* driver_path = BUILD_DIR "/test_vpa_scope_switch_driver.c";
   FILE* df = fopen(driver_path, "w");
   assert(df);
-  fprintf(
-      df,
-      "#include <assert.h>\n"
-      "#include <stdint.h>\n"
-      "#include <string.h>\n"
-      "#include \"test_vpa_scope_switch.h\"\n"
-      "\n"
-      "extern void vpa_lex(void*, int64_t, void*, void*, void*, void*);\n"
-      "int32_t nest_next_cp(void* userdata) {\n"
-      "  return ustr_iter_next((UstrIter*)userdata);\n"
-      "}\n"
-      "int32_t tt_depth(void* tt) { return 1; }\n"
-      "struct { int64_t a; int64_t b; } parse_main(void* tt, void* sp) { return (typeof(parse_main(0,0))){0,0}; }\n"
-      "struct { int64_t a; int64_t b; } parse_block(void* tt, void* sp) { return (typeof(parse_block(0,0))){0,0}; }\n"
-      "\n"
-      "int main(void) {\n"
-      "  const char* input = \"a{bb}a\";\n"
-      "  int32_t len = 6;\n"
-      "  char* us = ustr_new(len, input);\n"
-      "  TokenTree* tt = tt_tree_new(us);\n"
-      "  UstrIter it;\n"
-      "  ustr_iter_init(&it, us, 0);\n"
-      "  vpa_lex((void*)&it, (int64_t)len, (void*)tt, (void*)0, (void*)0, (void*)0);\n"
-      "  /* root chunk: @tok_a, <scope ref>, @tok_a */\n"
-      "  int32_t rn = (int32_t)darray_size(tt->root->tokens);\n"
-      "  assert(rn == 3);\n"
-      "  assert(tt->root->tokens[0].term_id == TOK_TOK_A);\n"
-      "  assert(tt->root->tokens[0].cp_start == 0);\n"
-      "  /* token[1] is a scope ref to the block chunk */\n"
-      "  assert(tt->root->tokens[1].term_id == SCOPE_BLOCK);\n"
-      "  int32_t cid = tt->root->tokens[1].chunk_id;\n"
-      "  assert(cid >= 0);\n"
-      "  /* last token after block */\n"
-      "  assert(tt->root->tokens[2].term_id == TOK_TOK_A);\n"
-      "  assert(tt->root->tokens[2].cp_start == 5);\n"
-      "  /* block chunk: @lbrace @tok_b @tok_b @rbrace */\n"
-      "  TokenChunk* bc = &tt->table[cid];\n"
-      "  int32_t bn = (int32_t)darray_size(bc->tokens);\n"
-      "  assert(bn == 4);\n"
-      "  assert(bc->tokens[0].term_id == TOK_LBRACE);\n"
-      "  assert(bc->tokens[1].term_id == TOK_TOK_B);\n"
-      "  assert(bc->tokens[2].term_id == TOK_TOK_B);\n"
-      "  assert(bc->tokens[3].term_id == TOK_RBRACE);\n"
-      "  assert(bc->scope_id == SCOPE_BLOCK);\n"
-      "  tt_tree_del(tt, false);\n"
-      "  ustr_del(us);\n"
-      "  return 0;\n"
-      "}\n");
+  fprintf(df, "#include <assert.h>\n"
+              "#include <stdint.h>\n"
+              "#include <string.h>\n"
+              "#include \"test_vpa_scope_switch.h\"\n"
+              "\n"
+              "int32_t nest_next_cp(void* userdata) {\n"
+              "  return ustr_iter_next((UstrIter*)userdata);\n"
+              "}\n"
+              "int32_t tt_depth(void* tt) { (void)tt; return 1; }\n"
+              "struct { int64_t a; int64_t b; } parse_main(void* tt, void* sp) { (void)tt; (void)sp; return "
+              "(typeof(parse_main(0,0))){0,0}; }\n"
+              "struct { int64_t a; int64_t b; } parse_block(void* tt, void* sp) { (void)tt; (void)sp; return "
+              "(typeof(parse_block(0,0))){0,0}; }\n"
+              "\n"
+              "int main(void) {\n"
+              "  const char* input = \"a{bb}a\";\n"
+              "  int32_t len = 6;\n"
+              "  char* us = ustr_new(len, input);\n"
+              "  ParseContext ctx = {0};\n"
+              "  ParseResult res = nest_parse(ctx, us);\n"
+              "  TokenTree* tt = res.tt;\n"
+              "  /* root chunk: @tok_a, <scope ref>, @tok_a */\n"
+              "  int32_t rn = (int32_t)darray_size(tt->root->tokens);\n"
+              "  assert(rn == 3);\n"
+              "  assert(tt->root->tokens[0].term_id == TOK_TOK_A);\n"
+              "  assert(tt->root->tokens[0].cp_start == 0);\n"
+              "  /* token[1] is a scope ref to the block chunk */\n"
+              "  assert(tt->root->tokens[1].term_id == SCOPE_BLOCK);\n"
+              "  int32_t cid = tt->root->tokens[1].chunk_id;\n"
+              "  assert(cid >= 0);\n"
+              "  /* last token after block */\n"
+              "  assert(tt->root->tokens[2].term_id == TOK_TOK_A);\n"
+              "  assert(tt->root->tokens[2].cp_start == 5);\n"
+              "  /* block chunk: @lbrace @tok_b @tok_b @rbrace */\n"
+              "  TokenChunk* bc = &tt->table[cid];\n"
+              "  int32_t bn = (int32_t)darray_size(bc->tokens);\n"
+              "  assert(bn == 4);\n"
+              "  assert(bc->tokens[0].term_id == TOK_LBRACE);\n"
+              "  assert(bc->tokens[1].term_id == TOK_TOK_B);\n"
+              "  assert(bc->tokens[2].term_id == TOK_TOK_B);\n"
+              "  assert(bc->tokens[3].term_id == TOK_RBRACE);\n"
+              "  assert(bc->scope_id == SCOPE_BLOCK);\n"
+              "  nest_cleanup(res);\n"
+              "  ustr_del(us);\n"
+              "  return 0;\n"
+              "}\n");
   fclose(df);
 
   char cmd[1024];

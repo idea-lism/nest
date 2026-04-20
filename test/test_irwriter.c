@@ -18,7 +18,7 @@ static char* _capture(void (*fn)(IrWriter*)) {
   size_t sz = 0;
   FILE* f = compat_open_memstream(&buf, &sz);
   assert(f);
-  IrWriter* w = irwriter_new(f, NULL);
+  IrWriter* w = irwriter_new(f);
   fn(w);
   irwriter_del(w);
   compat_close_memstream(f, &buf, &sz);
@@ -27,17 +27,17 @@ static char* _capture(void (*fn)(IrWriter*)) {
 
 // --- Tests ---
 
-static void _emit_module_prelude(IrWriter* w) { irwriter_start(w, "test.ll", "."); }
+static void _emit_module_prelude(IrWriter* w) { irwriter_gen_rt_simple(w); }
 
 TEST(test_module_prelude) {
   char* out = _capture(_emit_module_prelude);
-  assert(strstr(out, "source_filename = \"test.ll\""));
-  assert(!strstr(out, "target triple"));
+  assert(strstr(out, "source_filename"));
+  assert(strstr(out, "target triple"));
   free(out);
 }
 
 static void _emit_simple_function(IrWriter* w) {
-  irwriter_start(w, "test.ll", ".");
+  irwriter_gen_rt_simple(w);
 
   irwriter_define_startf(w, "match", "{i64, i64} @match(i64 %%state, i64 %%cp)");
 
@@ -61,7 +61,7 @@ TEST(test_simple_function) {
 }
 
 static void _emit_binop(IrWriter* w) {
-  irwriter_start(w, "test.ll", ".");
+  irwriter_gen_rt_simple(w);
   irwriter_define_startf(w, "f", "i64 @f(i64 %%x_i64)");
   irwriter_bb(w); // L0
   irwriter_rawf(w, "  %%x = trunc i64 %%x_i64 to i32\n");
@@ -88,7 +88,7 @@ TEST(test_binop) {
 }
 
 static void _emit_icmp_branch(IrWriter* w) {
-  irwriter_start(w, "test.ll", ".");
+  irwriter_gen_rt_simple(w);
   irwriter_define_startf(w, "f", "i64 @f(i64 %%x_i64)");
 
   IrLabel positive = irwriter_label(w); // L0
@@ -122,7 +122,7 @@ TEST(test_icmp_branch) {
 }
 
 static void _emit_switch(IrWriter* w) {
-  irwriter_start(w, "test.ll", ".");
+  irwriter_gen_rt_simple(w);
   irwriter_define_startf(w, "dispatch", "void @dispatch(i64 %%s_i64)");
 
   IrLabel dead = irwriter_label(w);   // L0
@@ -163,7 +163,8 @@ TEST(test_switch) {
 }
 
 static void _emit_insertvalue(IrWriter* w) {
-  irwriter_start(w, "test.ll", ".");
+  irwriter_gen_rt_simple(w);
+
   irwriter_define_startf(w, "match", "{i64, i64} @match(i64 %%state, i64 %%cp)");
 
   irwriter_bb(w); // L0
@@ -184,7 +185,7 @@ TEST(test_insertvalue) {
 }
 
 static void _emit_debug_locations(IrWriter* w) {
-  irwriter_start(w, "test.ll", ".");
+  irwriter_gen_rt_simple(w);
   irwriter_define_startf(w, "f", "i64 @f(i64 %%x_i64)");
 
   irwriter_bb(w); // L0
@@ -208,12 +209,12 @@ TEST(test_debug_locations) {
   assert(strstr(out, "DICompileUnit"));
   assert(strstr(out, "DISubprogram"));
   assert(strstr(out, "!llvm.dbg.cu"));
-  assert(strstr(out, "DIFile(filename: \"test.ll\", directory: \".\")"));
+  assert(strstr(out, "DIFile(filename: \"nest\", directory: \".\")"));
   free(out);
 }
 
 static void _emit_dfa_function(IrWriter* w) {
-  irwriter_start(w, "dfa.rules", ".");
+  irwriter_gen_rt_simple(w);
 
   irwriter_define_startf(w, "match", "{i64, i64} @match(i64 %%state, i64 %%cp)");
 
@@ -280,7 +281,7 @@ TEST(test_dfa_function) {
 }
 
 static void _emit_label_f(IrWriter* w) {
-  irwriter_start(w, "test.ll", ".");
+  irwriter_gen_rt_simple(w);
   irwriter_define_startf(w, "f", "i64 @f(i64 %%x_i64)");
 
   IrLabel entry_bb = irwriter_bb(w);
@@ -314,10 +315,10 @@ TEST(test_label_f) {
 TEST(test_lifecycle) {
   FILE* f = compat_devnull_w();
   assert(f);
-  IrWriter* w = irwriter_new(f, NULL);
+  IrWriter* w = irwriter_new(f);
   assert(w);
 
-  irwriter_start(w, "test.ll", ".");
+  irwriter_gen_rt_simple(w);
   irwriter_define_startf(w, "f", "i64 @f(i64 %%x_i64)");
   irwriter_bb(w);
   irwriter_rawf(w, "  %%x = trunc i64 %%x_i64 to i32\n");
@@ -335,9 +336,9 @@ TEST(test_clang_compile) {
   snprintf(obj_path, sizeof(obj_path), "%s/test_irwriter.o", BUILD_DIR);
   FILE* f = fopen(ll_path, "w");
   assert(f);
-  IrWriter* w = irwriter_new(f, NULL);
+  IrWriter* w = irwriter_new(f);
 
-  irwriter_start(w, "dfa.rules", ".");
+  irwriter_gen_rt_simple(w);
 
   irwriter_define_startf(w, "match", "{i64, i64} @match(i64 %%state, i64 %%cp)");
 

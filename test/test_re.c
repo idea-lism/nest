@@ -19,8 +19,8 @@ static char* _gen_ir(void (*fn)(Aut*, Re*, IrWriter*)) {
   size_t sz = 0;
   FILE* f = compat_open_memstream(&buf, &sz);
   assert(f);
-  IrWriter* w = irwriter_new(f, NULL);
-  irwriter_start(w, "test.rules", ".");
+  IrWriter* w = irwriter_new(f);
+  irwriter_start(w, 5, "test.rules", ".");
 
   Aut* a = aut_new("match", "test.rules");
   Re* re = re_new(a);
@@ -357,8 +357,8 @@ static void _write_and_compile(void (*fn)(Aut*, Re*, IrWriter*), const char* tes
 
   FILE* f = fopen(ll_path, "w");
   assert(f);
-  IrWriter* w = irwriter_new(f, NULL);
-  irwriter_start(w, "test.rules", ".");
+  IrWriter* w = irwriter_new(f);
+  irwriter_start(w, 5, "test.rules", ".");
 
   Aut* a = aut_new("match", "test.rules");
   Re* re = re_new(a);

@@ -221,10 +221,6 @@ Similar to the `_lex_scope` in the [parse spec][parse.md].
 
 Resulting parser needs:
 
-- common runtime
-  - copy `build/nest_rt.inc`, which is string buf from header amalgamated from `src/nest_rt.h.in`
-    - includes: input stream handling: use `ustr`
-    - includes: token tree representation: use `token_tree`
 - token ids: `TOK_XXX` numbered in the system of action_unit_id.
   - but don't include the token ids for keyword literals (the ids in the form of `@lit.xxx`) because we have no way to upcase them.
 - primitive hook ids: `HOOK_XXX` numbered in the system of action_unit_id.

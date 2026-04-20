@@ -253,8 +253,8 @@ int main(int argc, char** argv) {
     return 1;
   }
 
-  IrWriter* w = irwriter_new(f, NULL);
-  irwriter_start(w, "nest", ".");
+  IrWriter* w = irwriter_new(f);
+  irwriter_gen_rt_simple(w);
 
   // order must match ScopeId enum: MAIN, VPA, SCOPE, LIT_SCOPE, PEG, BRANCHES, PEG_TAG, RE, RE_REF, CHARCLASS, RE_STR,
   // PEG_STR

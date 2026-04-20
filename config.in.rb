@@ -1,7 +1,8 @@
-base = (Dir.glob "src/*.c") - ["src/nest.c", "src/parse_gen.c", "src/ustr.c", "src/ustr_neon.c", "src/ustr_avx.c"]
+base = (Dir.glob "src/*.c") - ["src/nest.c", "src/parse_gen.c", "src/llir_parse_gen.c", "src/ustr.c", "src/ustr_neon.c", "src/ustr_avx.c"]
 base_lean = base - %w[src/parse.c src/post_process.c]
 kissat = IS_WINDOWS ? [] : %w[build/kissat/build/libkissat.a]
 nest_lex = ["#{BUILDDIR}/nest_lex.o"]
+llir_lex = ["#{BUILDDIR}/llir_lex.o"]
 
 lib "ustr",
   srcs: %w[src/ustr.c src/ustr_neon.c src/ustr_avx.c]
@@ -15,7 +16,9 @@ exe "test_ustr",
   deps: %w[ustr]
 
 exe "test_irwriter",
-  srcs: %w[test/test_irwriter.c test/compat.c src/irwriter.c src/symtab.c src/darray.c]
+  srcs: %w[test/test_irwriter.c test/compat.c src/irwriter.c src/irwriter_gen_rt.c src/symtab.c src/darray.c],
+  extra_objs: llir_lex,
+  order_deps: %w[build/nest_rt.inc build/nest_rt_impl.inc]
 
 exe "test_bitset",
   srcs: %w[test/test_bitset.c src/bitset.c]
@@ -48,45 +51,60 @@ exe "test_coloring",
 exe "test_peg_ir",
   srcs: base_lean + %w[test/test_peg_ir.c test/compat.c],
   deps: %w[ustr],
-  ext_libs: kissat
+  extra_objs: llir_lex,
+  ext_libs: kissat,
+  order_deps: %w[build/nest_rt.inc build/nest_rt_impl.inc]
 
 exe "test_peg_analyze",
   srcs: base_lean + %w[test/test_peg_analyze.c test/compat.c],
   deps: %w[ustr],
-  ext_libs: kissat
+  extra_objs: llir_lex,
+  ext_libs: kissat,
+  order_deps: %w[build/nest_rt.inc build/nest_rt_impl.inc]
 
 exe "test_peg_gen",
   srcs: base_lean + %w[test/test_peg_gen.c test/compat.c],
   deps: %w[ustr],
-  ext_libs: kissat
+  extra_objs: llir_lex,
+  ext_libs: kissat,
+  order_deps: %w[build/nest_rt.inc build/nest_rt_impl.inc]
 
 exe "test_vpa",
   srcs: base_lean + %w[test/test_vpa.c test/compat.c],
   deps: %w[ustr],
+  extra_objs: llir_lex,
   ext_libs: kissat,
-  order_deps: %w[build/nest_rt.inc]
+  order_deps: %w[build/nest_rt.inc build/nest_rt_impl.inc]
 
 exe "test_parse",
   srcs: base + %w[test/test_parse.c test/compat.c],
   deps: %w[ustr],
-  extra_objs: nest_lex,
-  ext_libs: kissat
+  extra_objs: nest_lex + llir_lex,
+  ext_libs: kissat,
+  order_deps: %w[build/nest_rt.inc build/nest_rt_impl.inc]
 
 exe "test_post_process",
   srcs: base + %w[test/test_post_process.c test/compat.c],
   deps: %w[ustr],
-  extra_objs: nest_lex,
-  ext_libs: kissat
+  extra_objs: nest_lex + llir_lex,
+  ext_libs: kissat,
+  order_deps: %w[build/nest_rt.inc build/nest_rt_impl.inc]
 
 exe "nest",
   srcs: base + %w[src/nest.c],
   deps: %w[ustr],
-  extra_objs: nest_lex,
+  extra_objs: nest_lex + llir_lex,
   ext_libs: kissat,
-  order_deps: %w[build/nest_syntax.inc build/nest_reference.inc build/nest_rt.inc]
+  order_deps: %w[build/nest_syntax.inc build/nest_reference.inc build/nest_rt.inc build/nest_rt_impl.inc]
 
 exe "parse_gen",
-  srcs: %w[src/parse_gen.c src/re.c src/aut.c src/irwriter.c src/symtab.c src/bitset.c src/darray.c],
+  srcs: %w[src/parse_gen.c src/re.c src/aut.c src/irwriter.c src/irwriter_gen_rt.c src/symtab.c src/bitset.c src/darray.c],
+  deps: %w[ustr],
+  extra_objs: llir_lex,
+  order_deps: %w[build/nest_rt.inc build/nest_rt_impl.inc]
+
+exe "llir_parse_gen",
+  srcs: %w[src/llir_parse_gen.c src/re.c src/aut.c src/irwriter.c src/symtab.c src/bitset.c src/darray.c],
   deps: %w[ustr]
 
 gen_str_header "build/nest_syntax.inc",
@@ -99,7 +117,14 @@ gen_str_header "build/nest_rt.inc",
   from: "build/nest_rt.h"
 
 amalgamate "build/nest_rt.h",
-  input: "src/nest_rt.h.in",
+  src: %w[src/nest_rt.h],
+  include_dirs: %w[src]
+
+gen_str_header "build/nest_rt_impl.inc",
+  from: "build/nest_rt.c"
+
+amalgamate "build/nest_rt.c",
+  src: %w[src/darray.c src/bitset.c src/token_tree.c src/ustr.c src/ustr_avx.c src/ustr_neon.c],
   include_dirs: %w[src]
 
 debug    cflags: "-O0 -g -fsanitize=address -fsanitize=undefined"
