@@ -36,7 +36,7 @@ benchmark/
   inputs/
     gen_inputs.rb      # deterministic generator for internal benchmarks only
     internal/
-      calc/            # generated: xs(1K) sm(10K) md(100K) lg(1M)
+      calc/            # generated: xs(1K) sm(10K) lg(1M)
       json/
       kotlin/
     compare/           # copied from PackCC benchmark repo
@@ -83,16 +83,17 @@ benchmark/
 
 ## Input Generation (`inputs/gen_inputs.rb`)
 
-Internal benchmarks only. Deterministic (seeded PRNG). Each grammar × 4 sizes × 2–3 variants.
+Internal benchmarks only. Deterministic (seeded PRNG). Each grammar × 3 sizes × 2–3 variants.
 
 Comparison benchmarks must not use generated inputs. They use grammar/input files from https://github.com/arithy/packcc/tree/main/benchmark verbatim.
 
 ### Sizes
+Input size array: `[1k, 10k, 1m]`
+
 | Label | Target | Purpose |
 |-------|--------|---------|
 | `xs`  | 1 KB   | Baseline, startup cost |
 | `sm`  | 10 KB  | Small file |
-| `md`  | 100 KB | Medium file |
 | `lg`  | 1 MB   | Throughput stress |
 
 ### Variants per grammar
@@ -113,11 +114,11 @@ Nest-only. Compare own options, collect detailed metrics.
 | Dimension | Values |
 |-----------|--------|
 | Memoize   | `none`, `naive`, `shared` |
-| Clang opt | `-O0`, `-O2` |
+| Clang opt | calc: `-O0`, `-O2`; json/kotlin: `-O2` only |
 | Grammar   | calc, json, kotlin |
 | Input     | all sizes × all variants |
 
-= 3 memoize × 2 opt × 3 grammars × ~12 inputs = **~216 runs**
+= 3 memoize × ((2 opt × calc inputs) + (1 opt × json inputs) + (1 opt × kotlin inputs))
 
 **Metrics collected per run:**
 
@@ -141,7 +142,7 @@ grammar,input,size_bytes,memoize,opt,parse_us,throughput_mbs,rss_kb,token_count,
 1. Does `shared` memoize beat `naive`? When?
 2. How does memoize table size scale with token count?
 3. What fraction of time is lex (VPA) vs parse (PEG)?
-4. `-O2` vs `-O0` improvement on generated LLVM IR?
+4. `-O2` vs `-O0` improvement on generated LLVM IR for internal calc case?
 5. Deep vs flat vs wide — which stresses what?
 
 ### 2. Comparison Benchmarks (`benchmark/`)
@@ -244,16 +245,14 @@ Each `run` step:
 
 Markdown tables + summary.
 
-### Internal Report Example:
-```
-## calc — Memoize Mode Comparison (100KB mixed, -O2)
+### Internal Report
 
-| Mode   | Parse µs | MB/s  | RSS KB | Memo Table KB | Lex% | Parse% |
-|--------|----------|-------|--------|---------------|------|--------|
-| none   | 1234     | 81.0  | 2048   | 0             | 35%  | 65%    |
-| naive  | 1100     | 90.9  | 3072   | 512           | 35%  | 55%    |
-| shared | 980      | 102.0 | 2560   | 256           | 35%  | 50%    |
-```
+Generate 2 * input_sizes internal tables:
+1. calc-only optimization tables for all input sizes
+   - row header=memoize_mode
+   - col header=`-O0` and `-O2` side-by-side with metrics [MB/s, RSS MB, Tokens, Chunks]
+2. all-grammar `-O2` tables
+   - same structure as calc-only table
 
 ### Comparison Report Example:
 ```
@@ -281,7 +280,7 @@ Each file must be completed fully before moving to the next. No scaffolding stub
 9. `benchmark/runners/nest_runner.c.erb` — complete timing harness, CSV output, all metrics
 10. `benchmark/runners/packcc_runner.c` — complete timing harness, CSV output
 11. `benchmark/runners/treesitter_runner.c` — complete timing harness, CSV output
-12. `benchmark/internal/run_internal.rb` — full internal benchmark: build + run nest across memoize × opt matrix, CSV output + markdown report
+12. `benchmark/internal/run_internal.rb` — full internal benchmark: build + run nest across memoize × opt matrix (`-O0` only for calc), CSV output + markdown report with calc `-O0/-O2` table plus all-grammar `-O2` table
 13. `benchmark/run.rb` — full orchestrator: setup/gen/internal/compare/report/all subcommands, complete
 14. `benchmark/grammars/kotlin/grammar.nest` — translate kotlin.peg to .nest, complete
 15. `benchmark/grammars/kotlin/grammar.peg` — copy from packcc repo

@@ -70,15 +70,11 @@ module BenchmarkCommon
     ERB.new(File.read(path), trim_mode: "-").result_with_hash(vars)
   end
 
-  def sh(*cmd, chdir: nil, env: {}, quiet: false)
-    opts = {}
-    opts[:chdir] = chdir if chdir
-    out, err, status = Open3.capture3(env, *cmd, **opts)
-    return out if status.success?
-
-    $stderr.puts(out) unless quiet || out.empty?
-    $stderr.puts(err) unless quiet || err.empty?
-    raise "command failed: #{shell_join(cmd)}"
+  def sh *cmd, **opts
+    print "system "
+    p cmd
+    p opts
+    system *cmd, out: $stdout, err: $stderr, **opts or abort "sh failed"
   end
 
   def timed_command(*cmd, chdir: nil, env: {})

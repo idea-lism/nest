@@ -7,10 +7,9 @@ require "fileutils"
 
 SEED = 42
 SIZES = {
-  "1k"   => 1_024,
-  "10k"  => 10_240,
-  "100k" => 102_400,
-  "1m"   => 1_048_576
+  "1k"  => 1_024,
+  "10k" => 10_240,
+  "1m"  => 1_048_576
 }.freeze
 
 OUT_DIR = File.join(__dir__, "internal")

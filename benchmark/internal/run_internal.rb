@@ -2,14 +2,21 @@
 
 # benchmark/internal/run_internal.rb
 # Nest-only internal benchmarks: memoize × clang-opt matrix.
-# Output: benchmark/results/internal_<grammar>.csv + markdown summary.
+# calc runs -O0/-O2. json/kotlin run -O2 only.
+# Output: benchmark/results/internal_<grammar>.csv + markdown report.
 
 require_relative "../common"
 include BenchmarkCommon
 
 CC = "xcrun clang"
 MEMOIZE_MODES = %w[none naive shared].freeze
-OPT_LEVELS = %w[-O0 -O2].freeze
+SIZE_LABELS = %w[1k 10k 1m].freeze
+REPORT_METRICS = ["MB/s", "RSS MB", "Tokens", "Chunks"].freeze
+OPT_LEVELS = {
+  "calc" => %w[-O0 -O2],
+  "json" => %w[-O2],
+  "kotlin" => %w[-O2]
+}.freeze
 
 def build_nest_runner(grammar, prefix, memoize, opt, build_dir)
   grammar_info = GRAMMARS.fetch(grammar)
@@ -56,7 +63,7 @@ def run_internal
     rows = []
 
     MEMOIZE_MODES.each do |memoize|
-      OPT_LEVELS.each do |opt|
+      OPT_LEVELS.fetch(grammar).each do |opt|
         opt_label = opt.delete("-")
         prefix = "bench_#{grammar}"
         build_dir = File.join(BUILD_DIR, "internal", grammar, "#{memoize}_#{opt_label}")
@@ -113,23 +120,109 @@ def run_internal
   end
 end
 
+def preferred_input_name(rows, size_label)
+  %w[mixed base flat deep wide].each do |variant|
+    name = "#{size_label}_#{variant}"
+    return name if rows.any? { |r| r["input"] == name }
+  end
+
+  rows.find { |r| r["input"].start_with?("#{size_label}_") }&.fetch("input", nil)
+end
+
+def find_row(rows, input_name, memoize, opt)
+  return nil unless input_name
+
+  rows.find { |r| r["input"] == input_name && r["memoize"] == memoize && r["opt"] == opt }
+end
+
+def fmt_metric(v, digits = 1)
+  return "-" if v.nil? || v == ""
+
+  format("%.#{digits}f", v.to_f)
+end
+
+def fmt_rss_mb(v)
+  return "-" if v.nil? || v == ""
+
+  format("%.1f", v.to_f / 1024.0)
+end
+
+def metric_cells(row)
+  return ["-", "-", "-", "-"] unless row
+
+  [
+    fmt_metric(row["throughput_mbs"]),
+    fmt_rss_mb(row["rss_kb"]),
+    row["token_count"].to_i.to_s,
+    row["chunk_count"].to_i.to_s
+  ]
+end
+
+def md_table_line(cells)
+  "| #{cells.join(' | ')} |\n"
+end
+
+def md_table_sep(headers)
+  md_table_line(headers.map { |header| "-" * [header.length, 3].max })
+end
+
+def append_md_table(lines, headers, rows)
+  lines << md_table_line(headers)
+  lines << md_table_sep(headers)
+  rows.each do |row|
+    lines << md_table_line(row)
+  end
+  lines << "\n"
+end
+
+def report_calc_tables(lines, grammar_rows)
+  calc_rows = grammar_rows.fetch("calc")
+
+  SIZE_LABELS.each do |size_label|
+    input_name = preferred_input_name(calc_rows, size_label)
+    next unless input_name
+
+    lines << "## calc — #{input_name}\n\n"
+    headers = ["Memoize"] + ["-O0", "-O2"].flat_map { |opt| REPORT_METRICS.map { |metric| "#{opt} #{metric}" } }
+    rows = MEMOIZE_MODES.map do |memoize|
+      [memoize] +
+        metric_cells(find_row(calc_rows, input_name, memoize, "-O0")) +
+        metric_cells(find_row(calc_rows, input_name, memoize, "-O2"))
+    end
+    append_md_table(lines, headers, rows)
+  end
+end
+
+def report_all_grammar_tables(lines, grammar_rows)
+  SIZE_LABELS.each do |size_label|
+    inputs = GRAMMARS.each_key.each_with_object({}) do |grammar, acc|
+      input_name = preferred_input_name(grammar_rows.fetch(grammar), size_label)
+      acc[grammar] = input_name if input_name
+    end
+    next if inputs.empty?
+
+    lines << "## all grammars — #{size_label}, -O2\n\n"
+    lines << "Inputs: #{GRAMMARS.each_key.map { |grammar| "#{grammar}=`#{inputs[grammar] || '-'}'" }.join(', ')}\n\n"
+
+    headers = ["Memoize"] + GRAMMARS.each_key.flat_map { |grammar| REPORT_METRICS.map { |metric| "#{grammar} #{metric}" } }
+    rows = MEMOIZE_MODES.map do |memoize|
+      [memoize] + GRAMMARS.each_key.flat_map do |grammar|
+        metric_cells(find_row(grammar_rows.fetch(grammar), inputs[grammar], memoize, "-O2"))
+      end
+    end
+    append_md_table(lines, headers, rows)
+  end
+end
+
 def report_internal
   md_path = File.join(RESULTS_DIR, "internal_report.md")
   lines = ["# Internal Benchmark Report\n\n"]
-
-  GRAMMARS.each_key do |grammar|
-    csv_path = File.join(RESULTS_DIR, "internal_#{grammar}.csv")
-    rows = csv_rows(csv_path)
-    next if rows.empty?
-
-    lines << "## #{grammar}\n\n"
-    lines << "| Input | Memoize | Opt | Parse µs | MB/s | RSS KB | Tokens | Chunks |\n"
-    lines << "|-------|---------|-----|----------|------|--------|--------|--------|\n"
-    rows.each do |r|
-      lines << "| #{r['input']} | #{r['memoize']} | #{r['opt']} | #{r['parse_us']} | #{r['throughput_mbs']} | #{r['rss_kb']} | #{r['token_count']} | #{r['chunk_count']} |\n"
-    end
-    lines << "\n"
+  grammar_rows = GRAMMARS.each_with_object({}) do |(grammar, _info), acc|
+    acc[grammar] = csv_rows(File.join(RESULTS_DIR, "internal_#{grammar}.csv"))
   end
+
+  report_calc_tables(lines, grammar_rows)
+  report_all_grammar_tables(lines, grammar_rows)
 
   File.write(md_path, lines.join)
   puts "  wrote #{md_path}"
