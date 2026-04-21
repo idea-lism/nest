@@ -66,8 +66,17 @@ static void _gen_node_struct(HeaderWriter* hw, ScopedRule* sr, const char* rule_
       hdwriter_printf(hw, "    bool %s : 1;\n", sanitized_name);
       XFREE(sanitized_name);
     }
-    if (tag_size < 64) {
-      hdwriter_printf(hw, "    uint64_t _padding : %d;\n", 64 - tag_size);
+    int32_t n_buckets = (tag_size + 63) / 64;
+    for (int32_t bi = 0; bi < n_buckets; bi++) {
+      int32_t bits_in_bucket = (bi < n_buckets - 1) ? 64 : tag_size - bi * 64;
+      int32_t padding = 64 - bits_in_bucket;
+      if (padding > 0) {
+        if (n_buckets == 1) {
+          hdwriter_printf(hw, "    uint64_t _padding : %d;\n", padding);
+        } else {
+          hdwriter_printf(hw, "    uint64_t _padding%d : %d;\n", bi, padding);
+        }
+      }
     }
     hdwriter_puts(hw, "  } is;\n");
   }
@@ -170,9 +179,17 @@ static void _gen_loader(HeaderWriter* hw, const char* rule_name, RuleScopeEntry*
     if (has_tags) {
       hdwriter_printf(hw, "int64_t* $col = (int64_t*)((int32_t*)$table + %lld * ref.col);\n",
                       (long long)col_size_in_i32);
-      hdwriter_printf(hw, "((uint64_t*)&$1.is)[0] = ($col[%llu] >> %lluULL) & 0x%llxULL;\n",
-                      (unsigned long long)sr->tag_bit_index, (unsigned long long)sr->tag_bit_offset,
-                      (unsigned long long)_tag_mask(tag_size, 0));
+      if (tag_size <= 64) {
+        hdwriter_printf(hw, "((uint64_t*)&$1.is)[0] = ($col[%d] >> %dULL) & 0x%llxULL;\n",
+                        sr->tag_bit_index, sr->tag_bit_offset,
+                        (unsigned long long)_tag_mask(tag_size, 0));
+      } else {
+        // Big: dedicated buckets, offset=0, copy consecutive words
+        int32_t n_buckets = (tag_size + 63) / 64;
+        for (int32_t bi = 0; bi < n_buckets; bi++) {
+          hdwriter_printf(hw, "((uint64_t*)&$1.is)[%d] = $col[%d];\n", bi, sr->tag_bit_index + bi);
+        }
+      }
     }
     for (size_t field_idx = 0; field_idx < darray_size(sr->node_fields); field_idx++) {
       NodeField* nf = &sr->node_fields[field_idx];
@@ -379,12 +396,18 @@ static void _gen_header(PegGenInput* input, HeaderWriter* hw, RuleScopeMap* scop
 // LLVM IR generation — per-scope context
 // ============================================================
 
+static IrVal _tag_alloca(PegIrCtx* ctx, int32_t n) {
+  if (n == 0) return ctx->tag_bits;
+  return ctx->tag_bits_extra[n - 1];
+}
+
 typedef struct {
   IrVal peg_table;
   int64_t sizeof_col;
   int64_t bits_bucket_size;
   int64_t slot_byte_offset; // precomputed: bits_bucket_size * 8 + slot_index * 4
   int64_t tag_byte_offset;  // precomputed: tag_bit_index * 8
+  int32_t tag_bit_count;    // forwarded from ScopedRule
 } PegIrScopeCtx;
 
 // ============================================================
@@ -590,9 +613,30 @@ static void _gen_scope_ir(IrWriter* w, ScopeClosure* cl, int memoize_mode) {
   irwriter_store(w, "i64", irwriter_imm_int(w, -1), parse_result);
   IrVal parsed_tokens = irwriter_alloca(w, "i64");
   irwriter_store(w, "i64", irwriter_imm_int(w, 0), parsed_tokens);
+  // Compute max tag bucket count across all rules in scope
+  int32_t max_tag_buckets = 0;
+  for (int32_t i = 0; i < rule_size; i++) {
+    int32_t nt = symtab_count(&cl->scoped_rules[i].tags);
+    int32_t nb = (nt > 0) ? (nt + 63) / 64 : 0;
+    if (nb > max_tag_buckets) max_tag_buckets = nb;
+  }
+  if (max_tag_buckets < 1) max_tag_buckets = 1;
+
   irwriter_raw(w, "  %tag_bits = alloca i64\n");
   IrVal tag_bits = irwriter_imm(w, "%tag_bits");
   irwriter_store(w, "i64", irwriter_imm_int(w, 0), tag_bits);
+
+  IrVal* tag_bits_extra = NULL;
+  if (max_tag_buckets > 1) {
+    tag_bits_extra = XMALLOC((size_t)(max_tag_buckets - 1) * sizeof(IrVal));
+    for (int32_t bi = 1; bi < max_tag_buckets; bi++) {
+      irwriter_rawf(w, "  %%tag_bits_%d = alloca i64\n", bi);
+      char name_buf[32];
+      snprintf(name_buf, sizeof(name_buf), "%%tag_bits_%d", bi);
+      tag_bits_extra[bi - 1] = irwriter_imm(w, name_buf);
+      irwriter_store(w, "i64", irwriter_imm_int(w, 0), tag_bits_extra[bi - 1]);
+    }
+  }
 
   IrVal token_size = irwriter_call_retf(w, "i64", "tt_current_size", "ptr %%tt");
 
@@ -609,6 +653,8 @@ static void _gen_scope_ir(IrWriter* w, ScopeClosure* cl, int memoize_mode) {
       .stack_ptr = stack_ptr,
       .parse_result = parse_result,
       .tag_bits = tag_bits,
+      .tag_bits_extra = tag_bits_extra,
+      .tag_bits_n = max_tag_buckets,
       .parsed_tokens = parsed_tokens,
       .current_rule_id = -1,
       .call_site_counter = 0,
@@ -626,7 +672,8 @@ static void _gen_scope_ir(IrWriter* w, ScopeClosure* cl, int memoize_mode) {
     irwriter_rawf(w, "\n%s:\n", sr->scoped_rule_name);
 
     int32_t tag_size = symtab_count(&sr->tags);
-    ctx.tag_bit_offset = (int64_t)sr->tag_bit_offset;
+    ctx.tag_bit_offset = (int32_t)sr->tag_bit_offset;
+    ctx.tag_bit_count = sr->tag_bit_count;
     ctx.current_rule_id = i;
     ctx.call_site_counter = 0;
     ctx.current_rule_call_sites = sr->call_sites;
@@ -638,6 +685,7 @@ static void _gen_scope_ir(IrWriter* w, ScopeClosure* cl, int memoize_mode) {
         .bits_bucket_size = cl->bits_bucket_size,
         .slot_byte_offset = cl->bits_bucket_size * 8 + (int64_t)sr->slot_index * 4,
         .tag_byte_offset = (int64_t)sr->tag_bit_index * 8,
+        .tag_bit_count = sr->tag_bit_count,
     };
 
     MemoizeLabels ml = {
@@ -652,7 +700,10 @@ static void _gen_scope_ir(IrWriter* w, ScopeClosure* cl, int memoize_mode) {
     // --- material parse ---
     irwriter_bb_at(w, ml.material_parse);
     if (tag_size > 0) {
-      irwriter_store(w, "i64", irwriter_imm_int(w, 0), tag_bits);
+      int32_t n_buckets = (tag_size + 63) / 64;
+      for (int32_t bi = 0; bi < n_buckets; bi++) {
+        irwriter_store(w, "i64", irwriter_imm_int(w, 0), _tag_alloca(&ctx, bi));
+      }
     }
 
     IrLabel parse_fail = irwriter_label(w);
@@ -669,9 +720,23 @@ static void _gen_scope_ir(IrWriter* w, ScopeClosure* cl, int memoize_mode) {
     irwriter_store(w, "i64", parsed_tokens_val, parsed_tokens);
 
     if (tag_size > 0) {
-      irwriter_call_void_fmtf(w, "tag_writeback", "ptr %%r%d, i64 %%r%d, i64 %lld, i64 %lld, i64 %llu, i64 %%r%d",
-                              (int)peg_table, (int)start_col, (long long)sizeof_col, (long long)sc.tag_byte_offset,
-                              (unsigned long long)~sr->tag_bit_mask, (int)irwriter_load(w, "i64", tag_bits));
+      if (tag_size <= 64) {
+        // Small: clear+OR single bucket
+        uint64_t clear_mask = ~_tag_mask(tag_size, (uint64_t)sr->tag_bit_offset);
+        irwriter_call_void_fmtf(w, "tag_writeback", "ptr %%r%d, i64 %%r%d, i64 %lld, i64 %lld, i64 %llu, i64 %%r%d",
+                                (int)peg_table, (int)start_col, (long long)sizeof_col, (long long)sc.tag_byte_offset,
+                                (unsigned long long)clear_mask, (int)irwriter_load(w, "i64", _tag_alloca(&ctx, 0)));
+      } else {
+        // Big: full overwrite of consecutive dedicated buckets
+        int32_t n_buckets = (tag_size + 63) / 64;
+        for (int32_t bi = 0; bi < n_buckets; bi++) {
+          int64_t bucket_offset = sc.tag_byte_offset + bi * 8;
+          irwriter_call_void_fmtf(w, "tag_writeback",
+                                  "ptr %%r%d, i64 %%r%d, i64 %lld, i64 %lld, i64 0, i64 %%r%d", (int)peg_table,
+                                  (int)start_col, (long long)sizeof_col, (long long)bucket_offset,
+                                  (int)irwriter_load(w, "i64", _tag_alloca(&ctx, bi)));
+        }
+      }
     }
     memoize_write(&ctx, &sc, sr, start_col);
     irwriter_br(w, ml.done_bb);
@@ -700,6 +765,7 @@ static void _gen_scope_ir(IrWriter* w, ScopeClosure* cl, int memoize_mode) {
   IrVal ret_with_col = irwriter_insertvalue(w, "{i64, i64}", ret_with_result, "i64", final_col, 1);
   irwriter_ret(w, "{i64, i64}", ret_with_col);
   irwriter_define_end(w);
+  XFREE(tag_bits_extra);
   XFREE(fn_name);
 }
 

@@ -127,9 +127,9 @@ typedef struct {
   NodeFields node_fields;
 
   // tag bit allocation
-  uint64_t tag_bit_index;
-  uint64_t tag_bit_mask;
-  uint64_t tag_bit_offset;
+  int32_t tag_bit_index;   // starting bucket index in bits[]
+  int32_t tag_bit_offset;  // bit offset within starting bucket (0..63)
+  int32_t tag_bit_count;   // total number of tag bits for this rule
 
   // analysis
   bool nullable;
@@ -139,7 +139,8 @@ typedef struct {
   uint32_t max_size; // UINT32_MAX = unlimited
 
   // shared-mode slot coloring
-  uint64_t segment_index;
+  int32_t segment_color;   // logical color group id
+  uint64_t segment_index;  // physical bucket index in bits[]
   uint64_t segment_mask;
   uint64_t rule_bit_mask;
   uint64_t slot_index;

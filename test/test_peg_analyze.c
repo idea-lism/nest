@@ -199,11 +199,8 @@ TEST(test_tag_bits_allocated) {
   int32_t value_id = symtab_find(&cl->scoped_rule_names, "main$value");
   ScopedRule* value_sr = &cl->scoped_rules[value_id - cl->scoped_rule_names.start_num];
 
-  // tag_bit_mask should be non-zero (3 tags need at least 3 bits)
-  assert(value_sr->tag_bit_mask != 0);
-  // at least 3 bits set in the mask
-  int pop = __builtin_popcountll(value_sr->tag_bit_mask);
-  assert(pop >= 3);
+  // tag_bit_count should be non-zero (3 tags need at least 3 bits)
+  assert(value_sr->tag_bit_count >= 3);
 
   peg_analyze_free(&result);
   _free_input(&input);

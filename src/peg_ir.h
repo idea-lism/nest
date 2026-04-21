@@ -9,7 +9,8 @@
 typedef struct {
   IrWriter* ir_writer;
 
-  int64_t tag_bit_offset;
+  int32_t tag_bit_offset;
+  int32_t tag_bit_count;
   const char* fn_name; // enclosing function name for blockaddress
 
   // shared registers
@@ -20,7 +21,9 @@ typedef struct {
   IrVal col;
   IrVal stack_ptr;
   IrVal parse_result;
-  IrVal tag_bits;
+  IrVal tag_bits;          // first tag_bits alloca (or only one if tag_bits_n <= 1)
+  IrVal* tag_bits_extra;    // additional tag_bits allocas for multi-bucket (NULL if tag_bits_n <= 1)
+  int32_t tag_bits_n;       // number of tag_bits allocas (max across all rules in scope)
   bool has_tags; // whether current rule has tag bits (controls stack push/pop around calls)
   IrVal parsed_tokens;
   IrVal token_size;

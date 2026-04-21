@@ -32,6 +32,7 @@ typedef struct {
   int64_t bits_bucket_size;
   int64_t slot_byte_offset; // precomputed: bits_bucket_size * 8 + slot_index * 4
   int64_t tag_byte_offset;  // precomputed: tag_bit_index * 8
+  int32_t tag_bit_count;    // forwarded from ScopedRule, for multi-bucket tag writeback
 } PegIrScopeCtx;
 ```
 
@@ -78,7 +79,7 @@ fast_ret:
 
 material_parse:
   { if rule has tag bits }
-    %tag_bits = 0;
+    %tag_bits = 0; { if tag_bit_count > 64: one %tag_bits_N per bucket }
   { end }
 
   { peg_ir_emit_parse(ctx, scoped_rule.body, parse_fail) }
@@ -86,8 +87,13 @@ material_parse:
   %start_col = @top()
   { if rule has tag bits }
     %bits = gep(%peg_table[%start].bits);
-    %bits[{tag_bit_index}] &= ~{tag_bit_mask}
-    %bits[{tag_bit_index}] |= %tag_bits
+    { if tag_bit_count <= 64 }
+      %bits[{tag_bit_index}] &= ~{tag_clear_mask}
+      %bits[{tag_bit_index}] |= %tag_bits
+    { else }
+      for w in 0..ceil(tag_bit_count/64):
+        %bits[{tag_bit_index + w}] = %tag_bits_{w}  ; dedicated buckets, full overwrite
+    { end }
   { end }
   { cache in memoize table }
 
@@ -163,10 +169,10 @@ typedef Node_{rule_name} {
     bool {tag1}: 1;
     bool {tag2}: 1;
     ...
-    { if tags size < 64 # this enforces low bit layout in clang }
-    uint64_t _padding: {64 - used_bits};
+    { for each uint64_t bucket needed: ceil(tag_count / 64) }
+    uint64_t _padding{w}: {64 - used_bits_in_this_bucket};
     { end }
-  } is; // can tell the branch
+  } is; // sizeof = ceil(tag_count / 64) * 8
   PegRef {child0};
   PegLink {multiplier_child1};
   PegRef {child1};
@@ -185,7 +191,12 @@ Tag bits can be assigned all at once, the loading function is like:
   switch (ref.tc->scope_id) {
     case {rule_used_in_scopes[0]}: {
       int64_t* $col = $table + ref.col * {col_size_in_i64 of this scope}
-      ((uint64_t*)&$1.is)[0] = ($col[{tag_bit_index}] >> {tag_bit_offset}) & {tag_bit_mask};
+      { if tag_bit_count <= 64 }
+        ((uint64_t*)&$1.is)[0] = ($col[{tag_bit_index}] >> {tag_bit_offset}) & {(1ULL << tag_bit_count) - 1};
+      { else }
+        for w in 0..ceil(tag_bit_count/64):
+          ((uint64_t*)&$1.is)[w] = $col[{tag_bit_index + w}];  // dedicated buckets, offset=0
+      { end }
       break;
     }
     case {rule_used_in_scopes[1]}: {

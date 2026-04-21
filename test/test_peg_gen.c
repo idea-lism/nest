@@ -184,7 +184,7 @@ static void _build_json_fixture(PegGenInput* input, ScopeClosure* cl) {
     sr.slot_index = 1;
     sr.tag_bit_index = 0;
     sr.tag_bit_offset = 0;
-    sr.tag_bit_mask = 0x7; // 3 bits
+    sr.tag_bit_count = 3; // 3 bits
     sr.node_fields = darray_new(sizeof(NodeField), 0);
     _add_field(&sr.node_fields, "number", false, false, 0, -1, NODE_ADVANCE_NONE, 0);
     _add_field(&sr.node_fields, "string", false, false, 0, -1, NODE_ADVANCE_NONE, 0);
@@ -354,6 +354,7 @@ TEST(test_ir_shared_bit_ops) {
   input.memoize_mode = MEMOIZE_SHARED;
   // set up shared-mode fields on rules
   for (size_t i = 0; i < darray_size(cl.scoped_rules); i++) {
+    cl.scoped_rules[i].segment_color = 0;
     cl.scoped_rules[i].segment_index = 0;
     cl.scoped_rules[i].segment_mask = (1ULL << darray_size(cl.scoped_rules)) - 1;
     cl.scoped_rules[i].rule_bit_mask = 1ULL << i;
@@ -1151,7 +1152,7 @@ TEST(test_multi_bucket_tags) {
     sr.slot_index = 1;
     sr.tag_bit_index = 0;
     sr.tag_bit_offset = 0;
-    sr.tag_bit_mask = (1ULL << 40) - 1;
+    sr.tag_bit_count = 40;
     // node_fields: one field per branch
     sr.node_fields = darray_new(sizeof(NodeField), 0);
     for (int32_t i = 0; i < 40; i++) {
@@ -1181,7 +1182,7 @@ TEST(test_multi_bucket_tags) {
     sr.slot_index = 2;
     sr.tag_bit_index = 1; // second bucket
     sr.tag_bit_offset = 0;
-    sr.tag_bit_mask = (1ULL << 40) - 1;
+    sr.tag_bit_count = 40;
     sr.node_fields = darray_new(sizeof(NodeField), 0);
     for (int32_t i = 0; i < 40; i++) {
       snprintf(tag_name, sizeof(tag_name), "u%d", i);

@@ -10,7 +10,8 @@ typedef struct {
   IrWriter* ir_writer;
 
   // some scoped rule's attributes that is required at gen time
-  int64_t tag_bit_offset;
+  int32_t tag_bit_offset;
+  int32_t tag_bit_count;  // total tag bits for current rule
 
   // shared registers, they won't be re-assigned
   IrVal tc; // TokenChunk %tc
@@ -20,7 +21,7 @@ typedef struct {
   IrVal col; // current %col
   IrVal stack_ptr; // register storing the input stack_ptr
   IrVal parse_result; // PegRef %parse_result
-  IrVal tag_bits; // %tag_bits for successful match to set
+  IrVal tag_bits; // %tag_bits for successful match to set (if tag_bit_count > 64: one IrVal per bucket)
   // and other context vars if needed in implementation
 
 } PegIrCtx;
@@ -29,6 +30,7 @@ typedef struct {
 - `peg_ir_emit_parse(ctx, ScopedUnit* unit, IrVal fail_label)`: emit IR for ScopedUnit tree (see definition in [PEG analyze](peg_analyze.md#scope-closures)).
   - by unit's kind, dispatch to different `gen` parts as described below
   - if unit.tag_bit_local_offset >= 0, also `%tag_bits |= {1 << (unit.tag_bit_local_offset + ctx.tag_bit_offset)}`
+    - when `tag_bit_count > 64`, select the correct `%tag_bits_N` bucket: `N = bit_pos / 64`, `bit_in_bucket = bit_pos % 64`
 - `peg_ir_emit_call(ctx, name)` pushes ret_site, then col (details see below)
 - `peg_ir_emit_ret(ctx)` pops col, back to ret_site
   - at the end, impl call return, which updates stack (see below)
@@ -40,7 +42,7 @@ typedef struct {
 - `peg_ir_emit_gep_helpers(irwriter)`: emit GEP and tag writeback helper definitions
   - `ptr @gep_slot(ptr %table, i64 %col, i64 %sizeof_col, i64 %slot_byte_offset)`: compute pointer to memoize slot
   - `ptr @gep_tag(ptr %table, i64 %col, i64 %sizeof_col, i64 %tag_byte_offset)`: compute pointer to tag bits bucket
-  - `void @tag_writeback(ptr %table, i64 %col, i64 %sizeof_col, i64 %tag_byte_offset, i64 %clear_mask, i64 %tag_bits)`: load old tag bits, clear with mask, OR in new tag_bits, store back
+  - `void @tag_writeback(ptr %table, i64 %col, i64 %sizeof_col, i64 %tag_byte_offset, i64 %clear_mask, i64 %tag_bits)`: load old tag bits, clear with mask, OR in new tag_bits, store back. For rules with `tag_bit_count > 64`, emit one `@tag_writeback_full(ptr, i64 col, i64 sizeof_col, i64 tag_byte_offset, i64 bucket_count, ...)` or N sequential stores (dedicated buckets, no clear needed).
 
 One optimization idea is chained-slot-writes for multiplier matchings: if `a*` matches `a a a`, we can cache `a*=3, a*=2, a*=1` on all three positions. but that would need the IR book-keeping all parsed sizes and calculate accumulatives, which is too complex. So we keep things simple, memoize the whole parsed size as other rules.
 
@@ -51,7 +53,7 @@ Layout
 ```c
 typedef union {
   int64_t col;
-  uint64_t tag_bits; // when calling sub-rule we also need to push tag_bits
+  uint64_t tag_bits; // when calling sub-rule we also need to push tag_bits (if >64 tags: push N buckets)
   void* ret_site;
 } StackSlot;
 
@@ -74,17 +76,17 @@ Operations
 // call sub-rule
   { if caller has tag_bits }
     stack++;
-    stack->tag_bits = tag_bits;
+    stack->tag_bits = tag_bits; { if >64 tags: push N buckets }
   { end if }
   stack++;
   stack->ret_site = &&ret_label;
   stack++;
   stack->col = col;
-  tag_bits = 0;
+  tag_bits = 0; { if >64 tags: zero N buckets }
   br {scoped_rule_name};
 ret_label:
   { if caller has tag_bits }
-    tag_bits = stack->tag_bits;
+    tag_bits = stack->tag_bits; { if >64 tags: pop N buckets }
     stack--;
   { end if }
   parsed = %ret;

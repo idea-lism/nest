@@ -64,6 +64,8 @@ static TestCtx _setup(const char* fn_name) {
       .stack_ptr = stack_ptr,
       .parse_result = parse_result,
       .tag_bits = tag_bits,
+      .tag_bits_extra = NULL,
+      .tag_bits_n = 1,
       .parsed_tokens = parsed_tokens,
       .current_rule_id = -1,
       .call_site_counter = 0,
@@ -438,6 +440,7 @@ TEST(test_emit_star_nullable) {
 TEST(test_tag_bit_set) {
   TestCtx t = _setup("test_fn");
   t.ctx.tag_bit_offset = 2;
+  t.ctx.tag_bit_count = 8; // small rule
   ScopedUnit unit = {.kind = SCOPED_UNIT_TERM, .tag_bit_local_offset = 1};
   unit.as.term_id = 99;
 

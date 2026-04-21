@@ -14,7 +14,7 @@ when /^#pragma once/
   # don't emit, common_header_gen already emits one, and amalgamated impl doesn't need any
 when /^#include </
   # system include, no need rewrite
-when /^#include "(\w+).h"/
+when /^#include\s+"([^"]+)"/
   # search for include dir for the header
   # if $1 not included yet, read it and recursively process it
 else

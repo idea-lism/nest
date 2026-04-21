@@ -171,8 +171,9 @@ To map tags to bits, create function `_alloc_tag_bits()` to assign tag bits to e
 - For each scope closure
   - For each `body` in `PegAnalyzeInput.rules`
     - create symtab `ScopedRule.tags` and give a number to all its tags
-  - Now we know how many bits per scoped_rule costs, arrange them to `uint64_t` buckets so that the required buckets are minimal
-    - this is a knapsack problem, we use a simple greedy algorithm to allocate them
+  - Now we know how many bits per scoped_rule costs, pack them into `uint64_t` buckets to minimize total bucket count:
+    - **Small rules** (`tag_bit_count ≤ 64`): knapsack-pack into shared buckets. Greedy: sort rules by tag count descending, place each into the first bucket with enough remaining bits. Constraint: `tag_bit_offset + tag_bit_count ≤ 64` within one bucket.
+    - **Big rules** (`tag_bit_count > 64`): bucket-aligned allocation. `tag_bit_offset = 0`, gets `ceil(tag_bit_count / 64)` consecutive dedicated buckets. Cannot share.
 
 After `_alloc_tag_bits`, we have:
 
@@ -180,9 +181,9 @@ After `_alloc_tag_bits`, we have:
 struct ScopedRule {
   // ... basic props, see above
 
-  uint64_t tag_bit_index;
-  uint64_t tag_bit_mask;
-  uint64_t tag_bit_offset;
+  int32_t tag_bit_index;   // starting bucket index in bits[]
+  int32_t tag_bit_offset;  // bit offset within starting bucket (0..63)
+  int32_t tag_bit_count;   // total number of tag bits for this rule
 }
 ```
 
@@ -217,7 +218,7 @@ Basic idea: rules can share a slot & tagbits storage when they do not co-exist a
 
 We need some extra bits to denote what the slot & tagbits position means. And these bits can be packed together with tagbits.
 
-Create function `_alloc_slot_bits()`, to finish the following analysis for all defined rules / multiplier rules.
+Create function `_alloc_slot_bits()`, to finish the following analysis for all defined rules / multiplier rules. It performs logical allocation only (see below).
 
 ### Exclusiveness analysis
 
@@ -249,17 +250,7 @@ Use kissat (vendored SAT solver) to encode the k-coloring problem:
 
 After graph coloring, we have shared-groups (sets of peg rule ids).
 
-The Col data structure is still a similar struture
-
-```c
-struct Col${scope_name} {
-  uint64_t bits[{total_buckets}]; // buckets for both slot bits and tag bits
-  int32_t slots[{segment_size}];
-};
-```
-
-Then we use negated-bitset representation to denote what each slot means:
-- the bit map also lives in `Col.bits` like tag bits, but they don't overlap.
+We use negated-bitset representation to denote what each slot means:
 - init state: all bits & slots are set to 1 because `tt_alloc_memoize_table()` already did so.
 - for a rule, we know:
   - the segment it belongs to: `segment_bits = bits[segment_index] & segment_mask`
@@ -273,32 +264,83 @@ Then we use negated-bitset representation to denote what each slot means:
 
 For performance of generated code, same-group bitset should be segmented by 64. see [coloring](coloring.md) for more details.
 
-`_alloc_shared_tag_bits` is executed after `_alloc_slot_bits`, filling the gaps in existing bit buckets:
-- For each color group (segment), calculate the max `symtab_count(tags)`
-- They can be put in the remaining bucket gaps, or create new buckets
+### Logical allocation
 
-Put together, during and after analysis, we have these information for a rule in a scope (different in other scope because per-scope numbering):
+`_alloc_slot_bits()` and `_alloc_shared_tag_bits()` do **logical** allocation only — they record what each segment needs, but do **not** assign physical bucket indices.
+
+Each color group (segment) produces a `SegmentAlloc`:
+
+```c
+typedef struct {
+  int32_t color;           // graph coloring color id
+  int32_t slot_bit_count;  // bits needed for slot encoding (rule presence bits)
+  int32_t tag_bit_count;   // max tag bits among rules in this segment
+} SegmentAlloc;
+```
+
+`_alloc_slot_bits()` creates one `SegmentAlloc` per color group, sets `slot_bit_count` = group size.
+
+`_alloc_shared_tag_bits()` fills in `tag_bit_count` for each segment:
+- For each color group (segment), calculate the max `symtab_count(tags)` among rules in that group.
+
+Per-rule fields assigned during logical allocation (physical indices filled later):
 
 ```c
 struct ScopedRule {
   // ... basic props, see above
 
-  uint64_t tag_bit_index; // same for the segment
-  uint64_t tag_bit_mask; // same for the segment
-  uint64_t tag_bit_offset;  // same for the segment
+  int32_t tag_bit_offset;  // bit offset within tag region of the segment (0..63 if small)
+  int32_t tag_bit_count;   // total tag bits for this rule
 
   bool nullable;    // can the rule match 0-length token?
   Bitset first_set; // excluding epsilon
   Bitset last_set;  // excluding epsilon
 
-  uint64_t segment_index;  // check Col.bits[segment_index]
-  uint64_t segment_mask;
+  int32_t segment_color;   // which color group (logical id)
+  uint64_t segment_mask;   // full mask of all rule bits in this segment
   uint64_t rule_bit_mask;  // single bit in segment_mask
-  uint64_t slot_index;     // Col.slots[slot_index] is the matched token size, same segment, same slot_index
 };
 ```
 
-And we also update `ScopeClosure.bits_bucket_size = bucket_count_after_alloc` and `ScopeClosure.slots_size = segment_count`, so the runtime `Col${scope_name}` will have this packed layout.
+### Physical layout pass
+
+Create function `_finalize_layout()` after all logical allocations. It assigns physical bucket indices and computes the final `Col` layout.
+
+For each `SegmentAlloc`, compute buckets needed:
+- `slot_buckets = 1` (slot bits always fit in one bucket, segmented by 64 from coloring)
+- `tag_buckets`: if `tag_bit_count == 0`: 0. If `tag_bit_count <= 64 - slot_bit_count`: 0 (tag bits pack into the slot bucket gap). Else: `ceil(tag_bit_count / 64)` dedicated tag buckets.
+
+Layout each segment contiguously:
+```
+bits[] = [ seg0: slot_bucket, tag_buckets... | seg1: slot_bucket, tag_buckets... | ... ]
+```
+
+After layout, fill physical indices into each `ScopedRule`:
+
+```c
+struct ScopedRule {
+  // ... (in addition to fields above)
+
+  int32_t tag_bit_index;   // physical starting bucket index in bits[]
+  uint64_t segment_index;  // physical bucket index: check Col.bits[segment_index]
+  uint64_t slot_index;     // Col.slots[slot_index], same for all rules in the segment
+};
+```
+
+Tag bit placement rules:
+- **Packed** (tag bits fit in slot bucket gap): `tag_bit_index = segment_index`, `tag_bit_offset = slot_bit_count`
+- **Dedicated** (tag bits need own buckets): `tag_bit_index = segment_index + 1`, `tag_bit_offset = 0`
+
+Final `Col` structure:
+
+```c
+struct Col${scope_name} {
+  uint64_t bits[{total_buckets}]; // all segments laid out contiguously
+  int32_t slots[{segment_count}];
+};
+```
+
+Update `ScopeClosure.bits_bucket_size = total_buckets` and `ScopeClosure.slots_size = segment_count`.
 
 # Call site analysis
 

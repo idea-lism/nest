@@ -28,17 +28,6 @@ __attribute__((format(printf, 1, 2))) static char* _fmt(const char* fmt, ...) {
   return buf;
 }
 
-static uint64_t _tag_mask(int32_t bit_size, uint64_t offset) {
-  if (bit_size <= 0 || offset >= 64) {
-    return 0;
-  }
-  int32_t available_bits = 64 - (int32_t)offset;
-  if (bit_size >= available_bits) {
-    return UINT64_MAX << offset;
-  }
-  return ((1ULL << bit_size) - 1) << offset;
-}
-
 // ============================================================
 // O(1) rule lookup by global_id
 // ============================================================
@@ -386,24 +375,31 @@ static int _cmp_tag_entry_desc(const void* a, const void* b) {
 static void _alloc_tag_bits(ScopeClosure* cl) {
   _TagEntry* entries = NULL;
   int32_t entry_size = 0;
+  _TagEntry* big_entries = NULL;
+  int32_t big_size = 0;
   for (size_t i = 0; i < darray_size(cl->scoped_rules); i++) {
     int32_t nt = symtab_count(&cl->scoped_rules[i].tags);
-    if (nt > 0) {
+    if (nt > 64) {
+      big_entries = XREALLOC(big_entries, (size_t)(big_size + 1) * sizeof(_TagEntry));
+      big_entries[big_size++] = (_TagEntry){.rule_idx = (int32_t)i, .tag_size = nt};
+    } else if (nt > 0) {
       entries = XREALLOC(entries, (size_t)(entry_size + 1) * sizeof(_TagEntry));
-      entries[entry_size++] = (_TagEntry){.rule_idx = i, .tag_size = nt};
+      entries[entry_size++] = (_TagEntry){.rule_idx = (int32_t)i, .tag_size = nt};
     } else {
       cl->scoped_rules[i].tag_bit_index = 0;
-      cl->scoped_rules[i].tag_bit_mask = 0;
       cl->scoped_rules[i].tag_bit_offset = 0;
+      cl->scoped_rules[i].tag_bit_count = 0;
     }
   }
 
-  if (entry_size == 0) {
+  if (entry_size == 0 && big_size == 0) {
     cl->bits_bucket_size = 0;
     XFREE(entries);
+    XFREE(big_entries);
     return;
   }
 
+  // Small rules: knapsack-pack into shared buckets
   qsort(entries, (size_t)entry_size, sizeof(_TagEntry), _cmp_tag_entry_desc);
 
   int32_t bucket_size = 0;
@@ -426,14 +422,26 @@ static void _alloc_tag_bits(ScopeClosure* cl) {
     }
     int32_t offset = 64 - bucket_remaining[best];
     ScopedRule* sr = &cl->scoped_rules[entries[e].rule_idx];
-    sr->tag_bit_index = (uint64_t)best;
-    sr->tag_bit_offset = (uint64_t)offset;
-    sr->tag_bit_mask = _tag_mask(nt, (uint64_t)offset);
+    sr->tag_bit_index = best;
+    sr->tag_bit_offset = offset;
+    sr->tag_bit_count = nt;
     bucket_remaining[best] -= nt;
+  }
+
+  // Big rules: bucket-aligned, consecutive dedicated buckets
+  for (int32_t e = 0; e < big_size; e++) {
+    int32_t nt = big_entries[e].tag_size;
+    int32_t needed = (nt + 63) / 64;
+    ScopedRule* sr = &cl->scoped_rules[big_entries[e].rule_idx];
+    sr->tag_bit_index = bucket_size;
+    sr->tag_bit_offset = 0;
+    sr->tag_bit_count = nt;
+    bucket_size += needed;
   }
 
   cl->bits_bucket_size = bucket_size;
   XFREE(entries);
+  XFREE(big_entries);
   XFREE(bucket_remaining);
 }
 
@@ -751,15 +759,15 @@ static void _alloc_slot_bits(ScopeClosure* cl) {
     int32_t sg_id;
     int64_t seg_mask;
     coloring_get_segment_info(cr, i, &sg_id, &seg_mask);
-    cl->scoped_rules[i].segment_index = (uint64_t)sg_id;
+    cl->scoped_rules[i].segment_color = sg_id;
     cl->scoped_rules[i].rule_bit_mask = (uint64_t)seg_mask;
-    cl->scoped_rules[i].slot_index = (uint64_t)sg_id;
   }
+  // compute segment_mask (union of all rule_bit_masks in same color group)
   for (int32_t i = 0; i < n; i++) {
     uint64_t seg_union = 0;
-    uint64_t seg_idx = cl->scoped_rules[i].segment_index;
+    int32_t color = cl->scoped_rules[i].segment_color;
     for (int32_t j = 0; j < n; j++) {
-      if (cl->scoped_rules[j].segment_index == seg_idx) {
+      if (cl->scoped_rules[j].segment_color == color) {
         seg_union |= cl->scoped_rules[j].rule_bit_mask;
       }
     }
@@ -768,16 +776,78 @@ static void _alloc_slot_bits(ScopeClosure* cl) {
   coloring_result_del(cr);
 }
 
+// Physical layout pass: assign segment_index, slot_index, tag_bit_index, tag_bit_offset
+static void _finalize_layout(ScopeClosure* cl, int32_t* seg_max_tags) {
+  int32_t rule_size = (int32_t)darray_size(cl->scoped_rules);
+  int32_t segment_size = (int32_t)cl->slots_size;
+
+  // Compute slot_bit_count per segment (popcount of segment_mask)
+  int32_t* seg_slot_bits = XCALLOC((size_t)segment_size, sizeof(int32_t));
+  for (int32_t i = 0; i < rule_size; i++) {
+    int32_t seg = cl->scoped_rules[i].segment_color;
+    if (seg >= 0 && seg < segment_size && seg_slot_bits[seg] == 0) {
+      seg_slot_bits[seg] = (int32_t)__builtin_popcountll(cl->scoped_rules[i].segment_mask);
+    }
+  }
+
+  // Layout each segment contiguously: slot_bucket + optional tag_buckets
+  int32_t total_buckets = 0;
+  int32_t* seg_phys_index = XCALLOC((size_t)segment_size, sizeof(int32_t));
+  int32_t* seg_tag_index = XCALLOC((size_t)segment_size, sizeof(int32_t));
+  int32_t* seg_tag_offset = XCALLOC((size_t)segment_size, sizeof(int32_t));
+
+  for (int32_t seg = 0; seg < segment_size; seg++) {
+    seg_phys_index[seg] = total_buckets;
+    total_buckets++; // slot bucket
+
+    int32_t max_tags = seg_max_tags[seg];
+    int32_t slot_bits = seg_slot_bits[seg];
+    if (max_tags == 0) {
+      seg_tag_index[seg] = seg_phys_index[seg];
+      seg_tag_offset[seg] = 0;
+    } else if (max_tags <= 64 - slot_bits) {
+      // Packed: tag bits fit in slot bucket gap
+      seg_tag_index[seg] = seg_phys_index[seg];
+      seg_tag_offset[seg] = slot_bits;
+    } else {
+      // Dedicated: tag bits need own buckets
+      seg_tag_index[seg] = total_buckets;
+      seg_tag_offset[seg] = 0;
+      int32_t needed = (max_tags + 63) / 64;
+      total_buckets += needed;
+    }
+  }
+
+  // Fill physical indices into each ScopedRule
+  for (int32_t i = 0; i < rule_size; i++) {
+    ScopedRule* sr = &cl->scoped_rules[i];
+    int32_t seg = sr->segment_color;
+    if (seg >= 0 && seg < segment_size) {
+      sr->segment_index = (uint64_t)seg_phys_index[seg];
+      sr->slot_index = (uint64_t)seg; // slot index = logical segment
+      if (sr->tag_bit_count > 0) {
+        sr->tag_bit_index = seg_tag_index[seg];
+        sr->tag_bit_offset = seg_tag_offset[seg];
+      }
+    }
+  }
+
+  cl->bits_bucket_size = total_buckets;
+
+  XFREE(seg_slot_bits);
+  XFREE(seg_phys_index);
+  XFREE(seg_tag_index);
+  XFREE(seg_tag_offset);
+}
+
 static void _alloc_shared_tag_bits(ScopeClosure* cl) {
   int32_t rule_size = (int32_t)darray_size(cl->scoped_rules);
   int32_t segment_size = (int32_t)cl->slots_size;
 
-  int32_t* seg_used_bits = XCALLOC((size_t)segment_size, sizeof(int32_t));
   int32_t* seg_max_tags = XCALLOC((size_t)segment_size, sizeof(int32_t));
   for (int32_t i = 0; i < rule_size; i++) {
-    int32_t seg = (int32_t)cl->scoped_rules[i].segment_index;
-    if (seg < segment_size) {
-      seg_used_bits[seg] = (int32_t)__builtin_popcountll(cl->scoped_rules[i].segment_mask);
+    int32_t seg = cl->scoped_rules[i].segment_color;
+    if (seg >= 0 && seg < segment_size) {
       int32_t nt = symtab_count(&cl->scoped_rules[i].tags);
       if (nt > seg_max_tags[seg]) {
         seg_max_tags[seg] = nt;
@@ -785,42 +855,19 @@ static void _alloc_shared_tag_bits(ScopeClosure* cl) {
     }
   }
 
-  int64_t next_bucket = segment_size;
-  for (int32_t seg = 0; seg < segment_size; seg++) {
-    int32_t max_tags = seg_max_tags[seg];
-    if (max_tags == 0) {
-      continue;
-    }
-    int32_t remaining = 64 - seg_used_bits[seg];
-    uint64_t tag_bit_index;
-    uint64_t tag_bit_offset;
-    if (max_tags <= remaining) {
-      tag_bit_index = (uint64_t)seg;
-      tag_bit_offset = (uint64_t)seg_used_bits[seg];
-    } else {
-      tag_bit_index = (uint64_t)next_bucket;
-      tag_bit_offset = 0;
-      next_bucket++;
-    }
-    uint64_t tag_bit_mask = _tag_mask(max_tags, tag_bit_offset);
-    for (int32_t i = 0; i < rule_size; i++) {
-      if ((int32_t)cl->scoped_rules[i].segment_index == seg) {
-        cl->scoped_rules[i].tag_bit_index = tag_bit_index;
-        cl->scoped_rules[i].tag_bit_offset = tag_bit_offset;
-        cl->scoped_rules[i].tag_bit_mask = tag_bit_mask;
-      }
-    }
-  }
+  // Assign tag_bit_offset and tag_bit_count per rule (logical, no physical index yet)
   for (int32_t i = 0; i < rule_size; i++) {
-    if (symtab_count(&cl->scoped_rules[i].tags) == 0) {
-      cl->scoped_rules[i].tag_bit_index = 0;
-      cl->scoped_rules[i].tag_bit_mask = 0;
-      cl->scoped_rules[i].tag_bit_offset = 0;
-    }
+    int32_t nt = symtab_count(&cl->scoped_rules[i].tags);
+    cl->scoped_rules[i].tag_bit_count = nt;
+    // tag_bit_offset is filled by _finalize_layout
+    cl->scoped_rules[i].tag_bit_offset = 0;
+    cl->scoped_rules[i].tag_bit_index = 0;
   }
-  cl->bits_bucket_size = next_bucket;
 
-  XFREE(seg_used_bits);
+  // Store seg_max_tags on closure for _finalize_layout
+  // We stash it in a temporary allocation and call _finalize_layout immediately
+  _finalize_layout(cl, seg_max_tags);
+
   XFREE(seg_max_tags);
 }
 
