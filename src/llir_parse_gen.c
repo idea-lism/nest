@@ -1,4 +1,4 @@
-// specs/rt_ir.md — LLVM IR lexer generator for runtime IR processing.
+// specs/irwriter_gen_rt.md — LLVM IR lexer generator for runtime IR processing.
 // Similar to parse_gen.c: build-time tool that creates a lexer to analyze LLVM IR.
 // Generates build/llir_lex.ll with DFA lexer functions used by irwriter_gen_rt.c.
 

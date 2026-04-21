@@ -45,3 +45,17 @@ void darray_del(void* a);
 ### Usage
 
 `darray_size()` is very light-weighted, don't pre-assign it to local variables to make code bug-prone.
+
+### Leak Detection
+
+darray is used a lot. So for more helpful [leak detection](xmalloc.md), we create macros to forward caller info for the APIs. For example, `darray_new` should be defined as:
+
+```c
+#ifdef XMALLOC_TRACE
+#define darray_new(elem_size, elem_count) darray_new_traced(elem_size, elem_count, __FUNCTION__, __LINE__)
+#else
+#define darray_new darray_new_
+#endif
+```
+
+And the traced version directly uses `xmalloc_traced` instead.

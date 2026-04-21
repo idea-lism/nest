@@ -455,7 +455,7 @@ TEST(test_vpa_gen_exec) {
               "  assert(tt->root->tokens[0].cp_start == 0);\n"
               "  assert(tt->root->tokens[0].cp_size == 1);\n"
               "  assert(tt->root->tokens[3].cp_start == 3);\n"
-              "  nest_cleanup(res);\n"
+              "  nest_cleanup(&res);\n"
               "  ustr_del(us);\n"
               "  return 0;\n"
               "}\n");
@@ -970,7 +970,7 @@ TEST(test_vpa_scope_switch_exec) {
               "  assert(bc->tokens[2].term_id == TOK_TOK_B);\n"
               "  assert(bc->tokens[3].term_id == TOK_RBRACE);\n"
               "  assert(bc->scope_id == SCOPE_BLOCK);\n"
-              "  nest_cleanup(res);\n"
+              "  nest_cleanup(&res);\n"
               "  ustr_del(us);\n"
               "  return 0;\n"
               "}\n");

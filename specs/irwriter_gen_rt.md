@@ -75,10 +75,10 @@ rt_ir will lex the stdout of `cc/clang` (input driven). it is a state machine, w
 - rewrites `directory = ` by arg.
 - rewrites `!DIFile` to "nest".
 - tracks functions start / end, treats the internal of a function as bunch of flat tokens and just forward.
-- to hide non-user-facing runtime functions, rewrite `define {fn_name}` to `define internal {fn_name}`, if:
-  - the `fn_name` is not `ustr_*`, and
-  - the `fn_name` is not `tt_locate`, and
-  - the `fn_name` is not `darray_size`
+- to hide non-user-facing runtime functions, rewrite `define {fn_name}` to `define internal {fn_name}`, if `fn_name` is not any of:
+  - `ustr_*`
+  - `tt_locate`
+  - `darray_size`
 - traces the debug metadata numbering, and call `irwriter_start(w, max_num + 1)`
 
 So we will have roughly these states in the parser:

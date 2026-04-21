@@ -6,11 +6,11 @@
 #include "post_process.h"
 #include "re.h"
 #include "ustr.h"
+#include "xmalloc.h"
 
 #include <ctype.h>
 #include <stdbool.h>
 #include <stdio.h>
-#include <stdlib.h>
 #include <string.h>
 
 static const char* const cmdopt_set = "set";
@@ -191,7 +191,7 @@ static const char* _term_name_ex(Symtab* tokens, Symtab* scope_names, int32_t id
 
 static char* _sanitize_ex(const char* name) {
   size_t len = strlen(name);
-  char* out = malloc(len + 1);
+  char* out = XMALLOC(len + 1);
   for (size_t i = 0; i < len; i++) {
     out[i] = (name[i] == '@' || name[i] == '.') ? '_' : name[i];
   }
@@ -209,9 +209,9 @@ typedef struct {
 static void _exd_init(ExDedup* d) { memset(d, 0, sizeof(*d)); }
 static void _exd_free(ExDedup* d) {
   for (int32_t i = 0; i < d->count; i++) {
-    free(d->names[i]);
+    XFREE(d->names[i]);
   }
-  free(d->names);
+  XFREE(d->names);
 }
 static char* _exd_next(ExDedup* d, const char* base) {
   int32_t occ = 0;
@@ -222,7 +222,7 @@ static char* _exd_next(ExDedup* d, const char* base) {
   }
   if (d->count >= d->cap) {
     d->cap = d->cap ? d->cap * 2 : 8;
-    d->names = realloc(d->names, (size_t)d->cap * sizeof(char*));
+    d->names = XREALLOC(d->names, (size_t)d->cap * sizeof(char*));
   }
   d->names[d->count++] = strdup(base);
   if (occ == 0) {
@@ -273,8 +273,8 @@ static void _gen_print_children(FILE* f, const char* prefix, PegUnit* children, 
       } else {
         fprintf(f, "    _indent(depth + 1); printf(\"%s\\n\");\n", tname);
       }
-      free(fname);
-      free(base);
+      XFREE(fname);
+      XFREE(base);
     } else if (u->kind == PEG_CALL) {
       const char* callee = symtab_get(rule_names, u->id);
       char* fname = _exd_next(fd, callee);
@@ -287,7 +287,7 @@ static void _gen_print_children(FILE* f, const char* prefix, PegUnit* children, 
       } else {
         fprintf(f, "    print_%s(_n.%s, depth + 1);\n", callee, fname);
       }
-      free(fname);
+      XFREE(fname);
     }
   }
 }
@@ -388,7 +388,7 @@ static void _gen_example_c(FILE* f, const char* prefix, ParseState* ps) {
           PegUnit* branch = &body->children[bi];
           char* stag = _sanitize_ex(branch->tag);
           fprintf(f, "  %s (_n.is.%s) {\n", bi == 0 ? "if" : "} else if", stag);
-          free(stag);
+          XFREE(stag);
           if (branch->kind == PEG_SEQ) {
             _gen_print_children(f, prefix, branch->children, (int32_t)darray_size(branch->children), tokens,
                                 scope_names, rule_names, &fd);
@@ -432,7 +432,7 @@ static void _gen_example_c(FILE* f, const char* prefix, ParseState* ps) {
       } else {
         fprintf(f, "  _indent(depth + 1); printf(\"%s\\n\");\n", tname);
       }
-      free(san);
+      XFREE(san);
     } else if (body->kind == PEG_CALL) {
       const char* callee = symtab_get(rule_names, body->id);
       bool is_link = (body->multiplier == '*' || body->multiplier == '+');
@@ -498,7 +498,7 @@ static void _gen_example_c(FILE* f, const char* prefix, ParseState* ps) {
   fprintf(f, "  print_tokens(tt, tt->root, 0);\n");
   fprintf(f, "  printf(\"------\\n\");\n");
   fprintf(f, "  if (%s_peg_size(res.main) > 0) print_main(res.main, 0);\n\n", prefix);
-  fprintf(f, "  %s_cleanup(res);\n", prefix);
+  fprintf(f, "  %s_cleanup(&res);\n", prefix);
   fprintf(f, "  ustr_del(ustr);\n");
   fprintf(f, "  return 0;\n");
   fprintf(f, "}\n");
@@ -684,6 +684,7 @@ static int32_t _cmd_compile(int32_t argc, char** argv) {
   peg_analyze_free(&gen_input);
 
 cleanup:
+  parse_state_del(ps);
   irwriter_end(w);
   irwriter_del(w);
   hdwriter_del(hw);

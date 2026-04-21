@@ -7,7 +7,7 @@ Features:
 - auto numbering labels
 - emits debug information
 - can create debugtrap
-- for module prelude, user has to include `rt_ir_begin()` / `rt_ir_begin_simple()` ([rt_ir](rt_ir.md)). Or irwriter will print error message and `abort()`.
+- for module prelude, user has to include `rt_ir_begin()` / `rt_ir_begin_simple()` ([rt_ir](irwriter_gen_rt.md)). Or irwriter will print error message and `abort()`.
 
 Basic Creation:
 - `irwriter_new(FILE*)` — takes an open FILE* (may already contain a prelude), plus source file name and directory for debug metadata

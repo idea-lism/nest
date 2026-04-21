@@ -1,9 +1,9 @@
 // specs/peg_ir.md
 #include "peg_ir.h"
 #include "darray.h"
+#include "xmalloc.h"
 
 #include <stdio.h>
-#include <stdlib.h>
 
 // --- Stack helpers ---
 
@@ -209,7 +209,7 @@ static void _emit_branches(PegIrCtx* ctx, ScopedUnit* unit, IrLabel fail_label) 
   // save(col) once before all alternatives
   _emit_call_save(ctx);
 
-  IrLabel* alt_bbs = malloc((size_t)(n + 1) * sizeof(IrLabel));
+  IrLabel* alt_bbs = XMALLOC((size_t)(n + 1) * sizeof(IrLabel));
   for (int32_t i = 1; i < n; i++) {
     alt_bbs[i] = irwriter_label(w);
   }
@@ -236,7 +236,7 @@ static void _emit_branches(PegIrCtx* ctx, ScopedUnit* unit, IrLabel fail_label) 
 
   irwriter_bb_at(w, done_bb);
 
-  free(alt_bbs);
+  XFREE(alt_bbs);
 }
 
 // --- Maybe (?) ---

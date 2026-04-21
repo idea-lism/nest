@@ -1,8 +1,8 @@
 #include "irwriter.h"
 #include "darray.h"
 #include "symtab.h"
+#include "xmalloc.h"
 #include <stdarg.h>
-#include <stdlib.h>
 #include <string.h>
 
 typedef struct {
@@ -50,7 +50,7 @@ static void _validate_name(const char* s, const char* label) {
 }
 
 IrWriter* irwriter_new(FILE* out) {
-  IrWriter* w = calloc(1, sizeof(IrWriter));
+  IrWriter* w = XCALLOC(1, sizeof(IrWriter));
   w->out = out;
   symtab_init(&w->decls, 0);
   w->dbg_line = -1;
@@ -70,8 +70,8 @@ void irwriter_del(IrWriter* w) {
   darray_del(w->locs);
   darray_del(w->imms);
   darray_del(w->labels);
-  free(w->entry_prologue);
-  free(w);
+  XFREE(w->entry_prologue);
+  XFREE(w);
 }
 
 void irwriter_start(IrWriter* w, int32_t starting_debug_info_number, const char* source_file, const char* directory) {
@@ -196,7 +196,7 @@ void irwriter_define_startf(IrWriter* w, const char* name, const char* sig_fmt, 
   w->last_dbg_col = -1;
   w->last_dbg_scope_id = -1;
   w->labels = darray_grow(w->labels, 1);
-  free(w->entry_prologue);
+  XFREE(w->entry_prologue);
   w->entry_prologue = NULL;
 
   fprintf(w->out, "define ");
@@ -244,7 +244,7 @@ IrLabel irwriter_bb(IrWriter* w) {
   fprintf(w->out, "L%d:\n", id);
   if (w->entry_prologue) {
     fputs(w->entry_prologue, w->out);
-    free(w->entry_prologue);
+    XFREE(w->entry_prologue);
     w->entry_prologue = NULL;
   }
   return id;

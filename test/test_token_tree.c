@@ -127,6 +127,7 @@ TEST(test_push_pop_sequence) {
   // child has 1 token
   assert(darray_size(tree->table[1].tokens) == 1);
   assert(tree->table[1].tokens[0].term_id == 20);
+  tt_tree_del(tree, false);
   ustr_del(s);
 }
 
@@ -231,6 +232,7 @@ TEST(test_tree_structure) {
   assert(tree->table[1].parent_id == 0);
   assert(tree->table[2].tokens[0].term_id == 3);
   assert(tree->table[2].parent_id == 0);
+  tt_tree_del(tree, false);
   ustr_del(s);
 }
 

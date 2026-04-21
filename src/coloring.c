@@ -1,6 +1,6 @@
 #include "coloring.h"
 #include "graph.h"
-#include <stdlib.h>
+#include "xmalloc.h"
 #include <string.h>
 
 typedef struct {
@@ -18,8 +18,8 @@ struct ColoringResult {
 
 // DSatur: pick uncolored vertex with max saturation (ties broken by degree), assign smallest feasible color.
 static int32_t* _solve_dsatur(int32_t n_vertices, int32_t* edges, int32_t n_edges, int32_t k) {
-  int32_t* adj = calloc(n_vertices * n_vertices, sizeof(int32_t));
-  int32_t* degree = calloc(n_vertices, sizeof(int32_t));
+  int32_t* adj = XCALLOC(n_vertices * n_vertices, sizeof(int32_t));
+  int32_t* degree = XCALLOC(n_vertices, sizeof(int32_t));
   for (int32_t i = 0; i < n_edges; i++) {
     int32_t u = edges[i * 2], v = edges[i * 2 + 1];
     adj[u * n_vertices + v] = 1;
@@ -28,13 +28,13 @@ static int32_t* _solve_dsatur(int32_t n_vertices, int32_t* edges, int32_t n_edge
     degree[v]++;
   }
 
-  int32_t* colors = malloc(n_vertices * sizeof(int32_t));
+  int32_t* colors = XMALLOC(n_vertices * sizeof(int32_t));
   memset(colors, -1, n_vertices * sizeof(int32_t));
 
   // sat[v] = number of distinct colors among v's colored neighbors
-  int32_t* sat = calloc(n_vertices, sizeof(int32_t));
+  int32_t* sat = XCALLOC(n_vertices, sizeof(int32_t));
   // neighbor_colors[v * k + c] = 1 if v has a neighbor colored c
-  int32_t* neighbor_colors = calloc(n_vertices * k, sizeof(int32_t));
+  int32_t* neighbor_colors = XCALLOC(n_vertices * k, sizeof(int32_t));
 
   for (int32_t step = 0; step < n_vertices; step++) {
     // pick vertex with max saturation, break ties by degree
@@ -56,11 +56,11 @@ static int32_t* _solve_dsatur(int32_t n_vertices, int32_t* edges, int32_t n_edge
       }
     }
     if (c >= k) {
-      free(adj);
-      free(degree);
-      free(sat);
-      free(neighbor_colors);
-      free(colors);
+      XFREE(adj);
+      XFREE(degree);
+      XFREE(sat);
+      XFREE(neighbor_colors);
+      XFREE(colors);
       return NULL;
     }
     colors[best] = c;
@@ -76,10 +76,10 @@ static int32_t* _solve_dsatur(int32_t n_vertices, int32_t* edges, int32_t n_edge
     }
   }
 
-  free(adj);
-  free(degree);
-  free(sat);
-  free(neighbor_colors);
+  XFREE(adj);
+  XFREE(degree);
+  XFREE(sat);
+  XFREE(neighbor_colors);
   return colors;
 }
 
@@ -150,13 +150,13 @@ static int32_t* _solve_sat(int32_t n_vertices, int32_t* edges, int32_t n_edges, 
       kissat_add(solver, _var(clique[i + 1], i, k));
       kissat_add(solver, 0);
     }
-    free(clique);
+    XFREE(clique);
   }
 
   int result = kissat_solve(solver);
   int32_t* colors = NULL;
   if (result == 10) {
-    colors = malloc(n_vertices * sizeof(int32_t));
+    colors = XMALLOC(n_vertices * sizeof(int32_t));
     for (int32_t v = 0; v < n_vertices; v++) {
       for (int32_t c = 0; c < k; c++) {
         if (kissat_value(solver, _var(v, c, k)) > 0) {
@@ -174,13 +174,13 @@ static int32_t* _solve_sat(int32_t n_vertices, int32_t* edges, int32_t n_edges, 
 #endif
 
 static void _build_segments(ColoringResult* cr, int32_t* colors, int32_t k) {
-  int32_t* color_counts = calloc(k, sizeof(int32_t));
+  int32_t* color_counts = XCALLOC(k, sizeof(int32_t));
   for (int32_t i = 0; i < cr->n_vertices; i++) {
     color_counts[colors[i]]++;
   }
 
   int32_t sg_id = 0;
-  int32_t* color_sg_base = malloc(k * sizeof(int32_t));
+  int32_t* color_sg_base = XMALLOC(k * sizeof(int32_t));
 
   for (int32_t c = 0; c < k; c++) {
     color_sg_base[c] = sg_id;
@@ -189,7 +189,7 @@ static void _build_segments(ColoringResult* cr, int32_t* colors, int32_t k) {
   }
   cr->sg_size = sg_id;
 
-  int32_t* color_pos = calloc(k, sizeof(int32_t));
+  int32_t* color_pos = XCALLOC(k, sizeof(int32_t));
   for (int32_t v = 0; v < cr->n_vertices; v++) {
     int32_t c = colors[v];
     int32_t pos = color_pos[c]++;
@@ -199,16 +199,16 @@ static void _build_segments(ColoringResult* cr, int32_t* colors, int32_t k) {
     cr->vertex_info[v].seg_mask = (int64_t)(1ULL << bit_idx);
   }
 
-  free(color_counts);
-  free(color_sg_base);
-  free(color_pos);
+  XFREE(color_counts);
+  XFREE(color_sg_base);
+  XFREE(color_pos);
 }
 
 ColoringResult* coloring_solve(int32_t n_vertices, int32_t* edges, int32_t n_edges, int32_t k, int32_t max_steps,
                                int32_t seed) {
-  ColoringResult* cr = malloc(sizeof(ColoringResult));
+  ColoringResult* cr = XMALLOC(sizeof(ColoringResult));
   cr->n_vertices = n_vertices;
-  cr->vertex_info = malloc(n_vertices * sizeof(VertexInfo));
+  cr->vertex_info = XMALLOC(n_vertices * sizeof(VertexInfo));
 
 #ifdef _WIN32
   (void)max_steps;
@@ -219,13 +219,13 @@ ColoringResult* coloring_solve(int32_t n_vertices, int32_t* edges, int32_t n_edg
 #endif
 
   if (!colors) {
-    free(cr->vertex_info);
-    free(cr);
+    XFREE(cr->vertex_info);
+    XFREE(cr);
     return NULL;
   }
 
   _build_segments(cr, colors, k);
-  free(colors);
+  XFREE(colors);
 
   return cr;
 }
@@ -234,8 +234,8 @@ void coloring_result_del(ColoringResult* cr) {
   if (!cr) {
     return;
   }
-  free(cr->vertex_info);
-  free(cr);
+  XFREE(cr->vertex_info);
+  XFREE(cr);
 }
 
 void coloring_get_segment_info(ColoringResult* cr, int32_t vertex_id, int32_t* out_sg_id, int64_t* out_seg_mask) {

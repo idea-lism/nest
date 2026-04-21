@@ -1,5 +1,5 @@
 #include "graph.h"
-#include <stdlib.h>
+#include "xmalloc.h"
 #include <string.h>
 
 struct Graph {
@@ -10,18 +10,18 @@ struct Graph {
 };
 
 Graph* graph_new(int32_t n_vertices) {
-  Graph* g = malloc(sizeof(Graph));
+  Graph* g = XMALLOC(sizeof(Graph));
   g->n_vertices = n_vertices;
   g->n_edges = 0;
   g->capacity = 16;
-  g->edges = malloc(g->capacity * 2 * sizeof(int32_t));
+  g->edges = XMALLOC(g->capacity * 2 * sizeof(int32_t));
   return g;
 }
 
 void graph_add_edge(Graph* g, int32_t u, int32_t v) {
   if (g->n_edges >= g->capacity) {
     g->capacity *= 2;
-    g->edges = realloc(g->edges, g->capacity * 2 * sizeof(int32_t));
+    g->edges = XREALLOC(g->edges, g->capacity * 2 * sizeof(int32_t));
   }
   g->edges[g->n_edges * 2] = u;
   g->edges[g->n_edges * 2 + 1] = v;
@@ -32,8 +32,8 @@ void graph_del(Graph* g) {
   if (!g) {
     return;
   }
-  free(g->edges);
-  free(g);
+  XFREE(g->edges);
+  XFREE(g);
 }
 
 int32_t graph_n_vertices(Graph* g) { return g->n_vertices; }
@@ -71,7 +71,7 @@ int32_t* graph_find_max_clique(Graph* g) {
     return NULL;
   }
 
-  int32_t* adj = calloc(n * n, sizeof(int32_t));
+  int32_t* adj = XCALLOC(n * n, sizeof(int32_t));
   for (int32_t i = 0; i < g->n_edges; i++) {
     int32_t u = g->edges[i * 2];
     int32_t v = g->edges[i * 2 + 1];
@@ -79,7 +79,7 @@ int32_t* graph_find_max_clique(Graph* g) {
     adj[v * n + u] = 1;
   }
 
-  int32_t* clique = malloc(n * sizeof(int32_t));
+  int32_t* clique = XMALLOC(n * sizeof(int32_t));
   int32_t clique_size = 0;
 
   for (int32_t v = 0; v < n; v++) {
@@ -95,15 +95,15 @@ int32_t* graph_find_max_clique(Graph* g) {
     }
   }
 
-  free(adj);
+  XFREE(adj);
   if (clique_size == 0) {
-    free(clique);
+    XFREE(clique);
     return NULL;
   }
 
-  int32_t* result = malloc((clique_size + 1) * sizeof(int32_t));
+  int32_t* result = XMALLOC((clique_size + 1) * sizeof(int32_t));
   result[0] = clique_size;
   memcpy(result + 1, clique, clique_size * sizeof(int32_t));
-  free(clique);
+  XFREE(clique);
   return result;
 }

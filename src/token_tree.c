@@ -1,16 +1,16 @@
 #include "token_tree.h"
 #include "darray.h"
 #include "ustr.h"
-#include <stdlib.h>
+#include "xmalloc.h"
 #include <string.h>
 
 TokenTree* tt_tree_new(const char* ustr) {
-  TokenTree* tree = malloc(sizeof(TokenTree));
+  TokenTree* tree = XMALLOC(sizeof(TokenTree));
   tree->src = ustr;
 
   int32_t cp_count = ustr_size(ustr);
   size_t map_size = (cp_count + 63) / 64;
-  tree->newline_map = calloc(map_size > 0 ? map_size : 1, sizeof(uint64_t));
+  tree->newline_map = XCALLOC(map_size > 0 ? map_size : 1, sizeof(uint64_t));
   tree->table = darray_new(sizeof(TokenChunk), 0);
 
   TokenChunk root = {.scope_id = 0, .parent_id = -1, .tokens = darray_new(sizeof(Token), 0)};
@@ -28,13 +28,13 @@ void tt_tree_del(TokenTree* tree, bool free_values) {
   size_t chunk_count = darray_size(tree->table);
   for (size_t i = 0; i < chunk_count; i++) {
     if (free_values && tree->table[i].value) {
-      free(tree->table[i].value);
+      XFREE(tree->table[i].value);
     }
     darray_del(tree->table[i].tokens);
   }
   darray_del(tree->table);
-  free(tree->newline_map);
-  free(tree);
+  XFREE(tree->newline_map);
+  XFREE(tree);
 }
 
 Location tt_locate(TokenTree* tree, int32_t cp_offset) {
@@ -107,7 +107,7 @@ TokenChunk* tt_current(TokenTree* tree) { return tree->current; }
 void* tt_alloc_memoize_table(TokenChunk* chunk, int64_t sizeof_col) {
   // alloc sizeof_col * col_token_size
   size_t bytesize = darray_size(chunk->tokens) * sizeof_col;
-  void* v = malloc(bytesize);
+  void* v = XMALLOC(bytesize);
   memset(v, -1, bytesize);
   chunk->value = v;
   return v;

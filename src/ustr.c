@@ -1,7 +1,7 @@
 #include "ustr.h"
 #include "ustr_intern.h"
+#include "xmalloc.h"
 #include <assert.h>
-#include <stdlib.h>
 #include <string.h>
 
 static int32_t* _size_ptr(char* s) { return (int32_t*)(s - sizeof(int32_t)); }
@@ -85,7 +85,7 @@ char* ustr_new(size_t sz, const char* data) {
   }
   int32_t size = (int32_t)sz;
   size_t alloc = _alloc_size(size);
-  char* heap = (char*)calloc(1, alloc);
+  char* heap = (char*)XCALLOC(1, alloc);
   if (!heap) {
     return NULL;
   }
@@ -97,7 +97,7 @@ char* ustr_new(size_t sz, const char* data) {
 
   uint8_t* marks = _marks_ptr(s, size);
   if (ustr_validate((const uint8_t*)data, sz, marks) != 0) {
-    free(heap);
+    XFREE(heap);
     return NULL;
   }
   return s;
@@ -122,7 +122,7 @@ char* ustr_from_file(FILE* file) {
     return NULL;
   }
   int32_t size = (int32_t)len;
-  char* heap = (char*)calloc(1, _alloc_size(size));
+  char* heap = (char*)XCALLOC(1, _alloc_size(size));
   if (!heap) {
     fprintf(stderr, "ustr_from_file: alloc failed (%d bytes)\n", size);
     return NULL;
@@ -131,7 +131,7 @@ char* ustr_from_file(FILE* file) {
   *_size_ptr(s) = size;
   if (size > 0 && (int32_t)fread(s, 1, (size_t)size, file) != size) {
     fprintf(stderr, "ustr_from_file: fread failed\n");
-    free(heap);
+    XFREE(heap);
     return NULL;
   }
   s[size] = '\0';
@@ -141,7 +141,7 @@ char* ustr_from_file(FILE* file) {
     UstrErr err = ustr_find_error((size_t)size, s, &err_pos);
     const char* reason = (err == USTR_ERR_TRUNCATED) ? "truncated" : "invalid";
     fprintf(stderr, "ustr_from_file: %s UTF-8 at byte %zu\n", reason, err_pos);
-    free(heap);
+    XFREE(heap);
     return NULL;
   }
   return s;
@@ -149,7 +149,7 @@ char* ustr_from_file(FILE* file) {
 
 void ustr_del(char* s) {
   if (s) {
-    free(s - sizeof(int32_t));
+    XFREE(s - sizeof(int32_t));
   }
 }
 

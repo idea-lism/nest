@@ -3,11 +3,11 @@
 #include "peg.h"
 #include "peg_ir.h"
 #include "symtab.h"
+#include "xmalloc.h"
 
 #include <assert.h>
 #include <stdarg.h>
 #include <stdio.h>
-#include <stdlib.h>
 #include <string.h>
 
 // ============================================================
@@ -19,7 +19,7 @@ __attribute__((format(printf, 1, 2))) static char* _asprintf(const char* fmt, ..
   va_start(ap, fmt);
   int n = vsnprintf(NULL, 0, fmt, ap);
   va_end(ap);
-  char* buf = malloc((size_t)n + 1);
+  char* buf = XMALLOC((size_t)n + 1);
   va_start(ap, fmt);
   vsnprintf(buf, (size_t)n + 1, fmt, ap);
   va_end(ap);
@@ -39,7 +39,7 @@ static uint64_t _tag_mask(int32_t bit_size, uint64_t offset) {
 
 static char* _sanitize_field_name(const char* name) {
   size_t len = strlen(name);
-  char* out = malloc(len + 2);
+  char* out = XMALLOC(len + 2);
   size_t j = 0;
   for (size_t i = 0; i < len; i++) {
     char c = name[i];
@@ -64,7 +64,7 @@ static void _gen_node_struct(HeaderWriter* hw, ScopedRule* sr, const char* rule_
     for (int32_t tag_idx = 0; tag_idx < tag_size; tag_idx++) {
       char* sanitized_name = _sanitize_field_name(symtab_get(&sr->tags, tag_idx + sr->tags.start_num));
       hdwriter_printf(hw, "    bool %s : 1;\n", sanitized_name);
-      free(sanitized_name);
+      XFREE(sanitized_name);
     }
     if (tag_size < 64) {
       hdwriter_printf(hw, "    uint64_t _padding : %d;\n", 64 - tag_size);
@@ -112,8 +112,8 @@ static RuleScopeMap _build_scope_map(PegGenInput* input) {
       .start_num = input->rule_names.start_num,
       .size = symtab_count(&input->rule_names),
   };
-  map.entries = calloc((size_t)map.size, sizeof(RuleScopeEntry*));
-  map.counts = calloc((size_t)map.size, sizeof(int32_t));
+  map.entries = XCALLOC((size_t)map.size, sizeof(RuleScopeEntry*));
+  map.counts = XCALLOC((size_t)map.size, sizeof(int32_t));
   for (int32_t c = 0; c < closure_size; c++) {
     ScopeClosure* cl = &closures[c];
     for (size_t i = 0; i < darray_size(cl->scoped_rules); i++) {
@@ -126,7 +126,7 @@ static RuleScopeMap _build_scope_map(PegGenInput* input) {
         continue;
       }
       int32_t entry_count = map.counts[idx];
-      map.entries[idx] = realloc(map.entries[idx], (size_t)(entry_count + 1) * sizeof(RuleScopeEntry));
+      map.entries[idx] = XREALLOC(map.entries[idx], (size_t)(entry_count + 1) * sizeof(RuleScopeEntry));
       map.entries[idx][entry_count] = (RuleScopeEntry){.scope_id = cl->scope_id, .sr = sr, .cl = cl};
       map.counts[idx] = entry_count + 1;
     }
@@ -136,10 +136,10 @@ static RuleScopeMap _build_scope_map(PegGenInput* input) {
 
 static void _free_scope_map(RuleScopeMap* map) {
   for (int32_t i = 0; i < map->size; i++) {
-    free(map->entries[i]);
+    XFREE(map->entries[i]);
   }
-  free(map->entries);
-  free(map->counts);
+  XFREE(map->entries);
+  XFREE(map->counts);
 }
 
 static void _gen_loader(HeaderWriter* hw, const char* rule_name, RuleScopeEntry* scope_entries,
@@ -700,7 +700,7 @@ static void _gen_scope_ir(IrWriter* w, ScopeClosure* cl, int memoize_mode) {
   IrVal ret_with_col = irwriter_insertvalue(w, "{i64, i64}", ret_with_result, "i64", final_col, 1);
   irwriter_ret(w, "{i64, i64}", ret_with_col);
   irwriter_define_end(w);
-  free(fn_name);
+  XFREE(fn_name);
 }
 
 // ============================================================

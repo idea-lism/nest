@@ -4,11 +4,11 @@
 #include "re.h"
 #include "re_ir.h"
 #include "ustr.h"
+#include "xmalloc.h"
 
 #include <stdarg.h>
 #include <stdbool.h>
 #include <stdio.h>
-#include <stdlib.h>
 #include <string.h>
 
 typedef struct {
@@ -79,7 +79,7 @@ static char* _cp_strdup(const char* src, int32_t cp_start, int32_t cp_size) {
     ustr_iter_next(&it);
   }
   int32_t byte_len = it.byte_index - start_byte;
-  char* s = malloc((size_t)byte_len + 1);
+  char* s = XMALLOC((size_t)byte_len + 1);
   memcpy(s, src + start_byte, (size_t)byte_len);
   s[byte_len] = '\0';
   return s;
@@ -102,7 +102,7 @@ __attribute__((format(printf, 1, 2))) char* parse_sfmt(const char* fmt, ...) {
   va_start(ap, fmt);
   int32_t len = vsnprintf(NULL, 0, fmt, ap);
   va_end(ap);
-  char* s = malloc((size_t)len + 1);
+  char* s = XMALLOC((size_t)len + 1);
   va_start(ap, fmt);
   vsnprintf(s, (size_t)len + 1, fmt, ap);
   va_end(ap);
@@ -110,7 +110,7 @@ __attribute__((format(printf, 1, 2))) char* parse_sfmt(const char* fmt, ...) {
 }
 
 void parse_set_str(char** dst, char* s) {
-  free(*dst);
+  XFREE(*dst);
   *dst = s;
 }
 
@@ -707,7 +707,7 @@ static bool _parse_scope_line(ParseState* ps, TokenChunk* chunk, int32_t* tpos, 
     TokenChunk* sc = _scope_chunk(ps, t);
     u.re = (ReIr)sc->value;
     sc->value = NULL;
-    free(sc->aux_value);
+    XFREE(sc->aux_value);
     sc->aux_value = NULL;
     _parse_actions(ps, chunk, tpos, &u);
   } else if (t->term_id == TOK_PSEUDO_FRAG_EOF) {
@@ -774,7 +774,7 @@ static bool _parse_lit_scope(ParseState* ps, TokenChunk* chunk, VpaScope* scope)
     Location loc = tt_locate(ps->tree, t->cp_start);
     VpaUnit u = {.kind = VPA_RE, .re = re, .source_line = loc.line, .source_col = loc.col};
     int32_t tok_id = symtab_intern_f(&ps->tokens, "@lit.%s", sc->aux_value);
-    free(sc->aux_value);
+    XFREE(sc->aux_value);
     sc->aux_value = NULL;
     u.action_units = darray_new(sizeof(int32_t), 0);
     darray_push(u.action_units, tok_id);
@@ -860,11 +860,11 @@ static bool _parse_define_frag(ParseState* ps, TokenChunk* chunk, int32_t* tpos)
   // EOF is reserved as pseudo fragment
   char* name_str = _tok_str(ps, name);
   if (strcmp(name_str, "EOF") == 0) {
-    free(name_str);
+    XFREE(name_str);
     _error_at(ps, name, "'EOF' is reserved and cannot be used as a fragment name");
     return false;
   }
-  free(name_str);
+  XFREE(name_str);
   Token* sc = _expect(ps, chunk, tpos, SCOPE_RE, "re scope");
   if (!sc) {
     return false;
@@ -935,7 +935,7 @@ static bool _parse_vpa_rule(ParseState* ps, TokenChunk* chunk, int32_t* tpos) {
     TokenChunk* sc = _scope_chunk(ps, t);
     leader.re = (ReIr)sc->value;
     sc->value = NULL;
-    free(sc->aux_value);
+    XFREE(sc->aux_value);
     sc->aux_value = NULL;
   } else if (t->term_id == TOK_PSEUDO_FRAG_EOF) {
     _next(chunk, tpos);
@@ -1100,7 +1100,7 @@ static bool _parse_interlace(ParseState* ps, TokenChunk* chunk, int32_t* tpos, P
       u->interlace_rhs_kind = PEG_CALL;
       u->interlace_rhs_id = symtab_intern(&ps->rule_names, name);
     }
-    free(name);
+    XFREE(name);
   } else if (t->term_id == TOK_PEG_TOK_ID) {
     _next(chunk, tpos);
     u->interlace_rhs_kind = PEG_TERM;
@@ -1110,7 +1110,7 @@ static bool _parse_interlace(ParseState* ps, TokenChunk* chunk, int32_t* tpos, P
     TokenChunk* sc = _scope_chunk(ps, t);
     u->interlace_rhs_kind = PEG_TERM;
     u->interlace_rhs_id = symtab_intern_f(&ps->tokens, "@lit.%s", sc->aux_value);
-    free(sc->aux_value);
+    XFREE(sc->aux_value);
     sc->aux_value = NULL;
   } else {
     _error_at(ps, t, "expected @peg_id, @peg_tok_id, or peg_str in interlace");
@@ -1179,7 +1179,7 @@ static bool _parse_peg_unit(ParseState* ps, TokenChunk* chunk, int32_t* tpos, Pe
       u->kind = PEG_CALL;
       u->id = symtab_intern(&ps->rule_names, name);
     }
-    free(name);
+    XFREE(name);
     return _parse_multiplier(ps, chunk, tpos, u);
   }
   if (t->term_id == TOK_PEG_TOK_ID) {
@@ -1193,7 +1193,7 @@ static bool _parse_peg_unit(ParseState* ps, TokenChunk* chunk, int32_t* tpos, Pe
     TokenChunk* sc = _scope_chunk(ps, t);
     u->kind = PEG_TERM;
     u->id = symtab_intern_f(&ps->tokens, "@lit.%s", sc->aux_value);
-    free(sc->aux_value);
+    XFREE(sc->aux_value);
     sc->aux_value = NULL;
     return _parse_multiplier(ps, chunk, tpos, u);
   }
@@ -1291,11 +1291,11 @@ static bool _parse_peg(ParseState* ps, TokenChunk* chunk, int32_t* tpos) {
 static void _free_vpa_unit(VpaUnit* u) {
   re_ir_free(u->re);
   darray_del(u->action_units);
-  free(u->macro_name);
+  XFREE(u->macro_name);
 }
 
 static void _free_peg_unit(PegUnit* u) {
-  free(u->tag);
+  XFREE(u->tag);
   for (int32_t i = 0; i < (int32_t)darray_size(u->children); i++) {
     _free_peg_unit(&u->children[i]);
   }
@@ -1305,9 +1305,19 @@ static void _free_peg_unit(PegUnit* u) {
 static void _free_vpa_unit(VpaUnit* u);
 
 static void _free_state(ParseState* ps) {
+  // Free ReIr values still owned by token tree chunks (not transferred to VpaUnit or re_frags)
+  if (ps->tree) {
+    size_t chunk_count = darray_size(ps->tree->table);
+    for (size_t i = 0; i < chunk_count; i++) {
+      if (ps->tree->table[i].value) {
+        re_ir_free((ReIr)ps->tree->table[i].value);
+        ps->tree->table[i].value = NULL;
+      }
+    }
+  }
   tt_tree_del(ps->tree, false);
   for (int32_t i = 0; i < (int32_t)darray_size(ps->vpa_scopes); i++) {
-    free(ps->vpa_scopes[i].name);
+    XFREE(ps->vpa_scopes[i].name);
     _free_vpa_unit(&ps->vpa_scopes[i].leader);
     for (int32_t j = 0; j < (int32_t)darray_size(ps->vpa_scopes[i].children); j++) {
       _free_vpa_unit(&ps->vpa_scopes[i].children[j]);
@@ -1336,7 +1346,7 @@ static void _free_state(ParseState* ps) {
 }
 
 ParseState* parse_state_new(void) {
-  ParseState* s = calloc(1, sizeof(ParseState));
+  ParseState* s = XCALLOC(1, sizeof(ParseState));
   return s;
 }
 
@@ -1345,7 +1355,7 @@ void parse_state_del(ParseState* ps) {
     return;
   }
   _free_state(ps);
-  free(ps);
+  XFREE(ps);
 }
 
 const char* parse_get_error(ParseState* ps) { return ps ? ps->error : NULL; }

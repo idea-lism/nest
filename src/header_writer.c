@@ -1,8 +1,8 @@
 #include "header_writer.h"
+#include "xmalloc.h"
 
 #include <assert.h>
 #include <stdarg.h>
-#include <stdlib.h>
 
 struct HeaderWriter {
   FILE* out;
@@ -10,7 +10,7 @@ struct HeaderWriter {
 };
 
 HeaderWriter* hdwriter_new(FILE* out) {
-  HeaderWriter* hw = calloc(1, sizeof(HeaderWriter));
+  HeaderWriter* hw = XCALLOC(1, sizeof(HeaderWriter));
   hw->out = out;
   return hw;
 }
@@ -19,7 +19,7 @@ void hdwriter_del(HeaderWriter* hw) {
   if (!hw) {
     return;
   }
-  free(hw);
+  XFREE(hw);
 }
 
 static void _indent(HeaderWriter* hw) {

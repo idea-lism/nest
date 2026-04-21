@@ -14,7 +14,6 @@ Create "src/post_process.c".
 `bool pp_auto_tag_branches(ParseState* ps);`:
 - with the first token / sub_rule name
 - in a rule definition, tags must be distinct, or the parser will raise an error on conflict tag names
-- a rule definition can only have at most 64 tags (due to our PEG's memoize mechanism design).
 - rule name must not exceed 128 bytes.
 
 ### peg: tag logic

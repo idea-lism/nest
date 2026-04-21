@@ -4,10 +4,10 @@
 #include "peg.h"
 #include "symtab.h"
 #include "vpa.h"
+#include "xmalloc.h"
 
 #include <stdbool.h>
 #include <stdio.h>
-#include <stdlib.h>
 #include <string.h>
 
 // --- VpaUnit helpers ---
@@ -15,7 +15,7 @@
 static void _free_vpa_unit(VpaUnit* u) {
   re_ir_free(u->re);
   darray_del(u->action_units);
-  free(u->macro_name);
+  XFREE(u->macro_name);
 }
 
 static VpaUnit _clone_vpa_unit(VpaUnit* src) {
@@ -146,7 +146,7 @@ bool pp_inline_macros(ParseState* ps) {
         const char* callee_name = symtab_get(&ps->scope_names, unit->call_scope_id);
         char* macro_guess = parse_sfmt("*%s", callee_name);
         VpaScope* maybe_macro = _find_macro(ps, macro_guess);
-        free(macro_guess);
+        XFREE(macro_guess);
         if (maybe_macro) {
           parse_error(ps, "scope '%s': '%s' is a macro, use '*%s' to reference it", scope->name, callee_name,
                       callee_name);
@@ -174,7 +174,7 @@ bool pp_inline_macros(ParseState* ps) {
   }
 
   for (int32_t i = 0; i < (int32_t)darray_size(old); i++) {
-    free(old[i].name);
+    XFREE(old[i].name);
     _free_vpa_unit(&old[i].leader);
     for (int32_t j = 0; j < (int32_t)darray_size(old[i].children); j++) {
       _free_vpa_unit(&old[i].children[j]);
@@ -591,7 +591,7 @@ static bool _auto_tag_unit(ParseState* ps, PegRule* rule, PegUnit* unit) {
           dn = _unit_display_name(ps, branch);
         }
         if (dn && dn[0]) {
-          free(branch->tag);
+          XFREE(branch->tag);
           branch->tag = strdup(dn);
         }
         if (!branch->tag || branch->tag[0] == '\0') {

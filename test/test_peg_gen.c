@@ -3,6 +3,7 @@
 #include "../src/irwriter.h"
 #include "../src/peg.h"
 #include "../src/symtab.h"
+#include "../src/xmalloc.h"
 #include "compat.h"
 
 #include <assert.h>
@@ -68,7 +69,7 @@ static void _free_fields(NodeFields fields) {
     return;
   }
   for (size_t i = 0; i < darray_size(fields); i++) {
-    free(fields[i].name);
+    XFREE(fields[i].name);
   }
   darray_del(fields);
 }
@@ -109,8 +110,8 @@ static GenResult _gen(PegGenInput* input) {
 }
 
 static void _free_gen(GenResult* r) {
-  free(r->ir_buf);
-  free(r->hdr_buf);
+  XFREE(r->ir_buf);
+  XFREE(r->hdr_buf);
 }
 
 // ============================================================
@@ -255,8 +256,8 @@ static void _build_json_fixture(PegGenInput* input, ScopeClosure* cl) {
 static void _free_json_fixture(PegGenInput* input, ScopeClosure* cl) {
   // free heap-allocated ScopedUnit nodes in the star rule
   ScopedRule* star_sr = &cl->scoped_rules[4];
-  free(star_sr->body.as.interlace.lhs);
-  free(star_sr->body.as.interlace.rhs);
+  XFREE(star_sr->body.as.interlace.lhs);
+  XFREE(star_sr->body.as.interlace.rhs);
   // free darray children in branches and seq bodies
   darray_del(cl->scoped_rules[1].body.as.children);
   darray_del(cl->scoped_rules[2].body.as.children);
@@ -454,7 +455,7 @@ TEST(test_loader_decodes_from_table) {
   memcpy(body, body_start, body_len);
   body[body_len] = '\0';
   assert(strstr(body, "ref.tc->value") != NULL);
-  free(body);
+  XFREE(body);
 
   _free_gen(&g);
   _free_json_fixture(&input, &cl);
@@ -502,7 +503,7 @@ TEST(test_loader_sets_tag_bits) {
 
   bool sets_is = (strstr(body, "&$1.is)") != NULL);
   assert(sets_is);
-  free(body);
+  XFREE(body);
 
   _free_gen(&g);
   _free_json_fixture(&input, &cl);
@@ -695,7 +696,7 @@ TEST(test_link_field_type) {
   memcpy(chunk, open, span);
   chunk[span] = '\0';
   assert(strstr(chunk, "PegLink value;") != NULL);
-  free(chunk);
+  XFREE(chunk);
 
   _free_gen(&g);
   _free_json_fixture(&input, &cl);
@@ -781,7 +782,7 @@ TEST(test_loader_cursor_advance) {
   // should have slot-based advance for value_list call
   assert(strstr(body, "((int32_t*)ref.tc->value)") != NULL);
 
-  free(body);
+  XFREE(body);
   _free_gen(&g);
   _free_json_fixture(&input, &cl);
 }
@@ -873,9 +874,9 @@ TEST(test_interlaced_link_rhs_row) {
   assert(strstr(body, "$1.items.col_size_in_i32") != NULL);
   assert(strstr(body, "$1.items.rhs_row") != NULL);
 
-  free(body);
+  XFREE(body);
   _free_gen(&g);
-  free(cl.scoped_rules[2].body.as.interlace.lhs);
+  XFREE(cl.scoped_rules[2].body.as.interlace.lhs);
   _free_closure(&cl);
   darray_del(input.scope_closures);
   symtab_free(&input.rule_names);
@@ -943,7 +944,7 @@ TEST(test_scope_link_field) {
   assert(strstr(body, "$1.inner.tc") != NULL);
   assert(strstr(body, "aux_value") != NULL);
 
-  free(body);
+  XFREE(body);
   _free_gen(&g);
   _free_closure(&cl);
   darray_del(input.scope_closures);
@@ -1217,8 +1218,8 @@ TEST(test_multi_bucket_tags) {
   r2_body[r2_span] = '\0';
   assert(strstr(r2_body, "$col[1]") != NULL);
 
-  free(r1_body);
-  free(r2_body);
+  XFREE(r1_body);
+  XFREE(r2_body);
   _free_gen(&g);
   darray_del(cl.scoped_rules[1].body.as.children);
   darray_del(cl.scoped_rules[2].body.as.children);

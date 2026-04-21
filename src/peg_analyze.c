@@ -5,11 +5,11 @@
 #include "graph.h"
 #include "peg.h"
 #include "symtab.h"
+#include "xmalloc.h"
 
 #include <assert.h>
 #include <stdarg.h>
 #include <stdio.h>
-#include <stdlib.h>
 #include <string.h>
 
 // ============================================================
@@ -21,7 +21,7 @@ __attribute__((format(printf, 1, 2))) static char* _fmt(const char* fmt, ...) {
   va_start(ap, fmt);
   int n = vsnprintf(NULL, 0, fmt, ap);
   va_end(ap);
-  char* buf = malloc((size_t)n + 1);
+  char* buf = XMALLOC((size_t)n + 1);
   va_start(ap, fmt);
   vsnprintf(buf, (size_t)n + 1, fmt, ap);
   va_end(ap);
@@ -61,7 +61,7 @@ static bool _rule_gid_index(RuleLookup* lu, int32_t global_id, int32_t* out_idx)
 static RuleLookup _build_rule_lookup(PegAnalyzeInput* input) {
   RuleLookup lu = {.input = input};
   lu.rule_count = symtab_count(&input->rule_names);
-  lu.rule_by_gid = calloc((size_t)lu.rule_count, sizeof(PegRule*));
+  lu.rule_by_gid = XCALLOC((size_t)lu.rule_count, sizeof(PegRule*));
   for (size_t i = 0; i < darray_size(input->rules); i++) {
     int32_t idx;
     if (_rule_gid_index(&lu, input->rules[i].global_id, &idx)) {
@@ -79,7 +79,7 @@ static PegRule* _lookup_rule(RuleLookup* lu, int32_t global_id) {
   return NULL;
 }
 
-static void _free_rule_lookup(RuleLookup* lu) { free(lu->rule_by_gid); }
+static void _free_rule_lookup(RuleLookup* lu) { XFREE(lu->rule_by_gid); }
 
 static bool _is_scope_term(PegAnalyzeInput* input, int32_t id) {
   return id < symtab_count(&input->scope_names) + input->scope_names.start_num;
@@ -170,14 +170,14 @@ static ScopedUnit _breakdown(GatherCtx* gctx, PegUnit* unit, const char* parent_
     lhs_copy.interlace_rhs_kind = 0;
     lhs_copy.interlace_rhs_id = 0;
     ScopedUnit lhs = _breakdown(gctx, &lhs_copy, parent_rule_name);
-    ScopedUnit* lhs_heap = malloc(sizeof(ScopedUnit));
+    ScopedUnit* lhs_heap = XMALLOC(sizeof(ScopedUnit));
     *lhs_heap = lhs;
 
     ScopedUnit* rhs_heap = NULL;
     if (unit->interlace_rhs_kind) {
       PegUnit rhs_unit = {.kind = unit->interlace_rhs_kind, .id = unit->interlace_rhs_id};
       ScopedUnit rhs = _breakdown_single(gctx, &rhs_unit);
-      rhs_heap = malloc(sizeof(ScopedUnit));
+      rhs_heap = XMALLOC(sizeof(ScopedUnit));
       *rhs_heap = rhs;
     }
 
@@ -389,7 +389,7 @@ static void _alloc_tag_bits(ScopeClosure* cl) {
   for (size_t i = 0; i < darray_size(cl->scoped_rules); i++) {
     int32_t nt = symtab_count(&cl->scoped_rules[i].tags);
     if (nt > 0) {
-      entries = realloc(entries, (size_t)(entry_size + 1) * sizeof(_TagEntry));
+      entries = XREALLOC(entries, (size_t)(entry_size + 1) * sizeof(_TagEntry));
       entries[entry_size++] = (_TagEntry){.rule_idx = i, .tag_size = nt};
     } else {
       cl->scoped_rules[i].tag_bit_index = 0;
@@ -400,7 +400,7 @@ static void _alloc_tag_bits(ScopeClosure* cl) {
 
   if (entry_size == 0) {
     cl->bits_bucket_size = 0;
-    free(entries);
+    XFREE(entries);
     return;
   }
 
@@ -419,7 +419,7 @@ static void _alloc_tag_bits(ScopeClosure* cl) {
       }
     }
     if (best < 0) {
-      bucket_remaining = realloc(bucket_remaining, (size_t)(bucket_size + 1) * sizeof(int32_t));
+      bucket_remaining = XREALLOC(bucket_remaining, (size_t)(bucket_size + 1) * sizeof(int32_t));
       bucket_remaining[bucket_size] = 64;
       best = bucket_size;
       bucket_size++;
@@ -433,8 +433,8 @@ static void _alloc_tag_bits(ScopeClosure* cl) {
   }
 
   cl->bits_bucket_size = bucket_size;
-  free(entries);
-  free(bucket_remaining);
+  XFREE(entries);
+  XFREE(bucket_remaining);
 }
 
 // ============================================================
@@ -772,8 +772,8 @@ static void _alloc_shared_tag_bits(ScopeClosure* cl) {
   int32_t rule_size = (int32_t)darray_size(cl->scoped_rules);
   int32_t segment_size = (int32_t)cl->slots_size;
 
-  int32_t* seg_used_bits = calloc((size_t)segment_size, sizeof(int32_t));
-  int32_t* seg_max_tags = calloc((size_t)segment_size, sizeof(int32_t));
+  int32_t* seg_used_bits = XCALLOC((size_t)segment_size, sizeof(int32_t));
+  int32_t* seg_max_tags = XCALLOC((size_t)segment_size, sizeof(int32_t));
   for (int32_t i = 0; i < rule_size; i++) {
     int32_t seg = (int32_t)cl->scoped_rules[i].segment_index;
     if (seg < segment_size) {
@@ -820,8 +820,8 @@ static void _alloc_shared_tag_bits(ScopeClosure* cl) {
   }
   cl->bits_bucket_size = next_bucket;
 
-  free(seg_used_bits);
-  free(seg_max_tags);
+  XFREE(seg_used_bits);
+  XFREE(seg_max_tags);
 }
 
 // ============================================================
@@ -830,7 +830,7 @@ static void _alloc_shared_tag_bits(ScopeClosure* cl) {
 
 static char* _sanitize_field_name(const char* name) {
   size_t len = strlen(name);
-  char* out = malloc(len + 2);
+  char* out = XMALLOC(len + 2);
   size_t j = 0;
   for (size_t i = 0; i < len; i++) {
     char c = name[i];
@@ -848,7 +848,7 @@ static void _field_dedup_init(FieldDedup* fd) { fd->names = darray_new(sizeof(ch
 
 static void _field_dedup_free(FieldDedup* fd) {
   for (size_t i = 0; i < darray_size(fd->names); i++) {
-    free(fd->names[i]);
+    XFREE(fd->names[i]);
   }
   darray_del(fd->names);
 }
@@ -922,7 +922,7 @@ static NodeField _build_term_node_field(PegAnalyzeInput* input, ScopeClosure* cl
     nf.ref_row = wrapper ? _slot_row(cl, wrapper) : 0;
     nf.wrapper_name = wrapper_name;
   }
-  free(san);
+  XFREE(san);
   return nf;
 }
 
@@ -1108,18 +1108,18 @@ static void _free_scoped_unit(ScopedUnit* su) {
   case SCOPED_UNIT_MAYBE:
     if (su->as.base) {
       _free_scoped_unit(su->as.base);
-      free(su->as.base);
+      XFREE(su->as.base);
     }
     break;
   case SCOPED_UNIT_STAR:
   case SCOPED_UNIT_PLUS:
     if (su->as.interlace.lhs) {
       _free_scoped_unit(su->as.interlace.lhs);
-      free(su->as.interlace.lhs);
+      XFREE(su->as.interlace.lhs);
     }
     if (su->as.interlace.rhs) {
       _free_scoped_unit(su->as.interlace.rhs);
-      free(su->as.interlace.rhs);
+      XFREE(su->as.interlace.rhs);
     }
     break;
   default:
@@ -1132,7 +1132,7 @@ static void _free_node_fields(NodeFields fields) {
     return;
   }
   for (size_t i = 0; i < darray_size(fields); i++) {
-    free(fields[i].name);
+    XFREE(fields[i].name);
   }
   darray_del(fields);
 }

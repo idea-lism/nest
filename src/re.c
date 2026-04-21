@@ -1,20 +1,20 @@
 #include "re.h"
 #include "darray.h"
+#include "xmalloc.h"
 
 #include <assert.h>
-#include <stdlib.h>
 #include <string.h>
 
 #define MAX_UNICODE 0x10FFFF
 
-ReRange* re_range_new(void) { return calloc(1, sizeof(ReRange)); }
+ReRange* re_range_new(void) { return XCALLOC(1, sizeof(ReRange)); }
 
 void re_range_del(ReRange* range) {
   if (!range) {
     return;
   }
   darray_del(range->ivs);
-  free(range);
+  XFREE(range);
 }
 
 void re_range_add(ReRange* range, int32_t start_cp, int32_t end_cp) {
@@ -140,7 +140,7 @@ static void _save_branch_end(GroupFrame* f, int32_t state) {
 }
 
 Re* re_new(Aut* aut) {
-  Re* re = calloc(1, sizeof(Re));
+  Re* re = XCALLOC(1, sizeof(Re));
   re->aut = aut;
   re->next_state = 0;
   re->stack = darray_new(sizeof(GroupFrame), 0);
@@ -158,7 +158,7 @@ void re_del(Re* re) {
     darray_del(re->stack[i].branch_ends);
   }
   darray_del(re->stack);
-  free(re);
+  XFREE(re);
 }
 
 void re_append_ch(Re* re, int32_t codepoint, DebugInfo di) {
@@ -619,7 +619,7 @@ static void _rlp_parse_expr(ReLexParser* p) {
 }
 
 ReLex* re_lex_new(const char* func_name, const char* source_file_name, const char* mode) {
-  ReLex* l = calloc(1, sizeof(ReLex));
+  ReLex* l = XCALLOC(1, sizeof(ReLex));
   l->aut = aut_new(func_name, source_file_name);
   l->re = re_new(l->aut);
   l->source_file = source_file_name;
@@ -641,7 +641,7 @@ void re_lex_del(ReLex* l) {
   }
   re_del(l->re);
   aut_del(l->aut);
-  free(l);
+  XFREE(l);
 }
 
 int32_t re_lex_add(ReLex* l, const char* pattern, int32_t line, int32_t col, int32_t action_id) {
@@ -660,7 +660,7 @@ int32_t re_lex_add(ReLex* l, const char* pattern, int32_t line, int32_t col, int
   int32_t len = (int32_t)strlen(pattern);
   if (p.binary) {
     p.ncp = len;
-    p.cps = malloc((size_t)len * sizeof(int32_t));
+    p.cps = XMALLOC((size_t)len * sizeof(int32_t));
     for (int32_t i = 0; i < len; i++) {
       p.cps[i] = (uint8_t)pattern[i];
     }
@@ -668,7 +668,7 @@ int32_t re_lex_add(ReLex* l, const char* pattern, int32_t line, int32_t col, int
     p.ustr_buf = ustr_new((size_t)len, pattern);
     p.ncp = ustr_size(p.ustr_buf);
     if (p.ncp > 0) {
-      p.cps = malloc((size_t)p.ncp * sizeof(int32_t));
+      p.cps = XMALLOC((size_t)p.ncp * sizeof(int32_t));
       UstrIter it;
       ustr_iter_init(&it, p.ustr_buf, 0);
       for (int32_t i = 0; i < p.ncp; i++) {
@@ -680,7 +680,7 @@ int32_t re_lex_add(ReLex* l, const char* pattern, int32_t line, int32_t col, int
   _rlp_parse_expr(&p);
 
   int32_t err = p.err;
-  free(p.cps);
+  XFREE(p.cps);
   if (p.ustr_buf) {
     ustr_del(p.ustr_buf);
   }

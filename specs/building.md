@@ -10,15 +10,12 @@
 Additional verifications:
 
 - ASAN
+- OOM & leak tracing with XMALLOC / XFREE (see also xmalloc.md)
 - Test coverage
-
-Outputs:
-
-- out/libre.a : includes everything
 
 CI:
 
-- Setup github CI related files
+- .github/workflows/ci.yml
 
 Cross-Platform compatibility
 

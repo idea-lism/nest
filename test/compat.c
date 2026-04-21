@@ -60,4 +60,14 @@ const char* compat_devnull_path(void) {
 #endif
 }
 
-const char* compat_llvm_cc(void) { return LLVM_CC; }
+const char* compat_llvm_cc(void) {
+#if defined(__has_feature)
+#if __has_feature(address_sanitizer)
+  return LLVM_CC " -fsanitize=address -fsanitize=undefined";
+#endif
+#endif
+#if defined(__SANITIZE_ADDRESS__)
+  return LLVM_CC " -fsanitize=address -fsanitize=undefined";
+#endif
+  return LLVM_CC;
+}

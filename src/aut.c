@@ -2,10 +2,10 @@
 #include "bitset.h"
 #include "darray.h"
 #include "irwriter.h"
+#include "xmalloc.h"
 
 #include <assert.h>
 #include <stdio.h>
-#include <stdlib.h>
 #include <string.h>
 
 typedef struct {
@@ -51,7 +51,7 @@ struct Aut {
 };
 
 Aut* aut_new(const char* function_name, const char* source_file_name) {
-  Aut* a = calloc(1, sizeof(Aut));
+  Aut* a = XCALLOC(1, sizeof(Aut));
   a->function_name = function_name;
   a->source_file_name = source_file_name;
   a->max_state = -1;
@@ -70,7 +70,7 @@ void aut_del(Aut* a) {
   }
   darray_del(a->dfa_states);
   darray_del(a->dfa_trans);
-  free(a);
+  XFREE(a);
 }
 
 static void _track_state(Aut* a, int32_t s) {
@@ -305,8 +305,8 @@ void aut_optimize(Aut* a) {
   nsplits = dedup;
   int nintervals = nsplits > 1 ? nsplits - 1 : 0;
 
-  int32_t* tgt = calloc((size_t)(n * nintervals), sizeof(int32_t));
-  int32_t* act = calloc((size_t)(n * nintervals), sizeof(int32_t));
+  int32_t* tgt = XCALLOC((size_t)(n * nintervals), sizeof(int32_t));
+  int32_t* act = XCALLOC((size_t)(n * nintervals), sizeof(int32_t));
   for (int i = 0; i < n * nintervals; i++) {
     tgt[i] = -1;
   }
@@ -323,7 +323,7 @@ void aut_optimize(Aut* a) {
     }
   }
 
-  int32_t* partition = calloc((size_t)n, sizeof(int32_t));
+  int32_t* partition = XCALLOC((size_t)n, sizeof(int32_t));
   int npartitions = 0;
 
   for (int i = 0; i < n; i++) {
@@ -420,8 +420,8 @@ void aut_optimize(Aut* a) {
     }
   }
 
-  int32_t* repr = calloc((size_t)n, sizeof(int32_t));
-  int32_t* new_id = calloc((size_t)n, sizeof(int32_t));
+  int32_t* repr = XCALLOC((size_t)n, sizeof(int32_t));
+  int32_t* new_id = XCALLOC((size_t)n, sizeof(int32_t));
   for (int i = 0; i < n; i++) {
     repr[i] = -1;
     new_id[i] = -1;
@@ -441,7 +441,7 @@ void aut_optimize(Aut* a) {
   }
 
   int new_ntrans = 0;
-  DfaTrans* new_trans = malloc((size_t)(dfa_ntrans > 0 ? dfa_ntrans : 1) * sizeof(DfaTrans));
+  DfaTrans* new_trans = XMALLOC((size_t)(dfa_ntrans > 0 ? dfa_ntrans : 1) * sizeof(DfaTrans));
   for (int t = 0; t < dfa_ntrans; t++) {
     int old_from = a->dfa_trans[t].from;
     int old_to = a->dfa_trans[t].to;
@@ -472,13 +472,13 @@ void aut_optimize(Aut* a) {
   darray_del(a->dfa_trans);
   a->dfa_trans = darray_new(sizeof(DfaTrans), (size_t)new_ntrans);
   memcpy(a->dfa_trans, new_trans, (size_t)new_ntrans * sizeof(DfaTrans));
-  free(new_trans);
+  XFREE(new_trans);
 
-  free(partition);
-  free(repr);
-  free(new_id);
-  free(tgt);
-  free(act);
+  XFREE(partition);
+  XFREE(repr);
+  XFREE(new_id);
+  XFREE(tgt);
+  XFREE(act);
   darray_del(splits);
 
   // Sort transitions by (from, cp_start) so the coalescing pass can merge adjacent ranges.
@@ -541,7 +541,7 @@ void aut_gen_dfa(Aut* a, IrWriter* w, bool debug_mode) {
   // entry BB must be emitted first
   irwriter_bb(w);
   IrLabel dead_bb = irwriter_label(w);
-  IrLabel* state_bbs = malloc((size_t)dfa_nstates * sizeof(IrLabel));
+  IrLabel* state_bbs = XMALLOC((size_t)dfa_nstates * sizeof(IrLabel));
   for (int s = 0; s < dfa_nstates; s++) {
     state_bbs[s] = irwriter_label(w);
   }
@@ -581,7 +581,7 @@ void aut_gen_dfa(Aut* a, IrWriter* w, bool debug_mode) {
     IrLabel nomatch_bb = irwriter_label(w);
     IrLabel ranges_bb = has_range > 0 ? irwriter_label(w) : -1;
 
-    IrLabel* trans_bbs = malloc((size_t)dfa_ntrans * sizeof(IrLabel));
+    IrLabel* trans_bbs = XMALLOC((size_t)dfa_ntrans * sizeof(IrLabel));
     for (int t = 0; t < dfa_ntrans; t++) {
       if (a->dfa_trans[t].from == s) {
         trans_bbs[t] = irwriter_label(w);
@@ -598,7 +598,7 @@ void aut_gen_dfa(Aut* a, IrWriter* w, bool debug_mode) {
     }
     IrLabel* rck_bbs = NULL;
     if (nranges > 1) {
-      rck_bbs = malloc((size_t)nranges * sizeof(IrLabel));
+      rck_bbs = XMALLOC((size_t)nranges * sizeof(IrLabel));
       for (int i = 0; i < nranges; i++) {
         rck_bbs[i] = irwriter_label(w);
       }
@@ -615,8 +615,8 @@ void aut_gen_dfa(Aut* a, IrWriter* w, bool debug_mode) {
       IrVal v0 = irwriter_insertvalue(w, ret_ty, -1, "i64", state_val, 0);
       IrVal v1 = irwriter_insertvalue(w, ret_ty, v0, "i64", irwriter_imm(w, "-2"), 1);
       irwriter_ret(w, ret_ty, v1);
-      free(trans_bbs);
-      free(rck_bbs);
+      XFREE(trans_bbs);
+      XFREE(rck_bbs);
       continue;
     }
 
@@ -694,8 +694,8 @@ void aut_gen_dfa(Aut* a, IrWriter* w, bool debug_mode) {
     IrVal v1 = irwriter_insertvalue(w, ret_ty, v0, "i64", irwriter_imm(w, "-2"), 1);
     irwriter_ret(w, ret_ty, v1);
 
-    free(trans_bbs);
-    free(rck_bbs);
+    XFREE(trans_bbs);
+    XFREE(rck_bbs);
   }
 
   // dead BB
@@ -710,6 +710,6 @@ void aut_gen_dfa(Aut* a, IrWriter* w, bool debug_mode) {
     irwriter_ret(w, ret_ty, v1);
   }
 
-  free(state_bbs);
+  XFREE(state_bbs);
   irwriter_define_end(w);
 }

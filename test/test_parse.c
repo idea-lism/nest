@@ -1,8 +1,8 @@
 #include "../src/parse.h"
 #include "../src/ustr.h"
+#include "../src/xmalloc.h"
 #include <assert.h>
 #include <stdio.h>
-#include <stdlib.h>
 #include <string.h>
 
 #define TEST(name) static void name(void)
@@ -78,7 +78,7 @@ TEST(test_parse_sfmt) {
   char* s = parse_sfmt("hello %s %d", "world", 7);
   assert(s != NULL);
   assert(strcmp(s, "hello world 7") == 0);
-  free(s);
+  XFREE(s);
 }
 
 TEST(test_parse_set_str) {
@@ -89,7 +89,7 @@ TEST(test_parse_set_str) {
   char* s2 = parse_sfmt("def");
   parse_set_str(&dst, s2);
   assert(dst == s2);
-  free(dst);
+  XFREE(dst);
 }
 
 // --- Reject invalid input ---

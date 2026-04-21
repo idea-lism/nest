@@ -1,5 +1,6 @@
 #include "../src/coloring.h"
 #include "../src/graph.h"
+#include "../src/xmalloc.h"
 #include <assert.h>
 #include <stdbool.h>
 #include <stdio.h>
@@ -41,7 +42,7 @@ static void _test_max_clique(void) {
   int32_t* clique = graph_find_max_clique(g);
   assert(clique != NULL);
   assert(clique[0] >= 3);
-  free(clique);
+  XFREE(clique);
   graph_del(g);
 
   g = graph_new(4);
@@ -55,7 +56,7 @@ static void _test_max_clique(void) {
   clique = graph_find_max_clique(g);
   assert(clique != NULL);
   assert(clique[0] == 4);
-  free(clique);
+  XFREE(clique);
   graph_del(g);
 }
 

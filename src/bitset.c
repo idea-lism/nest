@@ -1,6 +1,6 @@
 #include "bitset.h"
+#include "xmalloc.h"
 
-#include <stdlib.h>
 #include <string.h>
 
 struct Bitset {
@@ -16,19 +16,19 @@ static void _ensure_capacity(Bitset* bs, uint32_t chunk_idx) {
     return;
   }
   uint32_t new_n = chunk_idx + 1;
-  bs->chunks = realloc(bs->chunks, new_n * sizeof(uint64_t));
+  bs->chunks = XREALLOC(bs->chunks, new_n * sizeof(uint64_t));
   memset(bs->chunks + bs->n_chunks, 0, (new_n - bs->n_chunks) * sizeof(uint64_t));
   bs->n_chunks = new_n;
 }
 
-Bitset* bitset_new(void) { return calloc(1, sizeof(Bitset)); }
+Bitset* bitset_new(void) { return XCALLOC(1, sizeof(Bitset)); }
 
 void bitset_del(Bitset* bs) {
   if (!bs) {
     return;
   }
-  free(bs->chunks);
-  free(bs);
+  XFREE(bs->chunks);
+  XFREE(bs);
 }
 
 void bitset_add_bit(Bitset* bs, uint32_t offset) {
@@ -59,7 +59,7 @@ Bitset* bitset_or(Bitset* s1, Bitset* s2) {
   if (max_n == 0) {
     return result;
   }
-  result->chunks = calloc(max_n, sizeof(uint64_t));
+  result->chunks = XCALLOC(max_n, sizeof(uint64_t));
   result->n_chunks = max_n;
   for (uint32_t i = 0; i < max_n; i++) {
     uint64_t a = i < s1->n_chunks ? s1->chunks[i] : 0;
@@ -84,7 +84,7 @@ Bitset* bitset_and(Bitset* s1, Bitset* s2) {
   if (min_n == 0) {
     return result;
   }
-  result->chunks = calloc(min_n, sizeof(uint64_t));
+  result->chunks = XCALLOC(min_n, sizeof(uint64_t));
   result->n_chunks = min_n;
   for (uint32_t i = 0; i < min_n; i++) {
     result->chunks[i] = s1->chunks[i] & s2->chunks[i];

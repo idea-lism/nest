@@ -225,8 +225,8 @@ Resulting parser needs:
   - but don't include the token ids for keyword literals (the ids in the form of `@lit.xxx`) because we have no way to upcase them.
 - primitive hook ids: `HOOK_XXX` numbered in the system of action_unit_id.
 - declare entrance and cleanup functions (impl in LLVM-IR)
-  - `ParseResult {prefix}_parse(ParseContext, UStr)`
-  - `void {prefix}_cleanup(ParseResult r)`
+  - `ParseResult {prefix}_parse(ParseContext*, const char*)`
+  - `void {prefix}_cleanup(ParseResult*)` -- calls `parse_result_del()` from `parse_result.c`, which is static-ized by irwriter_rt_gen
 
 ### Misc
 
