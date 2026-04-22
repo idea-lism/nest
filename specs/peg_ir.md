@@ -105,6 +105,14 @@ The `indirectbr` destination list must include return labels from **all** call s
 - `peg_ir_emit_call`: the caller tracks a local site counter. Emits `blockaddress` and return label as `callsite$${caller_id}$${n}`.
 - `peg_ir_emit_ret`: iterates the current rule's `call_sites` darray to emit the complete `indirectbr` label list.
 
+# Stack safety
+
+For backtrack: Generally guidelines not recommend dynamic alloca which may corrupt stack, so we make a heap-allocated backtrack stack.
+
+For function: when alloca is dynamic (not single-time funciton-top), add LLVM hint on alloca lifetime for this alloca:
+- `@llvm.lifetime.start`
+- `@llvm.lifetime.end`
+
 # Code gen
 
 `fail` means passing the on-failure label.

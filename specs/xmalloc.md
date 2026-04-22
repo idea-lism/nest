@@ -6,7 +6,7 @@ when defined macro `XMALLOC_TRACE` the macros routes to traced versions: `calloc
 
 when defined macro `XMALLOC_TRACE`, `xmalloc.c` has an initializer that defines `atexit()` hook at `__attribute__((constructor))` to check if there are leaks. Leak reporting will include the call site info too.
 
-Leak tracking data structure (an open-addressing hash table on allocated ptr, choose a simple hashing function & probe function, expand table when there's no more probe):
+Leak tracking data structure (a hash table on allocated ptr, choose a simple hashing function, use linked list for collision resolution):
 
 ```c
 typedef struct {
@@ -17,13 +17,13 @@ typedef struct {
 } Pointer;
 
 typedef struct {
-  Pointer p;
-  int probe_token; // 0:slot empty, 1:hash, 2:probe1(hash), 3:probe2(hash), 4:probe3(hash), if still no empty slot at 4, expand the hash table
+  Pointer p; // ptr set to 0 when empty
+  PointerBucket* next; // for collision relsolution, null when no next
 } PointerBucket;
 
 typedef struct {
-  size_t bucket_cap;
-  PointerBucket* pointer_buckets;
+  size_t bucket_cap; // expand when fill rate at 65%
+  PointerBucket* pointer_buckets; // the buffer
 } PointerTracker;
 ```
 

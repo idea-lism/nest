@@ -5,6 +5,12 @@
 #include <stdlib.h>
 #include <string.h>
 
+#ifdef _WIN32
+#include <windows.h>
+#else
+#include <dlfcn.h>
+#endif
+
 #define TEST(name) static void name(void)
 #define RUN(name)                                                                                                      \
   do {                                                                                                                 \
@@ -40,15 +46,6 @@ static void _build_single(Aut* a, IrWriter* w) {
   aut_gen_dfa(a, w, false);
 }
 
-TEST(test_single_transition) {
-  char* out = _gen_ir(_build_single);
-  assert(strstr(out, "define {i64, i64} @match(i64 %state, i64 %cp)"));
-  assert(strstr(out, "switch i64 %state, label %L"));
-  assert(strstr(out, "i64 65, label %L"));
-  assert(strstr(out, "L"));
-  free(out);
-}
-
 // --- Range transition ---
 
 static void _build_range(Aut* a, IrWriter* w) {
@@ -56,13 +53,6 @@ static void _build_range(Aut* a, IrWriter* w) {
   aut_epsilon(a, 1, 2);
   aut_action(a, 2, 1);
   aut_gen_dfa(a, w, false);
-}
-
-TEST(test_range_transition) {
-  char* out = _gen_ir(_build_range);
-  assert(strstr(out, "icmp sge i64 %cp"));
-  assert(strstr(out, "icmp sle i64 %cp"));
-  free(out);
 }
 
 // --- Multiple transitions from one state ---
@@ -77,15 +67,6 @@ static void _build_multi(Aut* a, IrWriter* w) {
   aut_gen_dfa(a, w, false);
 }
 
-TEST(test_multi_transitions) {
-  char* out = _gen_ir(_build_multi);
-  assert(strstr(out, "icmp sge i64 %cp"));
-  assert(strstr(out, "icmp sle i64 %cp"));
-  assert(strstr(out, "icmp sge i64 %cp"));
-  assert(strstr(out, "icmp sle i64 %cp"));
-  free(out);
-}
-
 // --- Epsilon transitions ---
 
 static void _build_epsilon(Aut* a, IrWriter* w) {
@@ -94,12 +75,6 @@ static void _build_epsilon(Aut* a, IrWriter* w) {
   aut_epsilon(a, 2, 3);
   aut_action(a, 3, 1);
   aut_gen_dfa(a, w, false);
-}
-
-TEST(test_epsilon) {
-  char* out = _gen_ir(_build_epsilon);
-  assert(strstr(out, "i64 120"));
-  free(out);
 }
 
 // --- Special codepoints ---
@@ -115,21 +90,6 @@ static void _build_special_cp(Aut* a, IrWriter* w) {
   aut_gen_dfa(a, w, false);
 }
 
-TEST(test_special_codepoints) {
-  char* out = _gen_ir(_build_special_cp);
-  assert(strstr(out, "0"));
-  assert(strstr(out, "1114111"));
-  free(out);
-}
-
-// --- Dead state ---
-
-TEST(test_dead_state) {
-  char* out = _gen_ir(_build_single);
-  assert(strstr(out, "L"));
-  free(out);
-}
-
 // --- Action ID: smallest returned ---
 
 static void _build_action_smallest(Aut* a, IrWriter* w) {
@@ -140,12 +100,6 @@ static void _build_action_smallest(Aut* a, IrWriter* w) {
   aut_epsilon(a, 2, 4);
   aut_action(a, 4, 3);
   aut_gen_dfa(a, w, false);
-}
-
-TEST(test_action_smallest) {
-  char* out = _gen_ir(_build_action_smallest);
-  assert(strstr(out, "i64 3, 1"));
-  free(out);
 }
 
 // --- Debug info ---
@@ -193,13 +147,6 @@ static void _build_redundant(Aut* a, IrWriter* w) {
   aut_gen_dfa(a, w, false);
 }
 
-TEST(test_optimize) {
-  char* out = _gen_ir(_build_redundant);
-  assert(strstr(out, "define {i64, i64} @match"));
-  assert(strstr(out, "switch i64 %state, label %L"));
-  free(out);
-}
-
 TEST(test_optimize_reduces_states) {
   Aut* a1 = aut_new("m", "test.rules");
   aut_transition(a1, (TransitionDef){0, 1, 'a', 'a'}, (DebugInfo){1, 1});
@@ -233,12 +180,6 @@ static void _build_action_basic(Aut* a, IrWriter* w) {
   aut_gen_dfa(a, w, false);
 }
 
-TEST(test_action_basic) {
-  char* out = _gen_ir(_build_action_basic);
-  assert(strstr(out, "i64 7, 1"));
-  free(out);
-}
-
 // --- MIN-RULE: multiple action_ids on same state, smallest wins ---
 
 static void _build_min_rule(Aut* a, IrWriter* w) {
@@ -247,12 +188,6 @@ static void _build_min_rule(Aut* a, IrWriter* w) {
   aut_action(a, 1, 3);
   aut_action(a, 1, 7);
   aut_gen_dfa(a, w, false);
-}
-
-TEST(test_min_rule) {
-  char* out = _gen_ir(_build_min_rule);
-  assert(strstr(out, "i64 3, 1"));
-  free(out);
 }
 
 // --- PRESERVING-RULE: action_ids survive optimization ---
@@ -271,13 +206,6 @@ static void _build_preserve(Aut* a, IrWriter* w) {
   aut_action(a, 4, 5);
   aut_optimize(a);
   aut_gen_dfa(a, w, false);
-}
-
-TEST(test_preserving_rule) {
-  char* out = _gen_ir(_build_preserve);
-  assert(strstr(out, "i64 2, 1"));
-  assert(strstr(out, "i64 5, 1"));
-  free(out);
 }
 
 // --- Optimize coalesces adjacent ranges from merged states ---
@@ -310,70 +238,93 @@ TEST(test_optimize_coalesces_ranges) {
   free(out);
 }
 
-// --- Optimize reduces states AND preserves actions ---
+// --- Shared lib helpers ---
 
-TEST(test_optimize_preserves_action) {
-  // Without optimization
-  char* unopt = NULL;
-  {
-    char* buf = NULL;
-    size_t sz = 0;
-    FILE* f = compat_open_memstream(&buf, &sz);
-    assert(f);
-    IrWriter* w = irwriter_new(f);
-    irwriter_start(w, 5, "test.rules", ".");
-    Aut* a = aut_new("match", "test.rules");
-    aut_transition(a, (TransitionDef){0, 1, 'a', 'a'}, (DebugInfo){1, 1});
-    aut_action(a, 1, 3);
-    aut_transition(a, (TransitionDef){0, 2, 'b', 'b'}, (DebugInfo){1, 5});
-    aut_action(a, 2, 3);
-    aut_transition(a, (TransitionDef){1, 3, 'd', 'd'}, (DebugInfo){2, 1});
-    aut_action(a, 3, 4);
-    aut_transition(a, (TransitionDef){2, 4, 'd', 'd'}, (DebugInfo){2, 5});
-    aut_action(a, 4, 4);
-    aut_gen_dfa(a, w, false);
-    aut_del(a);
-    irwriter_end(w);
-    irwriter_del(w);
-    compat_close_memstream(f, &buf, &sz);
-    unopt = buf;
+typedef struct {
+  int64_t state;
+  int64_t action;
+} MatchResult;
+typedef MatchResult (*MatchFn)(int64_t, int64_t);
+
+typedef struct {
+  MatchFn fn;
+  void* handle;
+  char ll_path[128];
+  char lib_path[128];
+} LoadedMatch;
+
+static int _run_cmd(const char* cmd_str) {
+  FILE* p = compat_popen(cmd_str, "r");
+  if (!p) {
+    return -1;
   }
-
-  // With optimization
-  char* opt = NULL;
-  {
-    char* buf = NULL;
-    size_t sz = 0;
-    FILE* f = compat_open_memstream(&buf, &sz);
-    assert(f);
-    IrWriter* w = irwriter_new(f);
-    irwriter_start(w, 5, "test.rules", ".");
-    Aut* a = aut_new("match", "test.rules");
-    aut_transition(a, (TransitionDef){0, 1, 'a', 'a'}, (DebugInfo){1, 1});
-    aut_action(a, 1, 3);
-    aut_transition(a, (TransitionDef){0, 2, 'b', 'b'}, (DebugInfo){1, 5});
-    aut_action(a, 2, 3);
-    aut_transition(a, (TransitionDef){1, 3, 'd', 'd'}, (DebugInfo){2, 1});
-    aut_action(a, 3, 4);
-    aut_transition(a, (TransitionDef){2, 4, 'd', 'd'}, (DebugInfo){2, 5});
-    aut_action(a, 4, 4);
-    aut_optimize(a);
-    aut_gen_dfa(a, w, false);
-    aut_del(a);
-    irwriter_end(w);
-    irwriter_del(w);
-    compat_close_memstream(f, &buf, &sz);
-    opt = buf;
+  char buf[4096];
+  size_t n = fread(buf, 1, sizeof(buf) - 1, p);
+  buf[n] = '\0';
+  int exit_code = compat_pclose(p);
+  if (exit_code != 0) {
+    fprintf(stderr, "cmd failed: %s\noutput: %s\n", cmd_str, buf);
   }
+  return exit_code;
+}
 
-  // Both must have action_id=3 and action_id=4
-  assert(strstr(unopt, "i64 3, 1"));
-  assert(strstr(unopt, "i64 4, 1"));
-  assert(strstr(opt, "i64 3, 1"));
-  assert(strstr(opt, "i64 4, 1"));
+static LoadedMatch _load_match(void (*fn)(Aut*, IrWriter*), const char* test_name) {
+  LoadedMatch lm = {0};
+  snprintf(lm.ll_path, sizeof(lm.ll_path), "%s/test_aut_exec_%s.ll", BUILD_DIR, test_name);
+#ifdef __APPLE__
+  snprintf(lm.lib_path, sizeof(lm.lib_path), "%s/test_aut_exec_%s.dylib", BUILD_DIR, test_name);
+#else
+  snprintf(lm.lib_path, sizeof(lm.lib_path), "%s/test_aut_exec_%s.so", BUILD_DIR, test_name);
+#endif
 
-  free(unopt);
-  free(opt);
+  FILE* f = fopen(lm.ll_path, "w");
+  assert(f);
+  IrWriter* w = irwriter_new(f);
+  irwriter_start(w, 5, "test.rules", ".");
+  Aut* a = aut_new("match", "test.rules");
+  fn(a, w);
+  aut_del(a);
+  irwriter_end(w);
+  irwriter_del(w);
+  fclose(f);
+
+  char cmd[512];
+#ifdef __APPLE__
+  snprintf(cmd, sizeof(cmd), "%s -dynamiclib -Wl,-undefined,dynamic_lookup -o %s %s 2>&1", LLVM_CC, lm.lib_path,
+           lm.ll_path);
+#else
+  snprintf(cmd, sizeof(cmd), "%s -shared -o %s %s 2>&1", LLVM_CC, lm.lib_path, lm.ll_path);
+#endif
+  int status = _run_cmd(cmd);
+  if (status != 0) {
+    fprintf(stderr, "shared lib compile failed for %s\n", test_name);
+  }
+  assert(status == 0);
+
+#ifdef _WIN32
+  lm.handle = LoadLibraryA(lm.lib_path);
+  assert(lm.handle);
+  lm.fn = (MatchFn)GetProcAddress(lm.handle, "match");
+#else
+  lm.handle = dlopen(lm.lib_path, RTLD_NOW);
+  if (!lm.handle) {
+    fprintf(stderr, "dlopen failed: %s\n", dlerror());
+  }
+  assert(lm.handle);
+  lm.fn = (MatchFn)dlsym(lm.handle, "match");
+#endif
+  assert(lm.fn);
+  return lm;
+}
+
+static void _unload(LoadedMatch* lm) {
+#ifdef _WIN32
+  FreeLibrary(lm->handle);
+#else
+  dlclose(lm->handle);
+#endif
+  remove(lm->ll_path);
+  remove(lm->lib_path);
 }
 
 // --- Clang compilation ---
@@ -423,29 +374,152 @@ static void _write_and_compile(void (*fn)(Aut*, IrWriter*), const char* test_nam
   remove(ll_path);
 }
 
-TEST(test_compile_single) { _write_and_compile(_build_single, "single"); }
-
-TEST(test_compile_range) { _write_and_compile(_build_range, "range"); }
-
-TEST(test_compile_multi) { _write_and_compile(_build_multi, "multi"); }
-
-TEST(test_compile_epsilon) { _write_and_compile(_build_epsilon, "epsilon"); }
-
 TEST(test_compile_special) { _write_and_compile(_build_special_cp, "special"); }
-
-TEST(test_compile_optimize) { _write_and_compile(_build_redundant, "optimize"); }
 
 TEST(test_compile_debug) { _write_and_compile(_build_debug, "debug"); }
 
 TEST(test_compile_debug_trap) { _write_and_compile(_build_debug_trap, "debug_trap"); }
 
-TEST(test_compile_action_basic) { _write_and_compile(_build_action_basic, "action_basic"); }
+// --- Execution tests ---
 
-TEST(test_compile_min_rule) { _write_and_compile(_build_min_rule, "min_rule"); }
+TEST(test_exec_single) {
+  LoadedMatch lm = _load_match(_build_single, "exec_single");
+  MatchResult r = lm.fn(0, 'A');
+  assert(r.action == 1);
+  assert(r.state > 0);
+  r = lm.fn(0, 'B');
+  assert(r.action == -2);
+  _unload(&lm);
+}
 
-TEST(test_compile_preserve) { _write_and_compile(_build_preserve, "preserve"); }
+TEST(test_exec_range) {
+  LoadedMatch lm = _load_match(_build_range, "exec_range");
+  MatchResult r;
+  r = lm.fn(0, 'A');
+  assert(r.action == 1);
+  r = lm.fn(0, 'M');
+  assert(r.action == 1);
+  r = lm.fn(0, 'Z');
+  assert(r.action == 1);
+  r = lm.fn(0, 'a');
+  assert(r.action == -2);
+  r = lm.fn(0, '0');
+  assert(r.action == -2);
+  _unload(&lm);
+}
 
-TEST(test_compile_coalesce) { _write_and_compile(_build_coalesce, "coalesce"); }
+TEST(test_exec_multi) {
+  LoadedMatch lm = _load_match(_build_multi, "exec_multi");
+  MatchResult r;
+  // uppercase A-Z -> action 1
+  r = lm.fn(0, 'A');
+  assert(r.action == 1);
+  r = lm.fn(0, 'Z');
+  assert(r.action == 1);
+  // lowercase a-z -> action 2
+  r = lm.fn(0, 'a');
+  assert(r.action == 2);
+  r = lm.fn(0, 'z');
+  assert(r.action == 2);
+  // digit -> dead
+  r = lm.fn(0, '0');
+  assert(r.action == -2);
+  _unload(&lm);
+}
+
+TEST(test_exec_epsilon) {
+  LoadedMatch lm = _load_match(_build_epsilon, "exec_eps");
+  MatchResult r;
+  r = lm.fn(0, 'x');
+  assert(r.action == 1);
+  r = lm.fn(0, 'y');
+  assert(r.action == -2);
+  _unload(&lm);
+}
+
+TEST(test_exec_action_basic) {
+  LoadedMatch lm = _load_match(_build_action_basic, "exec_act");
+  MatchResult r = lm.fn(0, 'x');
+  assert(r.action == 7);
+  _unload(&lm);
+}
+
+TEST(test_exec_min_rule) {
+  LoadedMatch lm = _load_match(_build_min_rule, "exec_min");
+  MatchResult r = lm.fn(0, 'x');
+  assert(r.action == 3); // min(10,3,7)
+  _unload(&lm);
+}
+
+TEST(test_exec_action_smallest) {
+  LoadedMatch lm = _load_match(_build_action_smallest, "exec_smallest");
+  MatchResult r;
+  // 'M' matches both [A-Z](action 5) and [M](action 3) -> MIN-RULE picks 3
+  r = lm.fn(0, 'M');
+  assert(r.action == 3);
+  // 'A' matches only [A-Z](action 5)
+  r = lm.fn(0, 'A');
+  assert(r.action == 5);
+  _unload(&lm);
+}
+
+TEST(test_exec_optimize) {
+  LoadedMatch lm = _load_match(_build_redundant, "exec_opt");
+  MatchResult r;
+  // 'a' then 'c' -> action 1
+  r = lm.fn(0, 'a');
+  assert(r.action == 0); // intermediate
+  int64_t s1 = r.state;
+  r = lm.fn(s1, 'c');
+  assert(r.action == 1);
+  // 'b' then 'c' -> action 1
+  r = lm.fn(0, 'b');
+  assert(r.action == 0);
+  s1 = r.state;
+  r = lm.fn(s1, 'c');
+  assert(r.action == 1);
+  // 'a' then 'x' -> dead
+  r = lm.fn(0, 'a');
+  s1 = r.state;
+  r = lm.fn(s1, 'x');
+  assert(r.action == -2);
+  _unload(&lm);
+}
+
+TEST(test_exec_coalesce) {
+  LoadedMatch lm = _load_match(_build_coalesce, "exec_coal");
+  MatchResult r;
+  // any a-z then 'x' -> action 1
+  const char* letters = "abcmnoxyz";
+  for (int32_t i = 0; letters[i]; i++) {
+    r = lm.fn(0, letters[i]);
+    assert(r.action == 0); // intermediate
+    int64_t s1 = r.state;
+    r = lm.fn(s1, 'x');
+    assert(r.action == 1);
+  }
+  // digit -> dead
+  r = lm.fn(0, '0');
+  assert(r.action == -2);
+  _unload(&lm);
+}
+
+TEST(test_exec_preserve) {
+  LoadedMatch lm = _load_match(_build_preserve, "exec_prsv");
+  MatchResult r;
+  // 'a' -> action 2
+  r = lm.fn(0, 'a');
+  assert(r.action == 2);
+  // 'b' -> action 2
+  r = lm.fn(0, 'b');
+  assert(r.action == 2);
+  // 'a' then 'c' -> action 5
+  r = lm.fn(0, 'a');
+  int64_t s1 = r.state;
+  r = lm.fn(s1, 'c');
+  assert(r.action == 5);
+  _unload(&lm);
+}
 
 // --- Lifecycle ---
 
@@ -480,34 +554,24 @@ int main(void) {
   printf("test_aut:\n");
   RUN(test_lifecycle);
   RUN(test_empty_aut);
-  RUN(test_single_transition);
-  RUN(test_range_transition);
-  RUN(test_multi_transitions);
-  RUN(test_epsilon);
-  RUN(test_special_codepoints);
-  RUN(test_dead_state);
-  RUN(test_action_smallest);
-  RUN(test_action_basic);
-  RUN(test_min_rule);
   RUN(test_debug_info);
-  RUN(test_optimize);
   RUN(test_optimize_reduces_states);
-  RUN(test_preserving_rule);
-  RUN(test_optimize_preserves_action);
   RUN(test_optimize_coalesces_ranges);
-  RUN(test_compile_single);
-  RUN(test_compile_range);
-  RUN(test_compile_multi);
-  RUN(test_compile_epsilon);
   RUN(test_compile_special);
-  RUN(test_compile_optimize);
   RUN(test_compile_debug);
   RUN(test_debug_trap);
   RUN(test_compile_debug_trap);
-  RUN(test_compile_action_basic);
-  RUN(test_compile_min_rule);
-  RUN(test_compile_preserve);
-  RUN(test_compile_coalesce);
+  // execution tests
+  RUN(test_exec_single);
+  RUN(test_exec_range);
+  RUN(test_exec_multi);
+  RUN(test_exec_epsilon);
+  RUN(test_exec_action_basic);
+  RUN(test_exec_min_rule);
+  RUN(test_exec_action_smallest);
+  RUN(test_exec_optimize);
+  RUN(test_exec_coalesce);
+  RUN(test_exec_preserve);
   printf("all ok\n");
   return 0;
 }

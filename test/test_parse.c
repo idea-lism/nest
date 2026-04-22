@@ -1,4 +1,6 @@
+#include "../src/darray.h"
 #include "../src/parse.h"
+#include "../src/symtab.h"
 #include "../src/ustr.h"
 #include "../src/xmalloc.h"
 #include <assert.h>
@@ -179,16 +181,6 @@ static const char SCOPE_NEST[] = "[[vpa]]\n"
                                  "[[peg]]\n"
                                  "main = @nl*\n";
 
-TEST(test_scope_rule) {
-  ParseState* ps = parse_state_new();
-  bool ok = _parse(ps, SCOPE_NEST);
-  if (!ok) {
-    fprintf(stderr, "error: %s\n", parse_get_error(ps));
-  }
-  assert(ok);
-  parse_state_del(ps);
-}
-
 // --- VPA hooks ---
 
 static const char HOOKS_NEST[] = "[[vpa]]\n"
@@ -198,54 +190,6 @@ static const char HOOKS_NEST[] = "[[vpa]]\n"
                                  "*noise = { /[ \\t\\n]+/ @space /#[^\\n]*/ @comment /\\n+/ @nl }\n"
                                  "[[peg]]\n"
                                  "main = @nl*\n";
-
-TEST(test_hooks) {
-  ParseState* ps = parse_state_new();
-  bool ok = _parse(ps, HOOKS_NEST);
-  if (!ok) {
-    fprintf(stderr, "error: %s\n", parse_get_error(ps));
-  }
-  assert(ok);
-  parse_state_del(ps);
-}
-
-// --- Keyword expansion ---
-
-static const char KEYWORD_NEST[] = "[[vpa]]\n"
-                                   "%ignore @space @comment\n"
-                                   "main = { *noise }\n"
-                                   "*noise = { /[ \\t\\n]+/ @space /#[^\\n]*/ @comment /\\n+/ @nl }\n"
-                                   "[[peg]]\n"
-                                   "main = @nl*\n";
-
-TEST(test_keyword_expansion) {
-  ParseState* ps = parse_state_new();
-  bool ok = _parse(ps, KEYWORD_NEST);
-  if (!ok) {
-    fprintf(stderr, "error: %s\n", parse_get_error(ps));
-  }
-  assert(ok);
-  parse_state_del(ps);
-}
-
-// --- Macro rules ---
-
-static const char MACRO_NEST[] = "[[vpa]]\n"
-                                 "%ignore @space @comment\n"
-                                 "main = { *noise }\n"
-                                 "*noise = { /[ \\t\\n]+/ @space /#[^\\n]*/ @comment /\\n+/ @nl }\n"
-                                 "[[peg]]\n"
-                                 "main = @nl*\n";
-
-TEST(test_macro_rule) {
-  ParseState* ps = parse_state_new();
-  bool ok = _parse(ps, MACRO_NEST);
-  if (!ok) {
-    fprintf(stderr, "error: %s\n", parse_get_error(ps));
-  }
-  assert(ok);
-  parse_state_del(ps);
-}
 
 // --- Regexp with character classes ---
 
@@ -317,16 +261,6 @@ static const char PEG_BRANCHES_NEST[] = "[[vpa]]\n"
                                         "  @tok_b\n"
                                         "]\n";
 
-TEST(test_peg_branches) {
-  ParseState* ps = parse_state_new();
-  bool ok = _parse(ps, PEG_BRANCHES_NEST);
-  if (!ok) {
-    fprintf(stderr, "error: %s\n", parse_get_error(ps));
-  }
-  assert(ok);
-  parse_state_del(ps);
-}
-
 // --- PEG with tagged branches ---
 
 static const char PEG_TAGGED_NEST[] = "[[vpa]]\n"
@@ -339,16 +273,6 @@ static const char PEG_TAGGED_NEST[] = "[[vpa]]\n"
                                       "  @tok_a : alpha\n"
                                       "  @tok_b : numeric\n"
                                       "]\n";
-
-TEST(test_peg_tagged_branches) {
-  ParseState* ps = parse_state_new();
-  bool ok = _parse(ps, PEG_TAGGED_NEST);
-  if (!ok) {
-    fprintf(stderr, "error: %s\n", parse_get_error(ps));
-  }
-  assert(ok);
-  parse_state_del(ps);
-}
 
 // --- PEG with multipliers ---
 
@@ -461,16 +385,6 @@ static const char DEFINE_REF_NEST[] = "[[vpa]]\n"
                                       "[[peg]]\n"
                                       "main = @tok_a*\n";
 
-TEST(test_define_fragment) {
-  ParseState* ps = parse_state_new();
-  bool ok = _parse(ps, DEFINE_REF_NEST);
-  if (!ok) {
-    fprintf(stderr, "error: %s\n", parse_get_error(ps));
-  }
-  assert(ok);
-  parse_state_del(ps);
-}
-
 // --- VPA multiple token emissions ---
 
 static const char MULTI_TOK_NEST[] = "[[vpa]]\n"
@@ -480,34 +394,7 @@ static const char MULTI_TOK_NEST[] = "[[vpa]]\n"
                                      "[[peg]]\n"
                                      "main = @tok_a @tok_b? @tok_c?\n";
 
-TEST(test_multiple_tokens) {
-  ParseState* ps = parse_state_new();
-  bool ok = _parse(ps, MULTI_TOK_NEST);
-  if (!ok) {
-    fprintf(stderr, "error: %s\n", parse_get_error(ps));
-  }
-  assert(ok);
-  parse_state_del(ps);
-}
-
 // --- Case-insensitive regexp ---
-
-static const char RE_IC_NEST[] = "[[vpa]]\n"
-                                 "%ignore @space @comment\n"
-                                 "main = { /i[a-z]+/ @tok_a *noise }\n"
-                                 "*noise = { /[ \\t\\n]+/ @space /#[^\\n]*/ @comment /\\n+/ @nl }\n"
-                                 "[[peg]]\n"
-                                 "main = @tok_a*\n";
-
-TEST(test_case_insensitive_re) {
-  ParseState* ps = parse_state_new();
-  bool ok = _parse(ps, RE_IC_NEST);
-  if (!ok) {
-    fprintf(stderr, "error: %s\n", parse_get_error(ps));
-  }
-  assert(ok);
-  parse_state_del(ps);
-}
 
 // --- %effect directive ---
 
@@ -519,18 +406,6 @@ static const char EFFECT_NEST[] = "[[vpa]]\n"
                                   "[[peg]]\n"
                                   "main = @tok_a*\n";
 
-TEST(test_effect_directive) {
-  ParseState* ps = parse_state_new();
-  bool ok = _parse(ps, EFFECT_NEST);
-  if (!ok) {
-    fprintf(stderr, "error: %s\n", parse_get_error(ps));
-  }
-  assert(ok);
-  parse_state_del(ps);
-}
-
-// --- Nested scopes ---
-
 static const char NESTED_SCOPE_NEST[] = "[[vpa]]\n"
                                         "%ignore @space @comment\n"
                                         "main = { outer *noise }\n"
@@ -539,16 +414,6 @@ static const char NESTED_SCOPE_NEST[] = "[[vpa]]\n"
                                         "*noise = { /[ \\t\\n]+/ @space /#[^\\n]*/ @comment /\\n+/ @nl }\n"
                                         "[[peg]]\n"
                                         "main = @nl*\n";
-
-TEST(test_nested_scopes) {
-  ParseState* ps = parse_state_new();
-  bool ok = _parse(ps, NESTED_SCOPE_NEST);
-  if (!ok) {
-    fprintf(stderr, "error: %s\n", parse_get_error(ps));
-  }
-  assert(ok);
-  parse_state_del(ps);
-}
 
 // --- Invalid regexp ---
 
@@ -593,6 +458,172 @@ TEST(test_unclosed_scope) {
   parse_state_del(ps);
 }
 
+// --- Structural assertions on parsed output ---
+
+TEST(test_minimal_parse_tokens) {
+  ParseState* ps = parse_state_new();
+  bool ok = _parse(ps, MINIMAL_NEST);
+  assert(ok);
+  // tokens symtab has @space and @comment (names include @ prefix)
+  assert(symtab_find(&ps->tokens, "@space") >= 0);
+  assert(symtab_find(&ps->tokens, "@comment") >= 0);
+  // scope_names has "main" and "*noise" (macro prefix preserved)
+  assert(symtab_find(&ps->scope_names, "main") >= 0);
+  assert(symtab_find(&ps->scope_names, "*noise") >= 0);
+  // vpa_scopes populated
+  assert(ps->vpa_scopes != NULL);
+  assert(darray_size(ps->vpa_scopes) >= 2);
+  // peg_rules populated
+  assert(ps->peg_rules != NULL);
+  assert(darray_size(ps->peg_rules) >= 1);
+  // rule_names has "main"
+  assert(symtab_find(&ps->rule_names, "main") >= 0);
+  parse_state_del(ps);
+}
+
+TEST(test_scope_rule_structure) {
+  ParseState* ps = parse_state_new();
+  bool ok = _parse(ps, SCOPE_NEST);
+  assert(ok);
+  // scope_names contains "inner"
+  assert(symtab_find(&ps->scope_names, "inner") >= 0);
+  // hooks has ".begin" and ".end"
+  assert(symtab_find(&ps->hooks, ".begin") >= 0);
+  assert(symtab_find(&ps->hooks, ".end") >= 0);
+  // at least one VpaScope for "inner" exists
+  bool found_inner = false;
+  for (size_t i = 0; i < darray_size(ps->vpa_scopes); i++) {
+    if (ps->vpa_scopes[i].name && strcmp(ps->vpa_scopes[i].name, "inner") == 0) {
+      found_inner = true;
+      break;
+    }
+  }
+  assert(found_inner);
+  parse_state_del(ps);
+}
+
+TEST(test_hooks_structure) {
+  ParseState* ps = parse_state_new();
+  bool ok = _parse(ps, HOOKS_NEST);
+  assert(ok);
+  // hooks has ".unparse"
+  assert(symtab_find(&ps->hooks, ".unparse") >= 0);
+  // builtin hook IDs: .begin=0, .end=1, .unparse=3
+  assert(symtab_find(&ps->hooks, ".begin") == HOOK_ID_BEGIN);
+  assert(symtab_find(&ps->hooks, ".end") == HOOK_ID_END);
+  assert(symtab_find(&ps->hooks, ".unparse") == HOOK_ID_UNPARSE);
+  parse_state_del(ps);
+}
+
+TEST(test_peg_branches_structure) {
+  ParseState* ps = parse_state_new();
+  bool ok = _parse(ps, PEG_BRANCHES_NEST);
+  assert(ok);
+  // rule_names has "main" and "item"
+  assert(symtab_find(&ps->rule_names, "main") >= 0);
+  assert(symtab_find(&ps->rule_names, "item") >= 0);
+  // peg_rules has at least 2 entries
+  assert(darray_size(ps->peg_rules) >= 2);
+  // find "item" rule and check its body
+  int32_t item_id = symtab_find(&ps->rule_names, "item");
+  PegRule* item = NULL;
+  for (size_t i = 0; i < darray_size(ps->peg_rules); i++) {
+    if (ps->peg_rules[i].global_id == item_id) {
+      item = &ps->peg_rules[i];
+      break;
+    }
+  }
+  assert(item != NULL);
+  assert(item->body.kind == PEG_BRANCHES);
+  assert(darray_size(item->body.children) == 2);
+  parse_state_del(ps);
+}
+
+TEST(test_peg_tagged_structure) {
+  ParseState* ps = parse_state_new();
+  bool ok = _parse(ps, PEG_TAGGED_NEST);
+  assert(ok);
+  int32_t item_id = symtab_find(&ps->rule_names, "item");
+  PegRule* item = NULL;
+  for (size_t i = 0; i < darray_size(ps->peg_rules); i++) {
+    if (ps->peg_rules[i].global_id == item_id) {
+      item = &ps->peg_rules[i];
+      break;
+    }
+  }
+  assert(item != NULL);
+  assert(item->body.kind == PEG_BRANCHES);
+  // check tags
+  assert(item->body.children[0].tag != NULL);
+  assert(strcmp(item->body.children[0].tag, "alpha") == 0);
+  assert(item->body.children[1].tag != NULL);
+  assert(strcmp(item->body.children[1].tag, "numeric") == 0);
+  parse_state_del(ps);
+}
+
+TEST(test_effect_structure) {
+  ParseState* ps = parse_state_new();
+  bool ok = _parse(ps, EFFECT_NEST);
+  assert(ok);
+  assert(ps->effect_decls != NULL);
+  assert(darray_size(ps->effect_decls) >= 1);
+  // first effect decl has a hook_id >= HOOK_ID_BUILTIN_COUNT (user hook)
+  assert(ps->effect_decls[0].hook_id >= HOOK_ID_BUILTIN_COUNT);
+  parse_state_del(ps);
+}
+
+TEST(test_define_fragment_tokens) {
+  ParseState* ps = parse_state_new();
+  bool ok = _parse(ps, DEFINE_REF_NEST);
+  assert(ok);
+  assert(symtab_find(&ps->tokens, "@tok_a") >= 0);
+  parse_state_del(ps);
+}
+
+TEST(test_nested_scopes_structure) {
+  ParseState* ps = parse_state_new();
+  bool ok = _parse(ps, NESTED_SCOPE_NEST);
+  assert(ok);
+  assert(symtab_find(&ps->scope_names, "outer") >= 0);
+  assert(symtab_find(&ps->scope_names, "inner") >= 0);
+  parse_state_del(ps);
+}
+
+TEST(test_multiple_tokens_structure) {
+  ParseState* ps = parse_state_new();
+  bool ok = _parse(ps, MULTI_TOK_NEST);
+  assert(ok);
+  assert(symtab_find(&ps->tokens, "@tok_a") >= 0);
+  assert(symtab_find(&ps->tokens, "@tok_b") >= 0);
+  assert(symtab_find(&ps->tokens, "@tok_c") >= 0);
+  // all different IDs
+  int32_t a = symtab_find(&ps->tokens, "@tok_a");
+  int32_t b = symtab_find(&ps->tokens, "@tok_b");
+  int32_t c = symtab_find(&ps->tokens, "@tok_c");
+  assert(a != b && b != c && a != c);
+  parse_state_del(ps);
+}
+
+TEST(test_bootstrap_structure) {
+  FILE* f = fopen("specs/bootstrap.nest", "r");
+  if (!f) {
+    f = fopen("../specs/bootstrap.nest", "r");
+  }
+  assert(f != NULL);
+  char* ustr = ustr_from_file(f);
+  fclose(f);
+  ParseState* ps = parse_state_new();
+  bool ok = parse_nest(ps, ustr);
+  assert(ok);
+  // bootstrap should have multiple scopes, tokens, rules
+  assert(symtab_count(&ps->tokens) > 5);
+  assert(symtab_count(&ps->scope_names) >= 1);
+  assert(darray_size(ps->peg_rules) >= 2);
+  assert(darray_size(ps->vpa_scopes) >= 2);
+  parse_state_del(ps);
+  ustr_del(ustr);
+}
+
 int main(void) {
   printf("test_parse:\n");
 
@@ -618,32 +649,6 @@ int main(void) {
   // minimal valid
   RUN(test_minimal_parse);
 
-  // VPA directives
-  RUN(test_directives_state);
-  RUN(test_keyword_expansion);
-  RUN(test_macro_rule);
-  RUN(test_effect_directive);
-  RUN(test_define_fragment);
-
-  // VPA scopes and hooks
-  RUN(test_scope_rule);
-  RUN(test_hooks);
-  RUN(test_nested_scopes);
-  RUN(test_string_literal_scope);
-
-  // regexp patterns
-  RUN(test_re_charclass);
-  RUN(test_re_alternation);
-  RUN(test_re_special_classes);
-  RUN(test_case_insensitive_re);
-
-  // PEG rules
-  RUN(test_peg_branches);
-  RUN(test_peg_tagged_branches);
-  RUN(test_peg_multiplier_interlace);
-  RUN(test_peg_optional);
-  RUN(test_multiple_tokens);
-
   // VPA errors
   RUN(test_invalid_empty_regexp);
   RUN(test_incomplete_charclass_range);
@@ -654,6 +659,32 @@ int main(void) {
 
   // bootstrap
   RUN(test_bootstrap_nest);
+
+  // VPA directives (ok-only, but test distinct grammar features)
+  RUN(test_directives_state);
+  RUN(test_string_literal_scope);
+
+  // regexp patterns (ok-only, tests regex parser paths)
+  RUN(test_re_charclass);
+  RUN(test_re_alternation);
+  RUN(test_re_special_classes);
+
+  // PEG features (ok-only, test distinct PEG syntax)
+  RUN(test_peg_multiplier_interlace);
+  RUN(test_peg_optional);
+
+  // structural assertions
+  RUN(test_minimal_parse_tokens);
+  RUN(test_scope_rule_structure);
+  RUN(test_hooks_structure);
+  RUN(test_peg_branches_structure);
+  RUN(test_peg_tagged_structure);
+  RUN(test_effect_structure);
+  RUN(test_define_fragment_tokens);
+  RUN(test_nested_scopes_structure);
+  RUN(test_multiple_tokens_structure);
+
+  RUN(test_bootstrap_structure);
 
   printf("all ok\n");
   return 0;

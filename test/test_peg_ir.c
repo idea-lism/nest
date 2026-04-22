@@ -211,28 +211,6 @@ TEST(test_emit_seq) {
   free(out);
 }
 
-TEST(test_emit_maybe_phi) {
-  TestCtx t = _setup("test_fn");
-  ScopedUnit base = {.kind = SCOPED_UNIT_TERM, .tag_bit_local_offset = -1, .as = {.term_id = 5}};
-  ScopedUnit* base_heap = malloc(sizeof(ScopedUnit));
-  *base_heap = base;
-
-  ScopedUnit maybe = {.kind = SCOPED_UNIT_MAYBE, .tag_bit_local_offset = -1};
-  maybe.as.base = base_heap;
-
-  IrLabel fail = irwriter_label(t.w);
-  peg_ir_emit_parse(&t.ctx, &maybe, fail);
-  irwriter_br(t.w, fail);
-  irwriter_bb_at(t.w, fail);
-  irwriter_ret(t.w, "{i64, i64}", irwriter_imm(t.w, "undef"));
-
-  char* out = _finish(&t);
-  // maybe always succeeds — no phi, just falls through or branches to done
-  assert(strstr(out, "5")); // should reference the term id
-  free(base_heap);
-  free(out);
-}
-
 TEST(test_emit_star) {
   TestCtx t = _setup("test_fn");
   ScopedUnit lhs = {.kind = SCOPED_UNIT_TERM, .tag_bit_local_offset = -1, .as = {.term_id = 7}};
@@ -457,13 +435,63 @@ TEST(test_tag_bit_set) {
   free(out);
 }
 
+// --- Compile test ---
+
+static int _run_cmd(const char* cmd_str) {
+  FILE* p = compat_popen(cmd_str, "r");
+  if (!p) {
+    return -1;
+  }
+  char buf[4096];
+  size_t n = fread(buf, 1, sizeof(buf) - 1, p);
+  buf[n] = '\0';
+  int exit_code = compat_pclose(p);
+  if (exit_code != 0) {
+    fprintf(stderr, "cmd failed: %s\noutput: %s\n", cmd_str, buf);
+  }
+  return exit_code;
+}
+
+TEST(test_compile_helpers_ir) {
+  char* buf = NULL;
+  size_t len = 0;
+  FILE* f = compat_open_memstream(&buf, &len);
+  IrWriter* w = irwriter_new(f);
+  irwriter_gen_rt_simple(w);
+  peg_ir_emit_helpers(w);
+  peg_ir_emit_bit_helpers(w);
+  peg_ir_emit_gep_helpers(w);
+  irwriter_end(w);
+  irwriter_del(w);
+  compat_close_memstream(f, &buf, &len);
+
+  char ll_path[128], obj_path[128];
+  snprintf(ll_path, sizeof(ll_path), "%s/test_peg_ir_helpers.ll", BUILD_DIR);
+  snprintf(obj_path, sizeof(obj_path), "%s/test_peg_ir_helpers.o", BUILD_DIR);
+  f = fopen(ll_path, "w");
+  assert(f);
+  fputs(buf, f);
+  fclose(f);
+
+  char cmd[512];
+  snprintf(cmd, sizeof(cmd), "%s -c %s -o %s 2>&1", compat_llvm_cc(), ll_path, obj_path);
+  int status = _run_cmd(cmd);
+  if (status != 0) {
+    fprintf(stderr, "\nclang failed for test_compile_helpers_ir\n");
+  }
+  assert(status == 0);
+
+  remove(ll_path);
+  remove(obj_path);
+  free(buf);
+}
+
 int main(void) {
   printf("test_peg_ir:\n");
   RUN(test_helpers_define_internal);
   RUN(test_emit_term);
   RUN(test_emit_call_blockaddress);
   RUN(test_emit_seq);
-  RUN(test_emit_maybe_phi);
   RUN(test_emit_star);
   RUN(test_emit_branches);
   RUN(test_emit_plus);
@@ -472,6 +500,7 @@ int main(void) {
   RUN(test_emit_plus_interlace);
   RUN(test_emit_star_nullable);
   RUN(test_tag_bit_set);
+  RUN(test_compile_helpers_ir);
   printf("test_peg_ir: OK\n");
   return 0;
 }

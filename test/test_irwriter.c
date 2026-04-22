@@ -5,6 +5,12 @@
 #include <stdlib.h>
 #include <string.h>
 
+#ifdef _WIN32
+#include <windows.h>
+#else
+#include <dlfcn.h>
+#endif
+
 #define TEST(name) static void name(void)
 #define RUN(name)                                                                                                      \
   do {                                                                                                                 \
@@ -330,87 +336,172 @@ TEST(test_lifecycle) {
   fclose(f);
 }
 
-TEST(test_clang_compile) {
-  char ll_path[128], obj_path[128];
-  snprintf(ll_path, sizeof(ll_path), "%s/test_irwriter.ll", BUILD_DIR);
-  snprintf(obj_path, sizeof(obj_path), "%s/test_irwriter.o", BUILD_DIR);
-  FILE* f = fopen(ll_path, "w");
+// --- Shared lib helpers ---
+
+typedef struct {
+  int64_t v0;
+  int64_t v1;
+} RetPair;
+typedef RetPair (*PairFn)(int64_t, int64_t);
+typedef int64_t (*I64Fn)(int64_t);
+
+static int _run_cmd(const char* cmd_str) {
+  FILE* p = compat_popen(cmd_str, "r");
+  if (!p) {
+    return -1;
+  }
+  char buf[4096];
+  size_t n = fread(buf, 1, sizeof(buf) - 1, p);
+  buf[n] = '\0';
+  int exit_code = compat_pclose(p);
+  if (exit_code != 0) {
+    fprintf(stderr, "cmd failed: %s\noutput: %s\n", cmd_str, buf);
+  }
+  return exit_code;
+}
+
+typedef struct {
+  void* handle;
+  char ll_path[128];
+  char lib_path[128];
+} LoadedLib;
+
+static LoadedLib _compile_and_load(void (*fn)(IrWriter*), const char* test_name) {
+  LoadedLib lib = {0};
+  snprintf(lib.ll_path, sizeof(lib.ll_path), "%s/test_irw_exec_%s.ll", BUILD_DIR, test_name);
+#ifdef __APPLE__
+  snprintf(lib.lib_path, sizeof(lib.lib_path), "%s/test_irw_exec_%s.dylib", BUILD_DIR, test_name);
+#else
+  snprintf(lib.lib_path, sizeof(lib.lib_path), "%s/test_irw_exec_%s.so", BUILD_DIR, test_name);
+#endif
+
+  FILE* f = fopen(lib.ll_path, "w");
   assert(f);
   IrWriter* w = irwriter_new(f);
-
-  irwriter_gen_rt_simple(w);
-
-  irwriter_define_startf(w, "match", "{i64, i64} @match(i64 %%state, i64 %%cp)");
-
-  IrLabel state0 = irwriter_label(w);   // L0
-  IrLabel dead = irwriter_label(w);     // L1
-  IrLabel s0_match = irwriter_label(w); // L2
-  IrLabel s0_fail = irwriter_label(w);  // L3
-
-  // entry BB
-  irwriter_bb(w); // L4
-  irwriter_dbg(w, 1, 1);
-  irwriter_switch_start(w, "i64", irwriter_imm(w, "%state"), dead);
-  irwriter_switch_case(w, "i64", 0, state0);
-  irwriter_switch_end(w);
-
-  // state0
-  irwriter_bb_at(w, state0);
-  irwriter_dbg(w, 2, 1);
-  IrVal cp = irwriter_imm(w, "%cp");
-  IrVal lo_r = irwriter_icmp(w, "sge", "i64", cp, irwriter_imm(w, "65"));
-  IrVal hi_r = irwriter_icmp(w, "sle", "i64", cp, irwriter_imm(w, "90"));
-  IrVal in_range = irwriter_binop(w, "and", "i1", lo_r, hi_r);
-  irwriter_br_cond(w, in_range, s0_match, s0_fail);
-
-  // s0_match
-  irwriter_bb_at(w, s0_match);
-  irwriter_dbg(w, 2, 5);
-  IrVal v0r = irwriter_insertvalue(w, "{i64, i64}", -1, "i64", irwriter_imm(w, "1"), 0);
-  IrVal v1r = irwriter_insertvalue(w, "{i64, i64}", v0r, "i64", irwriter_imm(w, "0"), 1);
-  irwriter_ret(w, "{i64, i64}", v1r);
-
-  // s0_fail
-  irwriter_bb_at(w, s0_fail);
-  irwriter_dbg(w, 2, 10);
-  IrVal v2r = irwriter_insertvalue(w, "{i64, i64}", -1, "i64", irwriter_imm(w, "0"), 0);
-  IrVal v3r = irwriter_insertvalue(w, "{i64, i64}", v2r, "i64", irwriter_imm(w, "-2"), 1);
-  irwriter_ret(w, "{i64, i64}", v3r);
-
-  // dead
-  irwriter_bb_at(w, dead);
-  irwriter_dbg(w, 1, 1);
-  IrVal v4r = irwriter_insertvalue(w, "{i64, i64}", -1, "i64", irwriter_imm(w, "0"), 0);
-  IrVal v5r = irwriter_insertvalue(w, "{i64, i64}", v4r, "i64", irwriter_imm(w, "-2"), 1);
-  irwriter_ret(w, "{i64, i64}", v5r);
-
-  irwriter_define_end(w);
-  irwriter_end(w);
+  fn(w);
   irwriter_del(w);
   fclose(f);
 
-  char cmd[256];
-  snprintf(cmd, sizeof(cmd), "%s -c %s -o %s 2>&1", compat_llvm_cc(), ll_path, obj_path);
-  FILE* p = compat_popen(cmd, "r");
-  assert(p);
-  char output[4096] = {0};
-  size_t n = fread(output, 1, sizeof(output) - 1, p);
-  output[n] = '\0';
-  int status = compat_pclose(p);
-  if (status != 0) {
-    fprintf(stderr, "\nclang failed:\n%s\n", output);
-    FILE* ll = fopen(ll_path, "r");
-    if (ll) {
-      char line[512];
-      while (fgets(line, sizeof(line), ll)) {
-        fputs(line, stderr);
-      }
-      fclose(ll);
-    }
-  }
+  char cmd[512];
+#ifdef __APPLE__
+  snprintf(cmd, sizeof(cmd), "%s -dynamiclib -Wl,-undefined,dynamic_lookup -o %s %s 2>&1", LLVM_CC, lib.lib_path,
+           lib.ll_path);
+#else
+  snprintf(cmd, sizeof(cmd), "%s -shared -o %s %s 2>&1", LLVM_CC, lib.lib_path, lib.ll_path);
+#endif
+  int status = _run_cmd(cmd);
   assert(status == 0);
-  remove(obj_path);
-  remove(ll_path);
+
+#ifdef _WIN32
+  lib.handle = LoadLibraryA(lib.lib_path);
+#else
+  lib.handle = dlopen(lib.lib_path, RTLD_NOW);
+  if (!lib.handle) {
+    fprintf(stderr, "dlopen: %s\n", dlerror());
+  }
+#endif
+  assert(lib.handle);
+  return lib;
+}
+
+static void* _sym(LoadedLib* lib, const char* name) {
+#ifdef _WIN32
+  return (void*)GetProcAddress(lib->handle, name);
+#else
+  return dlsym(lib->handle, name);
+#endif
+}
+
+static void _unload(LoadedLib* lib) {
+#ifdef _WIN32
+  FreeLibrary(lib->handle);
+#else
+  dlclose(lib->handle);
+#endif
+  remove(lib->ll_path);
+  remove(lib->lib_path);
+}
+
+// --- Execution tests ---
+
+TEST(test_exec_dfa_function) {
+  LoadedLib lib = _compile_and_load(_emit_dfa_function, "dfa");
+  PairFn match = (PairFn)_sym(&lib, "match");
+  assert(match);
+  RetPair r;
+  // state 0, cp 'A'(65) -> in range [A-Z] -> {1, 0}
+  r = match(0, 65);
+  assert(r.v0 == 1);
+  assert(r.v1 == 0);
+  // state 0, cp 'Z'(90) -> in range -> {1, 0}
+  r = match(0, 90);
+  assert(r.v0 == 1);
+  assert(r.v1 == 0);
+  // state 0, cp 'a'(97) -> out of range -> {0, -2}
+  r = match(0, 97);
+  assert(r.v0 == 0);
+  assert(r.v1 == -2);
+  // invalid state 5 -> dead -> {0, -2}
+  r = match(5, 65);
+  assert(r.v0 == 0);
+  assert(r.v1 == -2);
+  _unload(&lib);
+}
+
+// emit a function that computes (x+1)*x with proper i64 return
+static void _emit_binop_i64(IrWriter* w) {
+  irwriter_gen_rt_simple(w);
+  irwriter_define_startf(w, "f", "i64 @f(i64 %%x)");
+  irwriter_bb(w); // L0
+  IrVal x = irwriter_imm(w, "%x");
+  IrVal one = irwriter_imm(w, "1");
+  IrVal r0 = irwriter_binop(w, "add", "i64", x, one);
+  IrVal r1 = irwriter_binop(w, "mul", "i64", x, r0);
+  irwriter_ret(w, "i64", r1);
+  irwriter_define_end(w);
+  irwriter_end(w);
+}
+
+TEST(test_exec_binop) {
+  LoadedLib lib = _compile_and_load(_emit_binop_i64, "binop");
+  I64Fn f = (I64Fn)_sym(&lib, "f");
+  assert(f);
+  // f(x) = (x + 1) * x
+  assert(f(3) == 12);   // (3+1)*3
+  assert(f(0) == 0);    // (0+1)*0
+  assert(f(5) == 30);   // (5+1)*5
+  assert(f(10) == 110); // (10+1)*10
+  _unload(&lib);
+}
+
+// emit a function that returns x if x >= 0, else 0 (proper i64)
+static void _emit_icmp_branch_i64(IrWriter* w) {
+  irwriter_gen_rt_simple(w);
+  irwriter_define_startf(w, "f", "i64 @f(i64 %%x)");
+  IrLabel yes = irwriter_label(w); // L0
+  IrLabel no = irwriter_label(w);  // L1
+  irwriter_bb(w);                  // entry
+  IrVal x = irwriter_imm(w, "%x");
+  IrVal cmp = irwriter_icmp(w, "sge", "i64", x, irwriter_imm(w, "0"));
+  irwriter_br_cond(w, cmp, yes, no);
+  irwriter_bb_at(w, yes);
+  irwriter_ret(w, "i64", x);
+  irwriter_bb_at(w, no);
+  irwriter_ret(w, "i64", irwriter_imm(w, "0"));
+  irwriter_define_end(w);
+  irwriter_end(w);
+}
+
+TEST(test_exec_icmp_branch) {
+  LoadedLib lib = _compile_and_load(_emit_icmp_branch_i64, "icmp");
+  I64Fn f = (I64Fn)_sym(&lib, "f");
+  assert(f);
+  assert(f(5) == 5);
+  assert(f(100) == 100);
+  assert(f(-3) == 0);
+  assert(f(-100) == 0);
+  assert(f(0) == 0);
+  _unload(&lib);
 }
 
 int main(void) {
@@ -425,7 +516,9 @@ int main(void) {
   RUN(test_dfa_function);
   RUN(test_label_f);
   RUN(test_lifecycle);
-  RUN(test_clang_compile);
+  RUN(test_exec_dfa_function);
+  RUN(test_exec_binop);
+  RUN(test_exec_icmp_branch);
   printf("all ok\n");
   return 0;
 }

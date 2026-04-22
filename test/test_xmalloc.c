@@ -6,7 +6,9 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <unistd.h>
+
+#include "../build/subprocess.h"
+#include "compat.h"
 
 #define TEST(name) static void name(void)
 #define RUN(name)                                                                                                      \
@@ -23,10 +25,9 @@ static const char* _build_dir(void) { return BUILD_DIR; }
 
 // Write source to file, compile, run, capture stderr. Returns malloc'd stderr string.
 static char* _run_program(const char* src, int* exit_code) {
-  char src_path[256], bin_path[256], err_path[256];
+  char src_path[256], bin_path[256];
   snprintf(src_path, sizeof(src_path), "%s/test_xmalloc_prog.c", _build_dir());
   snprintf(bin_path, sizeof(bin_path), "%s/test_xmalloc_prog", _build_dir());
-  snprintf(err_path, sizeof(err_path), "%s/test_xmalloc_prog.err", _build_dir());
 
   FILE* f = fopen(src_path, "w");
   assert(f);
@@ -35,34 +36,51 @@ static char* _run_program(const char* src, int* exit_code) {
 
   // Compile
   char cmd[1024];
-  snprintf(cmd, sizeof(cmd), "cc -std=c23 -DXMALLOC_TRACE -I src -o %s %s src/xmalloc.c src/darray.c 2>&1", bin_path,
+  snprintf(cmd, sizeof(cmd), "cc -std=c23 -DXMALLOC_TRACE -I src -o %s %s src/xmalloc.c src/darray.c", bin_path,
            src_path);
-  int ret = system(cmd);
-  if (ret != 0) {
-    fprintf(stderr, "compile failed: %s\n", cmd);
+  const char* compile_argv[] = {"sh", "-c", cmd, NULL};
+  struct subprocess_s proc;
+  int ret = subprocess_create(compile_argv,
+                              subprocess_option_combined_stdout_stderr | subprocess_option_search_user_path, &proc);
+  assert(ret == 0);
+  int compile_exit = -1;
+  subprocess_join(&proc, &compile_exit);
+  if (compile_exit != 0) {
+    char buf[4096];
+    unsigned n = subprocess_read_stdout(&proc, buf, sizeof(buf) - 1);
+    buf[n] = '\0';
+    fprintf(stderr, "compile failed: %s\n%s\n", cmd, buf);
+    subprocess_destroy(&proc);
     abort();
   }
+  subprocess_destroy(&proc);
 
   // Run, capture stderr
-  snprintf(cmd, sizeof(cmd), "%s 2>%s", bin_path, err_path);
-  *exit_code = system(cmd);
+  const char* run_argv[] = {bin_path, NULL};
+  ret = subprocess_create(run_argv, subprocess_option_enable_async, &proc);
+  assert(ret == 0);
+  subprocess_join(&proc, exit_code);
 
-  // Read stderr
-  f = fopen(err_path, "r");
-  assert(f);
-  fseek(f, 0, SEEK_END);
-  long sz = ftell(f);
-  rewind(f);
-  char* out = malloc((size_t)sz + 1);
-  if (sz > 0) {
-    fread(out, 1, (size_t)sz, f);
+  // Read all stderr in a loop
+  size_t cap = 4096;
+  size_t total = 0;
+  char* out = malloc(cap);
+  for (;;) {
+    if (total + 1024 > cap) {
+      cap *= 2;
+      out = realloc(out, cap);
+    }
+    unsigned n = subprocess_read_stderr(&proc, out + total, (unsigned)(cap - total - 1));
+    if (n == 0) {
+      break;
+    }
+    total += n;
   }
-  out[sz] = '\0';
-  fclose(f);
+  out[total] = '\0';
+  subprocess_destroy(&proc);
 
-  unlink(src_path);
-  unlink(bin_path);
-  unlink(err_path);
+  remove(src_path);
+  remove(bin_path);
   return out;
 }
 

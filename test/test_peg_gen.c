@@ -6,6 +6,8 @@
 #include "../src/xmalloc.h"
 #include "compat.h"
 
+#include "../build/subprocess.h"
+
 #include <assert.h>
 #include <string.h>
 
@@ -957,6 +959,46 @@ TEST(test_scope_link_field) {
 // ============================================================
 // Tests: multi-bucket tags (tag_bit_index > 0)
 // ============================================================
+
+static int _run_cmd(const char* cmd_str) {
+  const char* argv[] = {"sh", "-c", cmd_str, NULL};
+  struct subprocess_s proc;
+  int ret =
+      subprocess_create(argv, subprocess_option_combined_stdout_stderr | subprocess_option_search_user_path, &proc);
+  if (ret != 0) {
+    return -1;
+  }
+  int exit_code = -1;
+  subprocess_join(&proc, &exit_code);
+  if (exit_code != 0) {
+    char buf[4096];
+    unsigned n = subprocess_read_stdout(&proc, buf, sizeof(buf) - 1);
+    buf[n] = '\0';
+    fprintf(stderr, "cmd failed (exit %d): %s\noutput: %s\n", exit_code, cmd_str, buf);
+  }
+  subprocess_destroy(&proc);
+  return exit_code;
+}
+
+// Run command, capture combined stdout+stderr into buf (up to buf_size-1 bytes).
+// Returns exit code.
+static int _run_cmd_capture(const char* cmd_str, char* buf, size_t buf_size) {
+  const char* argv[] = {"sh", "-c", cmd_str, NULL};
+  struct subprocess_s proc;
+  int ret =
+      subprocess_create(argv, subprocess_option_combined_stdout_stderr | subprocess_option_search_user_path, &proc);
+  if (ret != 0) {
+    buf[0] = '\0';
+    return -1;
+  }
+  int exit_code = -1;
+  subprocess_join(&proc, &exit_code);
+  unsigned n = subprocess_read_stdout(&proc, buf, (unsigned)(buf_size - 1));
+  buf[n] = '\0';
+  subprocess_destroy(&proc);
+  return exit_code;
+}
+
 TEST(test_none_memoize_O2_exec) {
   // Regression: memoize=none compiled at -O2 must produce correct PEG output.
   // Write minimal grammar to temp file
@@ -975,14 +1017,13 @@ TEST(test_none_memoize_O2_exec) {
 
   // Run nest c -m none
   char cmd[2048];
-  snprintf(cmd, sizeof(cmd), BUILD_DIR "/nest c %s -p test_none -m none 2>&1", nest_path);
-  int ret = system(cmd);
+  snprintf(cmd, sizeof(cmd), BUILD_DIR "/nest c %s -p test_none -m none", nest_path);
+  int ret = _run_cmd(cmd);
   assert(ret == 0);
 
   // Compile at -O2
-  snprintf(cmd, sizeof(cmd), "%s -O2 test_none.c test_none.ll -o " BUILD_DIR "/test_peg_none_o2_bin 2>&1",
-           compat_llvm_cc());
-  ret = system(cmd);
+  snprintf(cmd, sizeof(cmd), "%s -O2 test_none.c test_none.ll -o " BUILD_DIR "/test_peg_none_o2_bin", compat_llvm_cc());
+  ret = _run_cmd(cmd);
   assert(ret == 0);
 
   // Write input to file
@@ -992,19 +1033,11 @@ TEST(test_none_memoize_O2_exec) {
   fprintf(inf, "hello world");
   fclose(inf);
 
-  // Run with input file
-  snprintf(cmd, sizeof(cmd), BUILD_DIR "/test_peg_none_o2_bin %s > " BUILD_DIR "/test_peg_none_o2.out 2>&1",
-           input_path);
-  ret = system(cmd);
-  assert(ret == 0);
-
-  // Verify output contains PEG tree ("main" line must appear)
-  FILE* out = fopen(BUILD_DIR "/test_peg_none_o2.out", "r");
-  assert(out);
+  // Run with input file, capture output
+  snprintf(cmd, sizeof(cmd), BUILD_DIR "/test_peg_none_o2_bin %s", input_path);
   char buf[4096];
-  size_t n = fread(buf, 1, sizeof(buf) - 1, out);
-  buf[n] = '\0';
-  fclose(out);
+  ret = _run_cmd_capture(cmd, buf, sizeof(buf));
+  assert(ret == 0);
   assert(strstr(buf, "main") != NULL);
   assert(strstr(buf, "@word") != NULL);
 
@@ -1015,7 +1048,6 @@ TEST(test_none_memoize_O2_exec) {
   remove(nest_path);
   remove(input_path);
   remove(BUILD_DIR "/test_peg_none_o2_bin");
-  remove(BUILD_DIR "/test_peg_none_o2.out");
 }
 
 TEST(test_none_memoize_alternation_crash) {
@@ -1045,13 +1077,12 @@ TEST(test_none_memoize_alternation_crash) {
   fclose(nf);
 
   char cmd[2048];
-  snprintf(cmd, sizeof(cmd), BUILD_DIR "/nest c %s -p test_alt -m none 2>&1", nest_path);
-  int ret = system(cmd);
+  snprintf(cmd, sizeof(cmd), BUILD_DIR "/nest c %s -p test_alt -m none", nest_path);
+  int ret = _run_cmd(cmd);
   assert(ret == 0);
 
-  snprintf(cmd, sizeof(cmd), "%s -O0 test_alt.c test_alt.ll -o " BUILD_DIR "/test_peg_none_alt_bin 2>&1",
-           compat_llvm_cc());
-  ret = system(cmd);
+  snprintf(cmd, sizeof(cmd), "%s -O0 test_alt.c test_alt.ll -o " BUILD_DIR "/test_peg_none_alt_bin", compat_llvm_cc());
+  ret = _run_cmd(cmd);
   assert(ret == 0);
 
   // Write input to file: empty array
@@ -1061,17 +1092,11 @@ TEST(test_none_memoize_alternation_crash) {
   fprintf(inf, "[]");
   fclose(inf);
 
-  snprintf(cmd, sizeof(cmd), BUILD_DIR "/test_peg_none_alt_bin %s > " BUILD_DIR "/test_peg_none_alt.out 2>&1",
-           input_path);
-  ret = system(cmd);
-  assert(ret == 0);
-
-  FILE* out = fopen(BUILD_DIR "/test_peg_none_alt.out", "r");
-  assert(out);
+  // Run and capture output
+  snprintf(cmd, sizeof(cmd), BUILD_DIR "/test_peg_none_alt_bin %s", input_path);
   char buf[4096];
-  size_t n = fread(buf, 1, sizeof(buf) - 1, out);
-  buf[n] = '\0';
-  fclose(out);
+  ret = _run_cmd_capture(cmd, buf, sizeof(buf));
+  assert(ret == 0);
   assert(strstr(buf, "main") != NULL);
   assert(strstr(buf, "array") != NULL);
   assert(strstr(buf, "@lbracket") != NULL);
@@ -1083,16 +1108,9 @@ TEST(test_none_memoize_alternation_crash) {
   fprintf(inf, "[1,2,3]");
   fclose(inf);
 
-  snprintf(cmd, sizeof(cmd), BUILD_DIR "/test_peg_none_alt_bin %s > " BUILD_DIR "/test_peg_none_alt.out 2>&1",
-           input_path);
-  ret = system(cmd);
+  snprintf(cmd, sizeof(cmd), BUILD_DIR "/test_peg_none_alt_bin %s", input_path);
+  ret = _run_cmd_capture(cmd, buf, sizeof(buf));
   assert(ret == 0);
-
-  out = fopen(BUILD_DIR "/test_peg_none_alt.out", "r");
-  assert(out);
-  n = fread(buf, 1, sizeof(buf) - 1, out);
-  buf[n] = '\0';
-  fclose(out);
   assert(strstr(buf, "@number") != NULL);
   assert(strstr(buf, "value") != NULL);
 
@@ -1102,7 +1120,6 @@ TEST(test_none_memoize_alternation_crash) {
   remove(nest_path);
   remove(input_path);
   remove(BUILD_DIR "/test_peg_none_alt_bin");
-  remove(BUILD_DIR "/test_peg_none_alt.out");
 }
 
 TEST(test_multi_bucket_tags) {
@@ -1231,6 +1248,320 @@ TEST(test_multi_bucket_tags) {
   symtab_free(&input.scope_names);
 }
 
+// ============================================================
+// Tests: end-to-end naive and shared memoize modes
+// ============================================================
+
+TEST(test_naive_memoize_exec) {
+  const char* nest_path = BUILD_DIR "/test_peg_naive.nest";
+  FILE* nf = fopen(nest_path, "w");
+  assert(nf);
+  fprintf(nf, "[[vpa]]\n"
+              "%%ignore @space\n"
+              "main = {\n"
+              "  /[a-zA-Z]+/ @word\n"
+              "  /\\s+/ @space\n"
+              "}\n"
+              "[[peg]]\n"
+              "main = @word*\n");
+  fclose(nf);
+
+  char cmd[2048];
+  snprintf(cmd, sizeof(cmd), BUILD_DIR "/nest c %s -p test_naive -m naive 2>&1", nest_path);
+  assert(_run_cmd(cmd) == 0);
+
+  snprintf(cmd, sizeof(cmd), "%s -O2 test_naive.c test_naive.ll -o " BUILD_DIR "/test_peg_naive_bin 2>&1",
+           compat_llvm_cc());
+  assert(_run_cmd(cmd) == 0);
+
+  const char* input_path = BUILD_DIR "/test_peg_naive.input";
+  FILE* inf = fopen(input_path, "w");
+  assert(inf);
+  fprintf(inf, "hello world");
+  fclose(inf);
+
+  snprintf(cmd, sizeof(cmd), BUILD_DIR "/test_peg_naive_bin %s > " BUILD_DIR "/test_peg_naive.out 2>&1", input_path);
+  assert(_run_cmd(cmd) == 0);
+
+  FILE* out = fopen(BUILD_DIR "/test_peg_naive.out", "r");
+  assert(out);
+  char buf[4096];
+  size_t n = fread(buf, 1, sizeof(buf) - 1, out);
+  buf[n] = '\0';
+  fclose(out);
+  assert(strstr(buf, "main") != NULL);
+  assert(strstr(buf, "@word") != NULL);
+
+  remove("test_naive.c");
+  remove("test_naive.h");
+  remove("test_naive.ll");
+  remove(nest_path);
+  remove(input_path);
+  remove(BUILD_DIR "/test_peg_naive_bin");
+  remove(BUILD_DIR "/test_peg_naive.out");
+}
+
+TEST(test_shared_memoize_exec) {
+  const char* nest_path = BUILD_DIR "/test_peg_shared.nest";
+  FILE* nf = fopen(nest_path, "w");
+  assert(nf);
+  fprintf(nf, "[[vpa]]\n"
+              "%%ignore @space\n"
+              "main = {\n"
+              "  /[a-zA-Z]+/ @word\n"
+              "  /\\s+/ @space\n"
+              "}\n"
+              "[[peg]]\n"
+              "main = @word*\n");
+  fclose(nf);
+
+  char cmd[2048];
+  snprintf(cmd, sizeof(cmd), BUILD_DIR "/nest c %s -p test_shared -m shared 2>&1", nest_path);
+  assert(_run_cmd(cmd) == 0);
+
+  snprintf(cmd, sizeof(cmd), "%s -O2 test_shared.c test_shared.ll -o " BUILD_DIR "/test_peg_shared_bin 2>&1",
+           compat_llvm_cc());
+  assert(_run_cmd(cmd) == 0);
+
+  const char* input_path = BUILD_DIR "/test_peg_shared.input";
+  FILE* inf = fopen(input_path, "w");
+  assert(inf);
+  fprintf(inf, "hello world");
+  fclose(inf);
+
+  snprintf(cmd, sizeof(cmd), BUILD_DIR "/test_peg_shared_bin %s > " BUILD_DIR "/test_peg_shared.out 2>&1", input_path);
+  assert(_run_cmd(cmd) == 0);
+
+  FILE* out = fopen(BUILD_DIR "/test_peg_shared.out", "r");
+  assert(out);
+  char buf[4096];
+  size_t n = fread(buf, 1, sizeof(buf) - 1, out);
+  buf[n] = '\0';
+  fclose(out);
+  assert(strstr(buf, "main") != NULL);
+  assert(strstr(buf, "@word") != NULL);
+
+  remove("test_shared.c");
+  remove("test_shared.h");
+  remove("test_shared.ll");
+  remove(nest_path);
+  remove(input_path);
+  remove(BUILD_DIR "/test_peg_shared_bin");
+  remove(BUILD_DIR "/test_peg_shared.out");
+}
+
+TEST(test_naive_memoize_alternation) {
+  const char* nest_path = BUILD_DIR "/test_peg_naive_alt.nest";
+  FILE* nf = fopen(nest_path, "w");
+  assert(nf);
+  fprintf(nf, "[[vpa]]\n"
+              "%%ignore @space\n"
+              "main = {\n"
+              "  /\\s+/ @space\n"
+              "  /\\[/ @lbracket\n"
+              "  /\\]/ @rbracket\n"
+              "  /,/ @comma\n"
+              "  /[0-9]+/ @number\n"
+              "}\n"
+              "[[peg]]\n"
+              "main = value\n"
+              "value = [\n"
+              "  @number\n"
+              "  array\n"
+              "]\n"
+              "array = @lbracket value*<@comma> @rbracket\n");
+  fclose(nf);
+
+  char cmd[2048];
+  snprintf(cmd, sizeof(cmd), BUILD_DIR "/nest c %s -p test_nalt -m naive 2>&1", nest_path);
+  assert(_run_cmd(cmd) == 0);
+
+  snprintf(cmd, sizeof(cmd), "%s -O0 test_nalt.c test_nalt.ll -o " BUILD_DIR "/test_peg_naive_alt_bin 2>&1",
+           compat_llvm_cc());
+  assert(_run_cmd(cmd) == 0);
+
+  // empty array
+  const char* input_path = BUILD_DIR "/test_peg_naive_alt.input";
+  FILE* inf = fopen(input_path, "w");
+  assert(inf);
+  fprintf(inf, "[]");
+  fclose(inf);
+
+  snprintf(cmd, sizeof(cmd), BUILD_DIR "/test_peg_naive_alt_bin %s > " BUILD_DIR "/test_peg_naive_alt.out 2>&1",
+           input_path);
+  assert(_run_cmd(cmd) == 0);
+
+  FILE* out = fopen(BUILD_DIR "/test_peg_naive_alt.out", "r");
+  assert(out);
+  char buf[4096];
+  size_t n = fread(buf, 1, sizeof(buf) - 1, out);
+  buf[n] = '\0';
+  fclose(out);
+  assert(strstr(buf, "array") != NULL);
+  assert(strstr(buf, "@lbracket") != NULL);
+
+  // non-empty array
+  inf = fopen(input_path, "w");
+  assert(inf);
+  fprintf(inf, "[1,2,3]");
+  fclose(inf);
+
+  snprintf(cmd, sizeof(cmd), BUILD_DIR "/test_peg_naive_alt_bin %s > " BUILD_DIR "/test_peg_naive_alt.out 2>&1",
+           input_path);
+  assert(_run_cmd(cmd) == 0);
+
+  out = fopen(BUILD_DIR "/test_peg_naive_alt.out", "r");
+  assert(out);
+  n = fread(buf, 1, sizeof(buf) - 1, out);
+  buf[n] = '\0';
+  fclose(out);
+  assert(strstr(buf, "@number") != NULL);
+  assert(strstr(buf, "value") != NULL);
+
+  remove("test_nalt.c");
+  remove("test_nalt.h");
+  remove("test_nalt.ll");
+  remove(nest_path);
+  remove(input_path);
+  remove(BUILD_DIR "/test_peg_naive_alt_bin");
+  remove(BUILD_DIR "/test_peg_naive_alt.out");
+}
+
+TEST(test_shared_memoize_alternation) {
+  const char* nest_path = BUILD_DIR "/test_peg_shared_alt.nest";
+  FILE* nf = fopen(nest_path, "w");
+  assert(nf);
+  fprintf(nf, "[[vpa]]\n"
+              "%%ignore @space\n"
+              "main = {\n"
+              "  /\\s+/ @space\n"
+              "  /\\[/ @lbracket\n"
+              "  /\\]/ @rbracket\n"
+              "  /,/ @comma\n"
+              "  /[0-9]+/ @number\n"
+              "}\n"
+              "[[peg]]\n"
+              "main = value\n"
+              "value = [\n"
+              "  @number\n"
+              "  array\n"
+              "]\n"
+              "array = @lbracket value*<@comma> @rbracket\n");
+  fclose(nf);
+
+  char cmd[2048];
+  snprintf(cmd, sizeof(cmd), BUILD_DIR "/nest c %s -p test_salt -m shared 2>&1", nest_path);
+  assert(_run_cmd(cmd) == 0);
+
+  snprintf(cmd, sizeof(cmd), "%s -O0 test_salt.c test_salt.ll -o " BUILD_DIR "/test_peg_shared_alt_bin 2>&1",
+           compat_llvm_cc());
+  assert(_run_cmd(cmd) == 0);
+
+  // empty array
+  const char* input_path = BUILD_DIR "/test_peg_shared_alt.input";
+  FILE* inf = fopen(input_path, "w");
+  assert(inf);
+  fprintf(inf, "[]");
+  fclose(inf);
+
+  snprintf(cmd, sizeof(cmd), BUILD_DIR "/test_peg_shared_alt_bin %s > " BUILD_DIR "/test_peg_shared_alt.out 2>&1",
+           input_path);
+  assert(_run_cmd(cmd) == 0);
+
+  FILE* out = fopen(BUILD_DIR "/test_peg_shared_alt.out", "r");
+  assert(out);
+  char buf[4096];
+  size_t n = fread(buf, 1, sizeof(buf) - 1, out);
+  buf[n] = '\0';
+  fclose(out);
+  assert(strstr(buf, "array") != NULL);
+  assert(strstr(buf, "@lbracket") != NULL);
+
+  // non-empty array
+  inf = fopen(input_path, "w");
+  assert(inf);
+  fprintf(inf, "[1,2,3]");
+  fclose(inf);
+
+  snprintf(cmd, sizeof(cmd), BUILD_DIR "/test_peg_shared_alt_bin %s > " BUILD_DIR "/test_peg_shared_alt.out 2>&1",
+           input_path);
+  assert(_run_cmd(cmd) == 0);
+
+  out = fopen(BUILD_DIR "/test_peg_shared_alt.out", "r");
+  assert(out);
+  n = fread(buf, 1, sizeof(buf) - 1, out);
+  buf[n] = '\0';
+  fclose(out);
+  assert(strstr(buf, "@number") != NULL);
+  assert(strstr(buf, "value") != NULL);
+
+  remove("test_salt.c");
+  remove("test_salt.h");
+  remove("test_salt.ll");
+  remove(nest_path);
+  remove(input_path);
+  remove(BUILD_DIR "/test_peg_shared_alt_bin");
+  remove(BUILD_DIR "/test_peg_shared_alt.out");
+}
+
+TEST(test_naive_nested_rule) {
+  const char* nest_path = BUILD_DIR "/test_peg_naive_rule.nest";
+  FILE* nf = fopen(nest_path, "w");
+  assert(nf);
+  fprintf(nf, "[[vpa]]\n"
+              "%%ignore @space\n"
+              "main = {\n"
+              "  /\\s+/ @space\n"
+              "  /[a-z]+/ @word\n"
+              "  /[0-9]+/ @number\n"
+              "  /;/ @semi\n"
+              "}\n"
+              "[[peg]]\n"
+              "main = stmt+\n"
+              "stmt = item @semi\n"
+              "item = [\n"
+              "  @word\n"
+              "  @number\n"
+              "]\n");
+  fclose(nf);
+
+  char cmd[2048];
+  snprintf(cmd, sizeof(cmd), BUILD_DIR "/nest c %s -p test_nrule -m naive 2>&1", nest_path);
+  assert(_run_cmd(cmd) == 0);
+
+  snprintf(cmd, sizeof(cmd), "%s -O0 test_nrule.c test_nrule.ll -o " BUILD_DIR "/test_peg_naive_rule_bin 2>&1",
+           compat_llvm_cc());
+  assert(_run_cmd(cmd) == 0);
+
+  const char* input_path = BUILD_DIR "/test_peg_naive_rule.input";
+  FILE* inf = fopen(input_path, "w");
+  assert(inf);
+  fprintf(inf, "hello; 42; world;");
+  fclose(inf);
+
+  snprintf(cmd, sizeof(cmd), BUILD_DIR "/test_peg_naive_rule_bin %s > " BUILD_DIR "/test_peg_naive_rule.out 2>&1",
+           input_path);
+  assert(_run_cmd(cmd) == 0);
+
+  FILE* out = fopen(BUILD_DIR "/test_peg_naive_rule.out", "r");
+  assert(out);
+  char buf[4096];
+  size_t n = fread(buf, 1, sizeof(buf) - 1, out);
+  buf[n] = '\0';
+  fclose(out);
+  assert(strstr(buf, "@word") != NULL);
+  assert(strstr(buf, "@number") != NULL);
+  assert(strstr(buf, "stmt") != NULL);
+
+  remove("test_nrule.c");
+  remove("test_nrule.h");
+  remove("test_nrule.ll");
+  remove(nest_path);
+  remove(input_path);
+  remove(BUILD_DIR "/test_peg_naive_rule_bin");
+  remove(BUILD_DIR "/test_peg_naive_rule.out");
+}
+
 int main(void) {
   printf("test_peg_gen:\n");
   RUN(test_ir_has_parse_function);
@@ -1257,6 +1588,11 @@ int main(void) {
   RUN(test_multi_bucket_tags);
   RUN(test_none_memoize_O2_exec);
   RUN(test_none_memoize_alternation_crash);
+  RUN(test_naive_memoize_exec);
+  RUN(test_shared_memoize_exec);
+  RUN(test_naive_memoize_alternation);
+  RUN(test_shared_memoize_alternation);
+  RUN(test_naive_nested_rule);
   printf("test_peg_gen: OK\n");
   return 0;
 }

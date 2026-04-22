@@ -8,6 +8,9 @@
 #include "../src/ustr.h"
 #include "../src/vpa.h"
 #include "compat.h"
+
+#include "../build/subprocess.h"
+
 #include <assert.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -259,16 +262,36 @@ static void _free_gen_input(VpaGenInput* input) {
   symtab_free(&input->hooks);
 }
 
+static int _run_cmd(const char* cmd_str) {
+  const char* argv[] = {"sh", "-c", cmd_str, NULL};
+  struct subprocess_s proc;
+  int ret =
+      subprocess_create(argv, subprocess_option_combined_stdout_stderr | subprocess_option_search_user_path, &proc);
+  if (ret != 0) {
+    return -1;
+  }
+  int exit_code = -1;
+  subprocess_join(&proc, &exit_code);
+  if (exit_code != 0) {
+    char buf[4096];
+    unsigned n = subprocess_read_stdout(&proc, buf, sizeof(buf) - 1);
+    buf[n] = '\0';
+    fprintf(stderr, "cmd failed (exit %d): %s\noutput: %s\n", exit_code, cmd_str, buf);
+  }
+  subprocess_destroy(&proc);
+  return exit_code;
+}
+
 static void _compile_test(const char* h_file, const char* ir_file) {
   const char* null_out = compat_devnull_path();
   char cmd[512];
   // Compile header via a trivial .c that includes it (avoids #pragma once warning)
-  snprintf(cmd, sizeof(cmd), "echo '#include \"%s\"' | %s -c -x c - -o %s 2>&1", h_file, compat_llvm_cc(), null_out);
-  int ret = system(cmd);
+  snprintf(cmd, sizeof(cmd), "echo '#include \"%s\"' | %s -c -x c - -o %s", h_file, compat_llvm_cc(), null_out);
+  int ret = _run_cmd(cmd);
   assert(ret == 0);
 
-  snprintf(cmd, sizeof(cmd), "%s -c %s -o %s 2>&1", compat_llvm_cc(), ir_file, null_out);
-  ret = system(cmd);
+  snprintf(cmd, sizeof(cmd), "%s -c %s -o %s", compat_llvm_cc(), ir_file, null_out);
+  ret = _run_cmd(cmd);
   assert(ret == 0);
 }
 
@@ -462,13 +485,13 @@ TEST(test_vpa_gen_exec) {
   fclose(df);
 
   char cmd[1024];
-  snprintf(cmd, sizeof(cmd), "%s %s %s -o %s 2>&1", compat_llvm_cc(), driver_path, BUILD_DIR "/test_vpa_gen_scope.ll",
+  snprintf(cmd, sizeof(cmd), "%s %s %s -o %s", compat_llvm_cc(), driver_path, BUILD_DIR "/test_vpa_gen_scope.ll",
            BUILD_DIR "/test_vpa_exec");
-  int ret = system(cmd);
+  int ret = _run_cmd(cmd);
   assert(ret == 0);
 
   snprintf(cmd, sizeof(cmd), "%s", BUILD_DIR "/test_vpa_exec");
-  ret = system(cmd);
+  ret = _run_cmd(cmd);
   assert(ret == 0);
 }
 
@@ -977,13 +1000,13 @@ TEST(test_vpa_scope_switch_exec) {
   fclose(df);
 
   char cmd[1024];
-  snprintf(cmd, sizeof(cmd), "%s %s %s -o %s 2>&1", compat_llvm_cc(), driver_path,
-           BUILD_DIR "/test_vpa_scope_switch.ll", BUILD_DIR "/test_vpa_pop_exec_bin");
-  int ret = system(cmd);
+  snprintf(cmd, sizeof(cmd), "%s %s %s -o %s", compat_llvm_cc(), driver_path, BUILD_DIR "/test_vpa_scope_switch.ll",
+           BUILD_DIR "/test_vpa_pop_exec_bin");
+  int ret = _run_cmd(cmd);
   assert(ret == 0);
 
   snprintf(cmd, sizeof(cmd), "%s", BUILD_DIR "/test_vpa_pop_exec_bin");
-  ret = system(cmd);
+  ret = _run_cmd(cmd);
   assert(ret == 0);
 
   _free_gen_input(&input);
