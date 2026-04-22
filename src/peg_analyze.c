@@ -945,7 +945,8 @@ static int32_t _scope_entry_row(PegAnalyzeInput* input, ScopeClosure* all_closur
 // term: sanitize name, dedup, set advance based on is_link/in_branch context
 static NodeField _build_term_node_field(PegAnalyzeInput* input, ScopeClosure* cl, ScopeClosure* all_closures,
                                         int32_t n_closures, FieldDedup* fd, int32_t term_id, bool is_link,
-                                        bool in_branch, const char* parent_rule_name, int32_t* mult_num) {
+                                        bool in_branch, const char* parent_rule_name, int32_t* mult_num,
+                                        int32_t branch_index) {
   char* san = _sanitize_field_name(_term_name(input, term_id));
   char* dedup = _field_dedup_next(fd, san);
   bool scope = _is_scope_term(input, term_id);
@@ -958,6 +959,7 @@ static NodeField _build_term_node_field(PegAnalyzeInput* input, ScopeClosure* cl
       .advance = (is_link || in_branch) ? NODE_ADVANCE_NONE : NODE_ADVANCE_ONE,
       .advance_slot_row = 0,
       .wrapper_name = NULL,
+      .branch_index = branch_index,
   };
   if (is_link) {
     (*mult_num)++;
@@ -976,7 +978,7 @@ static NodeField _build_term_node_field(PegAnalyzeInput* input, ScopeClosure* cl
 // call: dedup name, resolve callee/wrapper row, interlace rhs if applicable
 static NodeField _build_call_node_field(PegAnalyzeInput* input, ScopeClosure* cl, FieldDedup* fd, int32_t call_id,
                                         bool is_link, bool in_branch, PegUnit* u, const char* parent_rule_name,
-                                        int32_t* mult_num) {
+                                        int32_t* mult_num, int32_t branch_index) {
   const char* callee_name = symtab_get(&input->rule_names, call_id);
   char* dedup = _field_dedup_next(fd, callee_name);
   NodeField nf = {
@@ -988,6 +990,7 @@ static NodeField _build_call_node_field(PegAnalyzeInput* input, ScopeClosure* cl
       .advance = NODE_ADVANCE_NONE,
       .advance_slot_row = 0,
       .wrapper_name = NULL,
+      .branch_index = branch_index,
   };
   if (is_link) {
     (*mult_num)++;
@@ -1022,13 +1025,14 @@ static NodeField _build_call_node_field(PegAnalyzeInput* input, ScopeClosure* cl
 }
 static void _build_child_fields(PegAnalyzeInput* input, ScopeClosure* cl, ScopeClosure* all_closures,
                                 int32_t n_closures, PegUnit* children, int32_t child_size, FieldDedup* fd,
-                                const char* parent_rule_name, int32_t* multiplier_num_ptr, NodeFields* out) {
+                                const char* parent_rule_name, int32_t* multiplier_num_ptr, NodeFields* out,
+                                int32_t branch_index) {
   for (int32_t i = 0; i < child_size; i++) {
     PegUnit* u = &children[i];
     bool is_link = (u->multiplier == '*' || u->multiplier == '+');
     if (u->kind == PEG_TERM) {
       darray_push(*out, _build_term_node_field(input, cl, all_closures, n_closures, fd, u->id, is_link, false,
-                                               parent_rule_name, multiplier_num_ptr));
+                                               parent_rule_name, multiplier_num_ptr, branch_index));
       // link field followed by more children: advance cursor past repetition via wrapper slot
       if (is_link && i < child_size - 1) {
         NodeField* last = &(*out)[darray_size(*out) - 1];
@@ -1036,8 +1040,8 @@ static void _build_child_fields(PegAnalyzeInput* input, ScopeClosure* cl, ScopeC
         last->advance_slot_row = last->ref_row;
       }
     } else if (u->kind == PEG_CALL) {
-      darray_push(
-          *out, _build_call_node_field(input, cl, fd, u->id, is_link, false, u, parent_rule_name, multiplier_num_ptr));
+      darray_push(*out, _build_call_node_field(input, cl, fd, u->id, is_link, false, u, parent_rule_name,
+                                               multiplier_num_ptr, branch_index));
       // link field followed by more children: advance cursor past repetition via wrapper slot
       if (is_link && i < child_size - 1) {
         NodeField* last = &(*out)[darray_size(*out) - 1];
@@ -1049,19 +1053,19 @@ static void _build_child_fields(PegAnalyzeInput* input, ScopeClosure* cl, ScopeC
         PegUnit* branch = &u->children[j];
         if (branch->kind == PEG_TERM) {
           darray_push(*out, _build_term_node_field(input, cl, all_closures, n_closures, fd, branch->id, false, true,
-                                                   parent_rule_name, multiplier_num_ptr));
+                                                   parent_rule_name, multiplier_num_ptr, (int32_t)j));
         } else if (branch->kind == PEG_CALL) {
           darray_push(*out, _build_call_node_field(input, cl, fd, branch->id, false, true, NULL, parent_rule_name,
-                                                   multiplier_num_ptr));
+                                                   multiplier_num_ptr, (int32_t)j));
         } else if (branch->kind == PEG_SEQ) {
           for (size_t k = 0; k < darray_size(branch->children); k++) {
             PegUnit* bc = &branch->children[k];
             if (bc->kind == PEG_TERM) {
               darray_push(*out, _build_term_node_field(input, cl, all_closures, n_closures, fd, bc->id, false, true,
-                                                       parent_rule_name, multiplier_num_ptr));
+                                                       parent_rule_name, multiplier_num_ptr, (int32_t)j));
             } else if (bc->kind == PEG_CALL) {
               darray_push(*out, _build_call_node_field(input, cl, fd, bc->id, false, true, NULL, parent_rule_name,
-                                                       multiplier_num_ptr));
+                                                       multiplier_num_ptr, (int32_t)j));
             }
           }
         }
@@ -1101,31 +1105,32 @@ static void _build_node_fields(PegAnalyzeInput* input, RuleLookup* lu, ScopeClos
     int32_t multiplier_num = 0;
     if (orig->body.kind == PEG_SEQ) {
       _build_child_fields(input, cl, all_closures, n_closures, orig->body.children,
-                          (int32_t)darray_size(orig->body.children), &fd, orig_name, &multiplier_num, &sr->node_fields);
+                          (int32_t)darray_size(orig->body.children), &fd, orig_name, &multiplier_num, &sr->node_fields,
+                          -1);
     } else if (orig->body.kind == PEG_BRANCHES) {
       for (size_t j = 0; j < darray_size(orig->body.children); j++) {
         PegUnit* branch = &orig->body.children[j];
         multiplier_num = 0;
         if (branch->kind == PEG_SEQ) {
           _build_child_fields(input, cl, all_closures, n_closures, branch->children,
-                              (int32_t)darray_size(branch->children), &fd, orig_name, &multiplier_num,
-                              &sr->node_fields);
+                              (int32_t)darray_size(branch->children), &fd, orig_name, &multiplier_num, &sr->node_fields,
+                              (int32_t)j);
         } else if (branch->kind == PEG_TERM) {
           darray_push(sr->node_fields, _build_term_node_field(input, cl, all_closures, n_closures, &fd, branch->id,
-                                                              false, true, orig_name, &multiplier_num));
+                                                              false, true, orig_name, &multiplier_num, (int32_t)j));
         } else if (branch->kind == PEG_CALL) {
           darray_push(sr->node_fields, _build_call_node_field(input, cl, &fd, branch->id, false, true, NULL, orig_name,
-                                                              &multiplier_num));
+                                                              &multiplier_num, (int32_t)j));
         }
       }
     } else if (orig->body.kind == PEG_TERM) {
       bool is_link = (orig->body.multiplier == '*' || orig->body.multiplier == '+');
       darray_push(sr->node_fields, _build_term_node_field(input, cl, all_closures, n_closures, &fd, orig->body.id,
-                                                          is_link, false, orig_name, &multiplier_num));
+                                                          is_link, false, orig_name, &multiplier_num, -1));
     } else if (orig->body.kind == PEG_CALL) {
       bool is_link = (orig->body.multiplier == '*' || orig->body.multiplier == '+');
       darray_push(sr->node_fields, _build_call_node_field(input, cl, &fd, orig->body.id, is_link, false, &orig->body,
-                                                          orig_name, &multiplier_num));
+                                                          orig_name, &multiplier_num, -1));
     }
     _field_dedup_free(&fd);
   }

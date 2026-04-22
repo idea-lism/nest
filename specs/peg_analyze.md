@@ -380,6 +380,7 @@ typedef struct {
   int32_t rhs_row;          // PegLink interlace rhs row (-1 for none)
   NodeAdvanceKind advance;  // how to advance cursor after this field
   int32_t advance_slot_row; // valid when advance == NODE_ADVANCE_SLOT
+  int32_t branch_index;     // branch tag index (0-based), -1 for non-branch fields
 } NodeField;
 
 typedef NodeField* NodeFields; // darray

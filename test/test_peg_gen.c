@@ -1658,6 +1658,75 @@ TEST(test_naive_nested_rule) {
   remove(BUILD_DIR "/test_peg_naive_rule.out");
 }
 
+TEST(test_naive_branch_sequence_alternation_regression) {
+  // Regression for branch loader bug:
+  // factor = [ @number | @lparen inner @rparen ]
+  // When first branch matches, generated loader must not advance through second branch fields.
+  const char* nest_path = BUILD_DIR "/test_peg_branch_seq_alt.nest";
+  FILE* nf = fopen(nest_path, "w");
+  assert(nf);
+  fprintf(nf, "[[vpa]]\n"
+              "%%ignore @space\n"
+              "main = {\n"
+              "  /\\s+/ @space\n"
+              "  /[0-9]+/ @number\n"
+              "  /\\(/ @lparen\n"
+              "  /\\)/ @rparen\n"
+              "}\n"
+              "[[peg]]\n"
+              "main = factor\n"
+              "factor = [\n"
+              "  @number\n"
+              "  @lparen inner @rparen\n"
+              "]\n"
+              "inner = @number\n");
+  fclose(nf);
+
+  char cmd[2048];
+  snprintf(cmd, sizeof(cmd), BUILD_DIR "/nest c %s -p test_bseq_alt -m naive 2>&1", nest_path);
+  assert(_run_cmd(cmd) == 0);
+
+  snprintf(cmd, sizeof(cmd),
+           "%s -O0 test_bseq_alt.c test_bseq_alt.ll -o " BUILD_DIR "/test_peg_branch_seq_alt_bin 2>&1",
+           compat_llvm_cc());
+  assert(_run_cmd(cmd) == 0);
+
+  const char* input_path = BUILD_DIR "/test_peg_branch_seq_alt.input";
+  FILE* inf = fopen(input_path, "w");
+  assert(inf);
+  fprintf(inf, "1");
+  fclose(inf);
+
+  char buf[4096];
+  snprintf(cmd, sizeof(cmd), BUILD_DIR "/test_peg_branch_seq_alt_bin %s", input_path);
+  int ret = _run_cmd_capture(cmd, buf, sizeof(buf));
+  assert(ret == 0);
+  assert(strstr(buf, "token error") == NULL);
+  assert(strstr(buf, "main") != NULL);
+  assert(strstr(buf, "factor") != NULL);
+  assert(strstr(buf, "@number") != NULL);
+
+  inf = fopen(input_path, "w");
+  assert(inf);
+  fprintf(inf, "(1)");
+  fclose(inf);
+
+  snprintf(cmd, sizeof(cmd), BUILD_DIR "/test_peg_branch_seq_alt_bin %s", input_path);
+  ret = _run_cmd_capture(cmd, buf, sizeof(buf));
+  assert(ret == 0);
+  assert(strstr(buf, "token error") == NULL);
+  assert(strstr(buf, "@lparen") != NULL);
+  assert(strstr(buf, "inner") != NULL);
+  assert(strstr(buf, "@rparen") != NULL);
+
+  remove("test_bseq_alt.c");
+  remove("test_bseq_alt.h");
+  remove("test_bseq_alt.ll");
+  remove(nest_path);
+  remove(input_path);
+  remove(BUILD_DIR "/test_peg_branch_seq_alt_bin");
+}
+
 int main(void) {
   printf("test_peg_gen:\n");
   RUN(test_ir_has_parse_function);
@@ -1690,6 +1759,7 @@ int main(void) {
   RUN(test_naive_memoize_alternation);
   RUN(test_shared_memoize_alternation);
   RUN(test_naive_nested_rule);
+  RUN(test_naive_branch_sequence_alternation_regression);
   printf("test_peg_gen: OK\n");
   return 0;
 }

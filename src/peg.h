@@ -109,6 +109,7 @@ typedef struct {
   NodeAdvanceKind advance;  // how to advance cursor after this field
   int32_t advance_slot_row; // valid when advance == NODE_ADVANCE_SLOT
   const char* wrapper_name; // for is_link: scoped_rule_name of wrapper (not owned)
+  int32_t branch_index;     // branch tag index (0-based), -1 for non-branch fields
 } NodeField;
 typedef NodeField* NodeFields; // darray
 

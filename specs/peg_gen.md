@@ -205,17 +205,42 @@ Tag bits can be assigned all at once, the loading function is like:
         for w in 0..ceil(tag_bit_count/64):
           ((uint64_t*)&$1.is)[w] = $col[{tag_bit_index + w}];  // dedicated buckets, offset=0
       { end }
-      break;
-    }
-    case {rule_used_in_scopes[1]}: {
-      int64_t* $col = $table + ref.col * {col_size_in_i64 of this scope}
-      ... // we have different number allocations for different scopes
+      { for each group of fields with the same branch_index }
+        { if branch_index >= 0 }
+          if ($1.is.{tag_name_for_branch_index}) {
+        { end }
+        { emit field assignments + cursor advances for this group }
+        { if branch_index >= 0 }
+          }
+        { end }
+      { end }
       break;
     }
     ...
   }
   return $1;
 }
+```
+
+Fields with `branch_index == -1` (non-branch, e.g. seq members) are emitted unconditionally.
+Fields with `branch_index >= 0` are grouped and wrapped in `if ($1.is.{tag})` so cursor advances only happen for the chosen branch.
+
+Note that node members are a bag of branched units, some are not after another, member loading must be aware of branch tags. A unit test should be created to verify node loader of this grammar against input `(1)`:
+```c
+[[vpa]]
+main = {
+  "1" @number
+  "(" @lparen
+  ")" @rparen
+}
+[[peg]]
+main = factor
+# we should not see both branches loaded
+factor = [
+  @number
+  @lparen inner @rparen
+]
+inner = @number
 ```
 
 Note if rule name is a scope, we have to expand the child token chunk first, and then the loading is like normal_rule_name.

@@ -193,8 +193,23 @@ static void _gen_loader(HeaderWriter* hw, const char* rule_name, RuleScopeEntry*
         }
       }
     }
+    int32_t current_branch = -1;
     for (size_t field_idx = 0; field_idx < darray_size(sr->node_fields); field_idx++) {
       NodeField* nf = &sr->node_fields[field_idx];
+      // Branch grouping: close previous branch block if switching
+      if (current_branch >= 0 && nf->branch_index != current_branch) {
+        hdwriter_end(hw);
+        current_branch = -1;
+      }
+      // Open new branch block if needed
+      if (nf->branch_index >= 0 && nf->branch_index != current_branch) {
+        current_branch = nf->branch_index;
+        const char* tag_name = symtab_get(&sr->tags, sr->tags.start_num + current_branch);
+        char* san_tag = _sanitize_field_name(tag_name);
+        hdwriter_printf(hw, "if ($1.is.%s)", san_tag);
+        XFREE(san_tag);
+        hdwriter_begin(hw);
+      }
       if (nf->is_link) {
         if (nf->is_scope) {
           hdwriter_printf(hw, "$1.%s.tc = &((TokenTree*)ref.tc->aux_value)->table[ref.tc->tokens[ref.col].chunk_id];\n",
@@ -272,6 +287,10 @@ static void _gen_loader(HeaderWriter* hw, const char* rule_name, RuleScopeEntry*
       case NODE_ADVANCE_NONE:
         break;
       }
+    }
+    // Close any open branch block
+    if (current_branch >= 0) {
+      hdwriter_end(hw);
     }
 
     hdwriter_puts(hw, "break;\n");
