@@ -126,37 +126,38 @@ generated header defines interface to interact with the LLVM-IR defined parser.
 Assume there are 2 hooks `.foo` and `.bar` in lexer definition, generated header should have this interface
 
 ```c
-typedef int32_t (*LexHook)(void* userdata, size_t pattern_bytesize, const char* pattern_start);
+// common data structures emit by common_header_gen
+...
 
+// vpa generated header declarations
 typedef struct {
-  void* userdata;
+  void* user_data;
+  const char* source_file_name;
   LexHook foo;
   LexHook bar;
 } ParseContext;
 
-typedef enum {
-  PARSE_ERROR_INVALID_HOOK,
-  PARSE_ERROR_REQUIRE_MORE_INPUT, // met eof while the scope stack size is > 1
-  PARSE_ERROR_TOKEN_ERR, // expects one of pattern matches in a scope
-  PARSE_ERROR_INVALID_SYNTAX, // peg parse fails
-} ParseErrorType;
+// defined by IR
+extern void {prefix}_parse_splat(const char* src,
+  /* ParseContext fields */ void* user_data, const char* source_file_name, LexHook foo, LexHook bar,
+  /* ParseResult fields */ PegRef*, TokenTree**, ParseErrors*, int64_t*
+);
+// user interface
+static inline ParseResult {prefix}_parse(ParseContext* ctx, const char* input) {
+  ParseResult res = {0};
+  {prefix}_parse_splat(ctx, input,
+    ctx->user_data, ctx->source_file_name, ctx->foo, ctx->bar,
+    &res.main, &res.tt, &res.errors, &res.parse_end_col
+  );
+  return res;
+}
 
-typedef struct {
-  const char* message;
-  ParseErrorType type;
-  int32_t cp_offset;
-  int32_t cp_size;
-} ParseError;
-typedef ParseError* ParseErrors;
-
-typedef struct {
-  PegRef main; // root node after parse
-  TokenTree* tt;
-  ParseErrors errors;
-} ParseResult;
-
-extern ParseResult {prefix}_parse(ParseContext l, UStr src);
-// TODO: incremental `edit` interface
+// defined in IR, del token tree / dynamic array
+extern void {prefix}_cleanup_splat(TokenTree** tt, ParseError** errors);
+// user interface
+static inline void {prefix}_cleanup(ParseResult* res) {
+  {prefix}_cleanup_splat(&res->tt, &res->errors);
+}
 ```
 
 If a user hook emits some token or some action, user should define it like this:
@@ -186,8 +187,9 @@ They will be executed in order.
 A typical usage example (the load_xxx functions are defined by [PEG GEN](peg_gen.md)):
 
 ```c
-struct ParseContext l = { NULL, .foo = my_foo_hook, .bar = my_bar_hook };
-struct ParseResult res = {prefix}_parse(l, src_ustr);
+struct ParseContext ctx = { .source_file_name = source_file_name, .userdata = NULL, .foo = my_foo_hook, .bar = my_bar_hook };
+const char* src = ustr_from_file(ctx.source_file_name);
+struct ParseResult res = {prefix}_parse(ctx, src);
 if (res.error) {
   fprintf(stderr, "%s", res.error);
 } else {
@@ -199,16 +201,16 @@ if (res.error) {
 
 ### Interaction with peg parsers
 
-In LLVM-IR: define the main function `ParseResult {prefix}_parse(l, src_ustr)`.
+In LLVM-IR: define the main function `{prefix}_parse_splat`. Args depend on nest grammar definition.
 
 On top of main function malloc a fixed 1M stack for peg parser's backtracking. All scoped parsers share the same stack ptr (they don't call each other, so just pass the ptr, no arithmetics).
 
-For each scope, PEG parsers generates a `parse_{scope_name}` function, the visibly pushdown machine just invoke the parsing function when a scope ends (`.end` action).
+For each scope, PEG parsers generates an internal `parse_{scope_name}` function, the visibly pushdown machine just invoke the parsing function when a scope ends (`.end` action).
 - Main scope doesn't have `.end` action, so after all input is consumed in {main_parse_fn_name}, call `parse_main()`
 
 Since the VPA and the PEG share a same LLVM-IR writer, in PEG the parsing functions should be defined as internal, in VPA we can call them directly.
 
-### The `{prefix}_parse` loop
+### The `{prefix}_parse_splat` loop
 
 Similar to the `_lex_scope` in the [parse spec][parse.md].
 - In LLVM IR
@@ -224,9 +226,6 @@ Resulting parser needs:
 - token ids: `TOK_XXX` numbered in the system of action_unit_id.
   - but don't include the token ids for keyword literals (the ids in the form of `@lit.xxx`) because we have no way to upcase them.
 - primitive hook ids: `HOOK_XXX` numbered in the system of action_unit_id.
-- declare entrance and cleanup functions (impl in LLVM-IR)
-  - `ParseResult {prefix}_parse(ParseContext*, const char*)`
-  - `void {prefix}_cleanup(ParseResult*)` -- calls `parse_result_del()` from `parse_result.c`, which is static-ized by irwriter_rt_gen
 
 ### Misc
 

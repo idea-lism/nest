@@ -107,9 +107,9 @@ The `indirectbr` destination list must include return labels from **all** call s
 
 # Stack safety
 
-For backtrack: Generally guidelines not recommend dynamic alloca which may corrupt stack, so we make a heap-allocated backtrack stack.
+For backtrack stack: Generally guidelines not recommend dynamic alloca which may corrupt stack, so we use a heap-allocated backtrack stack.
 
-For function: when alloca is dynamic (not single-time funciton-top), add LLVM hint on alloca lifetime for this alloca:
+For native call stack: when alloca is dynamic (not single-time funciton-top), add LLVM hint on alloca lifetime for this alloca:
 - `@llvm.lifetime.start`
 - `@llvm.lifetime.end`
 

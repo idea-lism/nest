@@ -136,6 +136,14 @@ When memoize_mode=`shared` mode, we also have:
 
 In the end the memoize table is associated to each `TokenChunk`.
 
+# Stack safety
+
+`parse_{scope_name}` should be stack-protected with canary `sspreq`.
+
+For native call stack: when alloca is dynamic (not single-time funciton-top), add LLVM hint on alloca lifetime for this alloca:
+- `@llvm.lifetime.start`
+- `@llvm.lifetime.end`
+
 # User API: parse tree retrieval
 
 When parse succeeds, VPA will return a PegRef for `main` rule.
