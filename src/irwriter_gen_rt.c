@@ -33,7 +33,7 @@ typedef enum {
   IR_STATE_IN_FUNC,
 } IRState;
 
-// public API functions that should NOT be marked internal
+// user-facing API functions — forward directly, don't make internal
 // spec: ustr_*, tt_locate, darray_size
 static bool _is_public_fn(const char* name) {
   if (strncmp(name, "ustr_", 5) == 0) {

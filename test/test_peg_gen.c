@@ -1248,6 +1248,102 @@ TEST(test_multi_bucket_tags) {
   symtab_free(&input.scope_names);
 }
 
+TEST(test_multi_bucket_tags_exec) {
+  // End-to-end: a rule with 70 branches (>64 tags, needs 2 i64 buckets).
+  // Verifies IR generation, tag writeback, and loader all work for multi-bucket.
+  const char* nest_path = BUILD_DIR "/test_peg_mbtags.nest";
+  FILE* nf = fopen(nest_path, "w");
+  assert(nf);
+
+  // VPA: 70 two-letter tokens t00..t69, patterns aa..dq
+  fprintf(nf, "[[vpa]]\n");
+  fprintf(nf, "%%ignore @space\n");
+  fprintf(nf, "main = {\n");
+  fprintf(nf, "  /\\s+/ @space\n");
+  for (int i = 0; i < 70; i++) {
+    char c1 = (char)('a' + i / 26);
+    char c2 = (char)('a' + i % 26);
+    fprintf(nf, "  /%c%c/ @t%02d\n", c1, c2, i);
+  }
+  fprintf(nf, "}\n");
+
+  // PEG: item = [ @t00 : tag0, @t01 : tag1, ..., @t69 : tag69 ]
+  fprintf(nf, "[[peg]]\n");
+  fprintf(nf, "main = item\n");
+  fprintf(nf, "item = [\n");
+  for (int i = 0; i < 70; i++) {
+    fprintf(nf, "  @t%02d : tag%d\n", i, i);
+  }
+  fprintf(nf, "]\n");
+  fclose(nf);
+
+  // Compile grammar
+  char cmd[2048];
+  snprintf(cmd, sizeof(cmd), BUILD_DIR "/nest c %s -p test_mbt -m none", nest_path);
+  int ret = _run_cmd(cmd);
+  assert(ret == 0);
+
+  // Compile generated files
+  snprintf(cmd, sizeof(cmd), "%s -O0 test_mbt.c test_mbt.ll -o " BUILD_DIR "/test_peg_mbtags_bin", compat_llvm_cc());
+  ret = _run_cmd(cmd);
+  assert(ret == 0);
+
+  // Test tag in first bucket (tag0 = 'aa', i=0)
+  {
+    const char* input_path = BUILD_DIR "/test_peg_mbtags.input";
+    FILE* inf = fopen(input_path, "w");
+    assert(inf);
+    fprintf(inf, "aa");
+    fclose(inf);
+    snprintf(cmd, sizeof(cmd), BUILD_DIR "/test_peg_mbtags_bin %s", input_path);
+    char buf[4096];
+    ret = _run_cmd_capture(cmd, buf, sizeof(buf));
+    assert(ret == 0);
+    assert(strstr(buf, "item") != NULL);
+    assert(strstr(buf, "@t00") != NULL);
+    remove(input_path);
+  }
+
+  // Test tag in second bucket (i=65 -> c1='c', c2='n' -> "cn", tag65)
+  {
+    const char* input_path = BUILD_DIR "/test_peg_mbtags.input";
+    FILE* inf = fopen(input_path, "w");
+    assert(inf);
+    fprintf(inf, "cn");
+    fclose(inf);
+    snprintf(cmd, sizeof(cmd), BUILD_DIR "/test_peg_mbtags_bin %s", input_path);
+    char buf[4096];
+    ret = _run_cmd_capture(cmd, buf, sizeof(buf));
+    assert(ret == 0);
+    assert(strstr(buf, "item") != NULL);
+    assert(strstr(buf, "@t65") != NULL);
+    remove(input_path);
+  }
+
+  // Test last tag (i=69 -> c1='c', c2='r' -> "cr", tag69)
+  {
+    const char* input_path = BUILD_DIR "/test_peg_mbtags.input";
+    FILE* inf = fopen(input_path, "w");
+    assert(inf);
+    fprintf(inf, "cr");
+    fclose(inf);
+    snprintf(cmd, sizeof(cmd), BUILD_DIR "/test_peg_mbtags_bin %s", input_path);
+    char buf[4096];
+    ret = _run_cmd_capture(cmd, buf, sizeof(buf));
+    assert(ret == 0);
+    assert(strstr(buf, "item") != NULL);
+    assert(strstr(buf, "@t69") != NULL);
+    remove(input_path);
+  }
+
+  // Cleanup
+  remove("test_mbt.c");
+  remove("test_mbt.h");
+  remove("test_mbt.ll");
+  remove(nest_path);
+  remove(BUILD_DIR "/test_peg_mbtags_bin");
+}
+
 // ============================================================
 // Tests: end-to-end naive and shared memoize modes
 // ============================================================
@@ -1586,6 +1682,7 @@ int main(void) {
   RUN(test_interlaced_link_rhs_row);
   RUN(test_scope_link_field);
   RUN(test_multi_bucket_tags);
+  RUN(test_multi_bucket_tags_exec);
   RUN(test_none_memoize_O2_exec);
   RUN(test_none_memoize_alternation_crash);
   RUN(test_naive_memoize_exec);

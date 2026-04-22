@@ -205,7 +205,8 @@ TEST(test_auto_tag_branches) {
   parse_state_del(ps);
 }
 
-TEST(test_auto_tag_too_many_tags) {
+TEST(test_auto_tag_many_tags) {
+  // >64 tags are supported via multi-bucket
   ParseState* ps = parse_state_new();
   _init_symtabs(ps);
   ps->peg_rules = darray_new(sizeof(PegRule), 0);
@@ -228,9 +229,8 @@ TEST(test_auto_tag_too_many_tags) {
   darray_push(ps->peg_rules, rule);
 
   bool ok = pp_auto_tag_branches(ps);
-  assert(!ok);
-  assert(parse_has_error(ps));
-  assert(strstr(parse_get_error(ps), "64") != NULL);
+  assert(ok);
+  assert(!parse_has_error(ps));
 
   parse_state_del(ps);
 }
@@ -968,7 +968,7 @@ int main(void) {
   RUN(test_inline_macros_missing);
   RUN(test_inline_macros_literals);
   RUN(test_auto_tag_branches);
-  RUN(test_auto_tag_too_many_tags);
+  RUN(test_auto_tag_many_tags);
   RUN(test_auto_tag_rule_name_too_long);
   RUN(test_duplicate_tag_error);
   RUN(test_no_duplicate_tags);

@@ -14,13 +14,13 @@ typedef struct {
 } Pointer;
 
 typedef struct PointerBucket {
-  Pointer p;              // ptr set to 0 when empty
+  Pointer p;                  // ptr set to 0 when empty
   struct PointerBucket* next; // for collision resolution, null when no next
 } PointerBucket;
 
 typedef struct {
-  size_t bucket_cap;          // expand when fill rate at 65%
-  size_t fill;                // number of live entries
+  size_t bucket_cap;              // expand when fill rate at 65%
+  size_t fill;                    // number of live entries
   PointerBucket* pointer_buckets; // the buffer
 } PointerTracker;
 

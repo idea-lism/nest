@@ -568,17 +568,6 @@ static const char* _unit_display_name(ParseState* ps, PegUnit* unit) {
   return NULL;
 }
 
-static int32_t _count_tags(PegUnit* unit) {
-  int32_t n = 0;
-  if (unit->kind == PEG_BRANCHES) {
-    n += (int32_t)darray_size(unit->children);
-  }
-  for (int32_t i = 0; i < (int32_t)darray_size(unit->children); i++) {
-    n += _count_tags(&unit->children[i]);
-  }
-  return n;
-}
-
 static bool _auto_tag_unit(ParseState* ps, PegRule* rule, PegUnit* unit) {
   if (unit->kind == PEG_BRANCHES) {
     for (int32_t i = 0; i < (int32_t)darray_size(unit->children); i++) {
@@ -618,11 +607,6 @@ bool pp_auto_tag_branches(ParseState* ps) {
       return false;
     }
     if (!_auto_tag_unit(ps, &ps->peg_rules[r], &ps->peg_rules[r].body)) {
-      return false;
-    }
-    int32_t n_tags = _count_tags(&ps->peg_rules[r].body);
-    if (n_tags > 64) {
-      parse_error(ps, "rule '%s' has %d tags, exceeding the limit of 64", rn, n_tags);
       return false;
     }
   }

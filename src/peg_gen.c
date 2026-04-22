@@ -180,9 +180,8 @@ static void _gen_loader(HeaderWriter* hw, const char* rule_name, RuleScopeEntry*
       hdwriter_printf(hw, "int64_t* $col = (int64_t*)((int32_t*)$table + %lld * ref.col);\n",
                       (long long)col_size_in_i32);
       if (tag_size <= 64) {
-        hdwriter_printf(hw, "((uint64_t*)&$1.is)[0] = ($col[%d] >> %dULL) & 0x%llxULL;\n",
-                        sr->tag_bit_index, sr->tag_bit_offset,
-                        (unsigned long long)_tag_mask(tag_size, 0));
+        hdwriter_printf(hw, "((uint64_t*)&$1.is)[0] = ($col[%d] >> %dULL) & 0x%llxULL;\n", sr->tag_bit_index,
+                        sr->tag_bit_offset, (unsigned long long)_tag_mask(tag_size, 0));
       } else {
         // Big: dedicated buckets, offset=0, copy consecutive words
         int32_t n_buckets = (tag_size + 63) / 64;
@@ -397,7 +396,9 @@ static void _gen_header(PegGenInput* input, HeaderWriter* hw, RuleScopeMap* scop
 // ============================================================
 
 static IrVal _tag_alloca(PegIrCtx* ctx, int32_t n) {
-  if (n == 0) return ctx->tag_bits;
+  if (n == 0) {
+    return ctx->tag_bits;
+  }
   return ctx->tag_bits_extra[n - 1];
 }
 
@@ -596,7 +597,7 @@ static void _gen_scope_ir(IrWriter* w, ScopeClosure* cl, int memoize_mode) {
   irwriter_declare(w, "i64", "tt_current_size", "ptr");
 
   char* fn_name = _asprintf("parse_%s", cl->scope_name);
-  irwriter_define_startf(w, fn_name, "{i64, i64} @%s(ptr %%tt, ptr %%stack_ptr_in)", fn_name);
+  irwriter_define_startf(w, fn_name, "{i64, i64} @%s(ptr %%tt, ptr %%stack_ptr_in) sspreq", fn_name);
   irwriter_bb(w);
   irwriter_dbg(w, cl->source_line, cl->source_col);
 
@@ -618,9 +619,13 @@ static void _gen_scope_ir(IrWriter* w, ScopeClosure* cl, int memoize_mode) {
   for (int32_t i = 0; i < rule_size; i++) {
     int32_t nt = symtab_count(&cl->scoped_rules[i].tags);
     int32_t nb = (nt > 0) ? (nt + 63) / 64 : 0;
-    if (nb > max_tag_buckets) max_tag_buckets = nb;
+    if (nb > max_tag_buckets) {
+      max_tag_buckets = nb;
+    }
   }
-  if (max_tag_buckets < 1) max_tag_buckets = 1;
+  if (max_tag_buckets < 1) {
+    max_tag_buckets = 1;
+  }
 
   irwriter_raw(w, "  %tag_bits = alloca i64\n");
   IrVal tag_bits = irwriter_imm(w, "%tag_bits");
@@ -731,9 +736,8 @@ static void _gen_scope_ir(IrWriter* w, ScopeClosure* cl, int memoize_mode) {
         int32_t n_buckets = (tag_size + 63) / 64;
         for (int32_t bi = 0; bi < n_buckets; bi++) {
           int64_t bucket_offset = sc.tag_byte_offset + bi * 8;
-          irwriter_call_void_fmtf(w, "tag_writeback",
-                                  "ptr %%r%d, i64 %%r%d, i64 %lld, i64 %lld, i64 0, i64 %%r%d", (int)peg_table,
-                                  (int)start_col, (long long)sizeof_col, (long long)bucket_offset,
+          irwriter_call_void_fmtf(w, "tag_writeback", "ptr %%r%d, i64 %%r%d, i64 %lld, i64 %lld, i64 0, i64 %%r%d",
+                                  (int)peg_table, (int)start_col, (long long)sizeof_col, (long long)bucket_offset,
                                   (int)irwriter_load(w, "i64", _tag_alloca(&ctx, bi)));
         }
       }

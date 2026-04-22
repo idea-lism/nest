@@ -604,17 +604,21 @@ static void _gen_vpa_lex(VpaGenInput* input, IrWriter* w, const char* prefix) {
   XFREE(read_cp_name);
 }
 
-// --- {prefix}_parse ---
+// --- {prefix}_parse_splat ---
 
-// ParseResult = {PegRef, TokenTree*, ParseErrors, parse_end_col} = {i8*, i64, i64, i8*, i8*, i64}
-#define PARSE_RESULT_TY "{i8*, i64, i64, i8*, i8*, i64}"
-
-static void _gen_parse_entry(IrWriter* w, const char* prefix, int32_t main_rule_row) {
+static void _gen_parse_entry(VpaGenInput* input, IrWriter* w, const char* prefix, int32_t main_rule_row) {
   // vpa_lex is already defined in this module; no declare needed
   irwriter_declare(w, "i8*", "tt_tree_new", "i8*");
   irwriter_declare(w, "i32", "ustr_size", "i8*");
   irwriter_declare(w, "{i64, i64}", "parse_main", "ptr, ptr");
   irwriter_declare(w, "ptr", "tt_current", "ptr");
+  irwriter_declare(w, "void", "tt_tree_del", "ptr, i32");
+#ifdef XMALLOC_TRACE
+  irwriter_declare(w, "void", "darray_del_traced", "ptr, ptr, i32");
+  irwriter_rawf(w, "@.xmalloc_caller.cleanup = private unnamed_addr constant [8 x i8] c\"cleanup\\00\"\n");
+#else
+  irwriter_declare(w, "void", "darray_del_", "ptr");
+#endif
 #ifdef XMALLOC_TRACE
   irwriter_declare(w, "ptr", "xmalloc_traced", "i64, ptr, i32");
   irwriter_declare(w, "void", "xfree_traced", "ptr, ptr, i32");
@@ -626,21 +630,63 @@ static void _gen_parse_entry(IrWriter* w, const char* prefix, int32_t main_rule_
 #ifdef XMALLOC_TRACE
   irwriter_rawf(w, "@.xmalloc_caller.parse = private unnamed_addr constant [6 x i8] c\"parse\\00\"\n");
 #endif
-  // {prefix}_parse — use sret for ABI compatibility with C
-  int parse_name_len = snprintf(NULL, 0, "%s_parse", prefix);
-  char* parse_name = XMALLOC((size_t)parse_name_len + 1);
-  snprintf(parse_name, (size_t)parse_name_len + 1, "%s_parse", prefix);
-  irwriter_define_startf(w, parse_name,
-                         "void @%s(ptr noalias sret(" PARSE_RESULT_TY ") align 8 %%retval, i64 %%ctx_i64, ptr %%src)",
-                         parse_name);
+
+  // Build {prefix}_parse_splat signature with splatted ParseContext + ParseResult out-params
+  // Args: (ptr %src, ptr %user_data, ptr %source_file_name, ptr %hook0, ptr %hook1, ...,
+  //        ptr %out_main, ptr %out_tt, ptr %out_errors, ptr %out_parse_end_col)
+  int32_t n_hooks = symtab_count(&input->hooks);
+  int32_t n_user_hooks = n_hooks + input->hooks.start_num - HOOK_ID_BUILTIN_COUNT;
+
+  // Build arg string dynamically
+  char* arg_buf = XMALLOC(4096);
+  int arg_off = 0;
+  arg_off += snprintf(arg_buf + arg_off, 4096 - (size_t)arg_off, "ptr %%src, ptr %%user_data, ptr %%source_file_name");
+  for (int32_t i = HOOK_ID_BUILTIN_COUNT; i < n_hooks + input->hooks.start_num; i++) {
+    const char* name = symtab_get(&input->hooks, i);
+    arg_off += snprintf(arg_buf + arg_off, 4096 - (size_t)arg_off, ", ptr %%hook_%s", name + 1);
+  }
+  arg_off += snprintf(arg_buf + arg_off, 4096 - (size_t)arg_off,
+                      ", ptr %%out_main, ptr %%out_tt, ptr %%out_errors, ptr %%out_parse_end_col");
+
+  char* parse_name = XMALLOC(strlen(prefix) + 16);
+  sprintf(parse_name, "%s_parse_splat", prefix);
+  irwriter_define_startf(w, parse_name, "void @%s(%s)", parse_name, arg_buf);
   XFREE(parse_name);
+  XFREE(arg_buf);
+
   irwriter_bb(w);
   irwriter_dbg(w, 0, 0);
   IrVal len = irwriter_call_retf(w, "i32", "ustr_size", "ptr %%src");
   IrVal len64 = irwriter_sext(w, "i32", len, "i64");
   IrVal tt = irwriter_call_retf(w, "ptr", "tt_tree_new", "ptr %%src");
-  irwriter_rawf(w, "  %%r%d = inttoptr i64 %%ctx_i64 to ptr\n", irwriter_next_reg(w));
-  IrVal ctx_ptr = (IrVal)(irwriter_next_reg(w) - 1);
+  // Build ctx struct on stack: {void* user_data, const char* source_file_name, LexHook...}
+  // Ctx has 2 + n_user_hooks pointer-sized fields
+  // Build ctx type string: {ptr, ptr, ptr, ...} with 2 + n_user_hooks fields
+  char ctx_ty[512];
+  int ctx_ty_off = 0;
+  ctx_ty_off += snprintf(ctx_ty + ctx_ty_off, sizeof(ctx_ty) - (size_t)ctx_ty_off, "{ptr, ptr");
+  for (int32_t i = 0; i < n_user_hooks; i++) {
+    ctx_ty_off += snprintf(ctx_ty + ctx_ty_off, sizeof(ctx_ty) - (size_t)ctx_ty_off, ", ptr");
+  }
+  ctx_ty_off += snprintf(ctx_ty + ctx_ty_off, sizeof(ctx_ty) - (size_t)ctx_ty_off, "}");
+  IrVal ctx_alloca = irwriter_alloca(w, ctx_ty);
+  // Store user_data
+  irwriter_rawf(w, "  %%r%d = getelementptr inbounds %s, ptr %%r%d, i32 0, i32 0\n", irwriter_next_reg(w), ctx_ty,
+                (int)ctx_alloca);
+  irwriter_store(w, "ptr", irwriter_imm(w, "%user_data"), (IrVal)(irwriter_next_reg(w) - 1));
+  // Store source_file_name
+  irwriter_rawf(w, "  %%r%d = getelementptr inbounds %s, ptr %%r%d, i32 0, i32 1\n", irwriter_next_reg(w), ctx_ty,
+                (int)ctx_alloca);
+  irwriter_store(w, "ptr", irwriter_imm(w, "%source_file_name"), (IrVal)(irwriter_next_reg(w) - 1));
+  // Store each hook
+  for (int32_t i = 0; i < n_user_hooks; i++) {
+    int32_t hook_id = HOOK_ID_BUILTIN_COUNT + i;
+    const char* name = symtab_get(&input->hooks, hook_id);
+    irwriter_rawf(w, "  %%r%d = getelementptr inbounds %s, ptr %%r%d, i32 0, i32 %d\n", irwriter_next_reg(w), ctx_ty,
+                  (int)ctx_alloca, 2 + i);
+    irwriter_rawf(w, "  store ptr %%hook_%s, ptr %%r%d\n", name + 1, irwriter_next_reg(w) - 1);
+  }
+
   // allocate UstrIter on stack as userdata for vpa_lex
   IrVal iter_ptr = irwriter_alloca(w, "{ptr, ptr, i32, i32, i32}");
   irwriter_call_void_fmtf(w, "ustr_iter_init", "i8* %%r%d, i8* %%src, i32 0", (int)iter_ptr);
@@ -651,42 +697,31 @@ static void _gen_parse_entry(IrWriter* w, const char* prefix, int32_t main_rule_
   IrVal stack_buf = irwriter_call_retf(w, "ptr", "malloc", "i64 1048576");
 #endif
   irwriter_call_void_fmtf(w, "vpa_lex", "ptr %%r%d, i64 %%r%d, ptr %%r%d, ptr null, ptr %%r%d, ptr %%r%d",
-                          (int)iter_ptr, (int)len64, (int)tt, (int)ctx_ptr, (int)stack_buf);
+                          (int)iter_ptr, (int)len64, (int)tt, (int)ctx_alloca, (int)stack_buf);
   // vpa_lex sets root chunk scope_id; now call parse_main
   IrVal parse_ret = irwriter_call_retf(w, "{i64, i64}", "parse_main", "ptr %%r%d, ptr %%r%d", (int)tt, (int)stack_buf);
   IrVal parse_end_col = irwriter_extractvalue(w, "{i64, i64}", parse_ret, 0);
   IrVal tc = irwriter_call_retf(w, "ptr", "tt_current", "ptr %%r%d", (int)tt);
-  // store fields to sret pointer: {PegRef.tc, PegRef.col, PegRef.row, tt, errors}
-  // field 0: PegRef.tc (ptr) at offset 0
-  irwriter_rawf(w, "  %%r%d = getelementptr inbounds " PARSE_RESULT_TY ", ptr %%retval, i32 0, i32 0\n",
+
+  // Store results via out-params
+  // out_main: PegRef = {ptr tc, i64 0, i64 main_rule_row}
+  // Store as 3 consecutive fields via GEP on {ptr, i64, i64}
+  irwriter_rawf(w, "  %%r%d = getelementptr inbounds {ptr, i64, i64}, ptr %%out_main, i32 0, i32 0\n",
                 irwriter_next_reg(w));
-  IrVal f0 = (IrVal)(irwriter_next_reg(w) - 1);
-  irwriter_store(w, "ptr", tc, f0);
-  // field 1: PegRef.col (i64) at offset 1
-  irwriter_rawf(w, "  %%r%d = getelementptr inbounds " PARSE_RESULT_TY ", ptr %%retval, i32 0, i32 1\n",
+  irwriter_store(w, "ptr", tc, (IrVal)(irwriter_next_reg(w) - 1));
+  irwriter_rawf(w, "  %%r%d = getelementptr inbounds {ptr, i64, i64}, ptr %%out_main, i32 0, i32 1\n",
                 irwriter_next_reg(w));
-  IrVal f1 = (IrVal)(irwriter_next_reg(w) - 1);
-  irwriter_store(w, "i64", irwriter_imm_int(w, 0), f1);
-  // field 2: PegRef.row (i64) at offset 2
-  irwriter_rawf(w, "  %%r%d = getelementptr inbounds " PARSE_RESULT_TY ", ptr %%retval, i32 0, i32 2\n",
+  irwriter_store(w, "i64", irwriter_imm_int(w, 0), (IrVal)(irwriter_next_reg(w) - 1));
+  irwriter_rawf(w, "  %%r%d = getelementptr inbounds {ptr, i64, i64}, ptr %%out_main, i32 0, i32 2\n",
                 irwriter_next_reg(w));
-  IrVal f2 = (IrVal)(irwriter_next_reg(w) - 1);
-  irwriter_store(w, "i64", irwriter_imm_int(w, main_rule_row), f2);
-  // field 3: TokenTree* tt
-  irwriter_rawf(w, "  %%r%d = getelementptr inbounds " PARSE_RESULT_TY ", ptr %%retval, i32 0, i32 3\n",
-                irwriter_next_reg(w));
-  IrVal f3 = (IrVal)(irwriter_next_reg(w) - 1);
-  irwriter_store(w, "ptr", tt, f3);
-  // field 4: ParseErrors (null)
-  irwriter_rawf(w, "  %%r%d = getelementptr inbounds " PARSE_RESULT_TY ", ptr %%retval, i32 0, i32 4\n",
-                irwriter_next_reg(w));
-  IrVal f4 = (IrVal)(irwriter_next_reg(w) - 1);
-  irwriter_store(w, "ptr", irwriter_imm(w, "null"), f4);
-  // field 5: parse_end_col
-  irwriter_rawf(w, "  %%r%d = getelementptr inbounds " PARSE_RESULT_TY ", ptr %%retval, i32 0, i32 5\n",
-                irwriter_next_reg(w));
-  IrVal f5 = (IrVal)(irwriter_next_reg(w) - 1);
-  irwriter_store(w, "i64", parse_end_col, f5);
+  irwriter_store(w, "i64", irwriter_imm_int(w, main_rule_row), (IrVal)(irwriter_next_reg(w) - 1));
+  // out_tt: TokenTree**
+  irwriter_store(w, "ptr", tt, irwriter_imm(w, "%out_tt"));
+  // out_errors: ParseErrors* (null)
+  irwriter_store(w, "ptr", irwriter_imm(w, "null"), irwriter_imm(w, "%out_errors"));
+  // out_parse_end_col: i64*
+  irwriter_store(w, "i64", parse_end_col, irwriter_imm(w, "%out_parse_end_col"));
+
 #ifdef XMALLOC_TRACE
   irwriter_call_void_fmtf(w, "xfree_traced", "ptr %%r%d, ptr @.xmalloc_caller.parse, i32 0", (int)stack_buf);
 #else
@@ -695,17 +730,41 @@ static void _gen_parse_entry(IrWriter* w, const char* prefix, int32_t main_rule_
   irwriter_ret_void(w);
   irwriter_define_end(w);
 
-  // {prefix}_cleanup(result) -> void
-  // Calls parse_result_del (defined in runtime IR from parse_result.c)
-  irwriter_declare(w, "void", "parse_result_del", "ptr");
-  int cleanup_name_len = snprintf(NULL, 0, "%s_cleanup", prefix);
-  char* cleanup_name = XMALLOC((size_t)cleanup_name_len + 1);
-  snprintf(cleanup_name, (size_t)cleanup_name_len + 1, "%s_cleanup", prefix);
-  irwriter_define_startf(w, cleanup_name, "void @%s(ptr %%res)", cleanup_name);
+  // {prefix}_cleanup_splat(TokenTree** tt, ParseError** errors) -> void
+  // Frees token tree and errors darray directly
+  char* cleanup_name = XMALLOC(strlen(prefix) + 20);
+  sprintf(cleanup_name, "%s_cleanup_splat", prefix);
+  irwriter_define_startf(w, cleanup_name, "void @%s(ptr %%tt_ptr, ptr %%errors_ptr)", cleanup_name);
   XFREE(cleanup_name);
   irwriter_bb(w);
   irwriter_dbg(w, 0, 0);
-  irwriter_call_void_fmtf(w, "parse_result_del", "ptr %%res");
+  // Load tt, if non-null call tt_tree_del(tt, true)
+  IrVal tt_val = irwriter_load(w, "ptr", irwriter_imm(w, "%tt_ptr"));
+  IrVal tt_is_null = irwriter_icmp(w, "eq", "ptr", tt_val, irwriter_imm(w, "null"));
+  IrLabel tt_nonnull_bb = irwriter_label(w);
+  IrLabel tt_done_bb = irwriter_label(w);
+  irwriter_br_cond(w, tt_is_null, tt_done_bb, tt_nonnull_bb);
+  irwriter_bb_at(w, tt_nonnull_bb);
+  irwriter_call_void_fmtf(w, "tt_tree_del", "ptr %%r%d, i32 1", (int)tt_val);
+  // Clear the pointer
+  irwriter_store(w, "ptr", irwriter_imm(w, "null"), irwriter_imm(w, "%tt_ptr"));
+  irwriter_br(w, tt_done_bb);
+  irwriter_bb_at(w, tt_done_bb);
+  // Load errors, if non-null call darray_del(errors)
+  IrVal errors_val = irwriter_load(w, "ptr", irwriter_imm(w, "%errors_ptr"));
+  IrVal errors_is_null = irwriter_icmp(w, "eq", "ptr", errors_val, irwriter_imm(w, "null"));
+  IrLabel err_nonnull_bb = irwriter_label(w);
+  IrLabel err_done_bb = irwriter_label(w);
+  irwriter_br_cond(w, errors_is_null, err_done_bb, err_nonnull_bb);
+  irwriter_bb_at(w, err_nonnull_bb);
+#ifdef XMALLOC_TRACE
+  irwriter_call_void_fmtf(w, "darray_del_traced", "ptr %%r%d, ptr @.xmalloc_caller.cleanup, i32 0", (int)errors_val);
+#else
+  irwriter_call_void_fmtf(w, "darray_del_", "ptr %%r%d", (int)errors_val);
+#endif
+  irwriter_store(w, "ptr", irwriter_imm(w, "null"), irwriter_imm(w, "%errors_ptr"));
+  irwriter_br(w, err_done_bb);
+  irwriter_bb_at(w, err_done_bb);
   irwriter_ret_void(w);
   irwriter_define_end(w);
 }
@@ -758,7 +817,8 @@ static void _gen_header(VpaGenInput* input, HeaderWriter* hw, const char* prefix
   hdwriter_puts(hw, "typedef int32_t (*LexHook)(void* userdata, Token* token, const char* token_str_start);\n");
   hdwriter_putc(hw, '\n');
   hdwriter_puts(hw, "typedef struct {\n");
-  hdwriter_puts(hw, "  void* userdata;\n");
+  hdwriter_puts(hw, "  void* user_data;\n");
+  hdwriter_puts(hw, "  const char* source_file_name;\n");
   for (int32_t i = HOOK_ID_BUILTIN_COUNT; i < n_hooks + input->hooks.start_num; i++) {
     const char* name = symtab_get(&input->hooks, i);
     hdwriter_printf(hw, "  LexHook %s;\n", name + 1);
@@ -766,8 +826,36 @@ static void _gen_header(VpaGenInput* input, HeaderWriter* hw, const char* prefix
   hdwriter_puts(hw, "} ParseContext;\n");
   hdwriter_putc(hw, '\n');
 
-  hdwriter_printf(hw, "extern ParseResult %s_parse(ParseContext $parse_context, char* src);\n", prefix);
-  hdwriter_printf(hw, "extern void %s_cleanup(ParseResult* r);\n", prefix);
+  // {prefix}_parse_splat extern declaration
+  hdwriter_printf(hw, "extern void %s_parse_splat(const char* src", prefix);
+  hdwriter_puts(hw, ",\n  /* ParseContext fields */ void* user_data, const char* source_file_name");
+  for (int32_t i = HOOK_ID_BUILTIN_COUNT; i < n_hooks + input->hooks.start_num; i++) {
+    const char* name = symtab_get(&input->hooks, i);
+    hdwriter_printf(hw, ", LexHook %s", name + 1);
+  }
+  hdwriter_puts(hw, ",\n  /* ParseResult fields */ PegRef*, TokenTree**, ParseErrors*, int64_t*\n");
+  hdwriter_puts(hw, ");\n");
+
+  // {prefix}_parse inline wrapper
+  hdwriter_printf(hw, "static inline ParseResult %s_parse(ParseContext* ctx, const char* input) {\n", prefix);
+  hdwriter_puts(hw, "  ParseResult res = {0};\n");
+  hdwriter_printf(hw, "  %s_parse_splat(input,\n", prefix);
+  hdwriter_puts(hw, "    ctx->user_data, ctx->source_file_name");
+  for (int32_t i = HOOK_ID_BUILTIN_COUNT; i < n_hooks + input->hooks.start_num; i++) {
+    const char* name = symtab_get(&input->hooks, i);
+    hdwriter_printf(hw, ", ctx->%s", name + 1);
+  }
+  hdwriter_puts(hw, ",\n    &res.main, &res.tt, &res.errors, &res.parse_end_col\n");
+  hdwriter_puts(hw, "  );\n");
+  hdwriter_puts(hw, "  return res;\n");
+  hdwriter_puts(hw, "}\n");
+  hdwriter_putc(hw, '\n');
+
+  // {prefix}_cleanup_splat extern + {prefix}_cleanup inline wrapper
+  hdwriter_printf(hw, "extern void %s_cleanup_splat(TokenTree** tt, ParseError** errors);\n", prefix);
+  hdwriter_printf(hw, "static inline void %s_cleanup(ParseResult* res) {\n", prefix);
+  hdwriter_printf(hw, "  %s_cleanup_splat(&res->tt, &res->errors);\n", prefix);
+  hdwriter_puts(hw, "}\n");
   hdwriter_putc(hw, '\n');
 }
 
@@ -786,7 +874,7 @@ void vpa_gen(VpaGenInput* input, HeaderWriter* hw, IrWriter* w, const char* pref
 
   _gen_dispatch(input, w, actions);
   _gen_vpa_lex(input, w, prefix);
-  _gen_parse_entry(w, prefix, main_rule_row);
+  _gen_parse_entry(input, w, prefix, main_rule_row);
   _gen_header(input, hw, prefix);
 
   darray_del(actions);

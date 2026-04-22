@@ -465,8 +465,8 @@ static void _gen_example_c(FILE* f, const char* prefix, ParseState* ps) {
   fprintf(f, "  char* ustr = ustr_from_file(fp);\n");
   fprintf(f, "  fclose(fp);\n");
   fprintf(f, "  int32_t total_cps = ustr_size(ustr);\n");
-  fprintf(f, "  ParseContext ctx = {0};\n");
-  fprintf(f, "  ParseResult res = %s_parse(ctx, ustr);\n", prefix);
+  fprintf(f, "  ParseContext ctx = {.source_file_name = argv[1]};\n");
+  fprintf(f, "  ParseResult res = %s_parse(&ctx, ustr);\n", prefix);
   fprintf(f, "  TokenTree* tt = res.tt;\n\n");
 
   // error detection: token error if not all input consumed

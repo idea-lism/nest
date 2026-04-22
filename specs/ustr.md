@@ -22,6 +22,7 @@ Resulting code:
   - Basic API `ustr_new(size_t sz, char* data)`, `ustr_del(char* s)`
     - when `new` returns `NULL` indicating an error, provide a helper procedure: `ErrType ustr_find_error(size_t, char* data, size_t* pos)` to get the error position and problem type.
   - Read from file `ustr_from_file(FILE* file)`, which reduces malloc to only once.
+    - NOTE: returns empty string when file exists and is empty, this is different from failure
   - Codepoint iterator `ustr_iter_init(&it, ustr, char_offset), ustr_iter_next` by scanning marks
     - iterator can start from middle of string by an offset
     - if the init offset is out of range, `assert(false)`

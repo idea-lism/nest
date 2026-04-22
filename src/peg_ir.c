@@ -8,7 +8,9 @@
 // --- Tag bits alloca accessor ---
 
 static IrVal _tag_alloca(PegIrCtx* ctx, int32_t n) {
-  if (n == 0) return ctx->tag_bits;
+  if (n == 0) {
+    return ctx->tag_bits;
+  }
   return ctx->tag_bits_extra[n - 1];
 }
 

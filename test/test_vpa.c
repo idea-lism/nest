@@ -459,6 +459,8 @@ TEST(test_vpa_gen_exec) {
               "  return ustr_iter_next((UstrIter*)userdata);\n"
               "}\n"
               "int32_t tt_depth(void* tt) { (void)tt; return 1; }\n"
+              "void tt_tree_del(void* tt, int32_t fv) { (void)tt; (void)fv; }\n"
+              "void darray_del_traced(void* a, void* c, int l) { (void)a; (void)c; (void)l; }\n"
               "struct { int64_t a; int64_t b; } parse_main(void* tt, void* sp) { (void)tt; (void)sp; return "
               "(typeof(parse_main(0,0))){0,0}; }\n"
               "\n"
@@ -467,7 +469,7 @@ TEST(test_vpa_gen_exec) {
               "  int32_t len = 4;\n"
               "  char* us = ustr_new(len, input);\n"
               "  ParseContext ctx = {0};\n"
-              "  ParseResult res = nest_parse(ctx, us);\n"
+              "  ParseResult res = nest_parse(&ctx, us);\n"
               "  TokenTree* tt = res.tt;\n"
               "  int32_t n = (int32_t)darray_size(tt->root->tokens);\n"
               "  assert(n == 4);\n"
@@ -680,10 +682,10 @@ TEST(test_vpa_gen_prefix_parse_defined_in_ir) {
   _run_vpa_gen_prefixed(&input, BUILD_DIR "/test_vpa_prefix.h", BUILD_DIR "/test_vpa_prefix.ll", "mymod");
 
   char* ir_buf = _read_file(BUILD_DIR "/test_vpa_prefix.ll");
-  // The spec requires {prefix}_parse and {prefix}_cleanup to be defined (not just declared) in IR
+  // The spec requires {prefix}_parse_splat and {prefix}_cleanup_splat to be defined (not just declared) in IR
   assert(strstr(ir_buf, "define") != NULL);
-  assert(strstr(ir_buf, "@mymod_parse") != NULL);
-  assert(strstr(ir_buf, "@mymod_cleanup") != NULL);
+  assert(strstr(ir_buf, "@mymod_parse_splat") != NULL);
+  assert(strstr(ir_buf, "@mymod_cleanup_splat") != NULL);
   free(ir_buf);
 
   _free_gen_input(&input);
@@ -827,10 +829,10 @@ TEST(test_vpa_gen_parse_returns_parse_result) {
   _run_vpa_gen_prefixed(&input, BUILD_DIR "/test_vpa_rettype.h", BUILD_DIR "/test_vpa_rettype.ll", "mymod");
 
   char* h_buf = _read_file(BUILD_DIR "/test_vpa_rettype.h");
-  // Spec says: extern ParseResult {prefix}_parse(ParseContext $parse_context, UStr src)
-  // Must NOT be "void mymod_parse"
-  assert(strstr(h_buf, "void mymod_parse") == NULL);
-  // Must declare returning ParseResult
+  // Spec: parse_splat is extern void, parse is static inline returning ParseResult
+  // Must NOT have a bare "void mymod_parse(" (the splat version is separate)
+  assert(strstr(h_buf, "void mymod_parse(") == NULL);
+  // Must declare returning ParseResult via inline wrapper
   assert(strstr(h_buf, "ParseResult mymod_parse") != NULL);
   free(h_buf);
 
@@ -960,6 +962,8 @@ TEST(test_vpa_scope_switch_exec) {
               "  return ustr_iter_next((UstrIter*)userdata);\n"
               "}\n"
               "int32_t tt_depth(void* tt) { (void)tt; return 1; }\n"
+              "void tt_tree_del(void* tt, int32_t fv) { (void)tt; (void)fv; }\n"
+              "void darray_del_traced(void* a, void* c, int l) { (void)a; (void)c; (void)l; }\n"
               "struct { int64_t a; int64_t b; } parse_main(void* tt, void* sp) { (void)tt; (void)sp; return "
               "(typeof(parse_main(0,0))){0,0}; }\n"
               "struct { int64_t a; int64_t b; } parse_block(void* tt, void* sp) { (void)tt; (void)sp; return "
@@ -970,7 +974,7 @@ TEST(test_vpa_scope_switch_exec) {
               "  int32_t len = 6;\n"
               "  char* us = ustr_new(len, input);\n"
               "  ParseContext ctx = {0};\n"
-              "  ParseResult res = nest_parse(ctx, us);\n"
+              "  ParseResult res = nest_parse(&ctx, us);\n"
               "  TokenTree* tt = res.tt;\n"
               "  /* root chunk: @tok_a, <scope ref>, @tok_a */\n"
               "  int32_t rn = (int32_t)darray_size(tt->root->tokens);\n"
