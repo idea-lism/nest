@@ -26,6 +26,9 @@ __attribute__((format(printf, 1, 2))) static char* _asprintf(const char* fmt, ..
   return buf;
 }
 
+// Round slots_size up to even so sizeof_col is always 8-byte aligned
+static int64_t _aligned_slots_size(int64_t slots_size) { return (slots_size + 1) & ~(int64_t)1; }
+
 static uint64_t _tag_mask(int32_t bit_size, uint64_t offset) {
   if (bit_size <= 0 || offset >= 64) {
     return 0;
@@ -173,7 +176,7 @@ static void _gen_loader(HeaderWriter* hw, const char* rule_name, RuleScopeEntry*
   for (int32_t entry_idx = 0; entry_idx < used_in_closures_count; entry_idx++) {
     ScopedRule* sr = scope_entries[entry_idx].sr;
     ScopeClosure* cl = scope_entries[entry_idx].cl;
-    int64_t col_size_in_i32 = cl->bits_bucket_size * 2 + cl->slots_size;
+    int64_t col_size_in_i32 = cl->bits_bucket_size * 2 + _aligned_slots_size(cl->slots_size);
     hdwriter_printf(hw, "case %d:", scope_entries[entry_idx].scope_id);
     hdwriter_begin(hw);
     if (has_tags) {
@@ -357,8 +360,7 @@ static void _gen_peg_size(HeaderWriter* hw, ScopeClosure* closures, int32_t clos
   hdwriter_begin(hw);
   for (int32_t c = 0; c < closure_size; c++) {
     ScopeClosure* cl = &closures[c];
-    int64_t col_size_in_i32 = cl->bits_bucket_size * 2 + cl->slots_size;
-    // ref.row is an absolute i32 row within { i64 bits[]; i32 slots[] }.
+    int64_t col_size_in_i32 = cl->bits_bucket_size * 2 + _aligned_slots_size(cl->slots_size);
     hdwriter_printf(hw, "case %d: return ((int32_t*)ref.tc->value)[ref.col * %lld + ref.row];\n", cl->scope_id,
                     (long long)col_size_in_i32);
   }
@@ -590,7 +592,7 @@ static void _gen_scope_ir(IrWriter* w, ScopeClosure* cl, int memoize_mode) {
   if (rule_size == 0) {
     return;
   }
-  int64_t sizeof_col = cl->bits_bucket_size * 8 + cl->slots_size * 4;
+  int64_t sizeof_col = cl->bits_bucket_size * 8 + _aligned_slots_size(cl->slots_size) * 4;
 
   irwriter_declare(w, "ptr", "tt_current", "ptr");
   irwriter_declare(w, "ptr", "tt_alloc_memoize_table", "ptr, i64");

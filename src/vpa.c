@@ -612,7 +612,7 @@ static void _gen_parse_entry(VpaGenInput* input, IrWriter* w, const char* prefix
   irwriter_declare(w, "i32", "ustr_size", "i8*");
   irwriter_declare(w, "{i64, i64}", "parse_main", "ptr, ptr");
   irwriter_declare(w, "ptr", "tt_current", "ptr");
-  irwriter_declare(w, "void", "tt_tree_del", "ptr, i32");
+  irwriter_declare(w, "void", "tt_tree_del", "ptr, i1");
 #ifdef XMALLOC_TRACE
   irwriter_declare(w, "void", "darray_del_traced", "ptr, ptr, i32");
   irwriter_rawf(w, "@.xmalloc_caller.cleanup = private unnamed_addr constant [8 x i8] c\"cleanup\\00\"\n");
@@ -688,7 +688,7 @@ static void _gen_parse_entry(VpaGenInput* input, IrWriter* w, const char* prefix
   }
 
   // allocate UstrIter on stack as userdata for vpa_lex
-  IrVal iter_ptr = irwriter_alloca(w, "{ptr, ptr, i32, i32, i32}");
+  IrVal iter_ptr = irwriter_alloca(w, "{ptr, ptr, i32, i32, i32, i32}");
   irwriter_call_void_fmtf(w, "ustr_iter_init", "i8* %%r%d, i8* %%src, i32 0", (int)iter_ptr);
   // allocate 1M stack for PEG backtracking
 #ifdef XMALLOC_TRACE
@@ -745,7 +745,7 @@ static void _gen_parse_entry(VpaGenInput* input, IrWriter* w, const char* prefix
   IrLabel tt_done_bb = irwriter_label(w);
   irwriter_br_cond(w, tt_is_null, tt_done_bb, tt_nonnull_bb);
   irwriter_bb_at(w, tt_nonnull_bb);
-  irwriter_call_void_fmtf(w, "tt_tree_del", "ptr %%r%d, i32 1", (int)tt_val);
+  irwriter_call_void_fmtf(w, "tt_tree_del", "ptr %%r%d, i1 zeroext 1", (int)tt_val);
   // Clear the pointer
   irwriter_store(w, "ptr", irwriter_imm(w, "null"), irwriter_imm(w, "%tt_ptr"));
   irwriter_br(w, tt_done_bb);

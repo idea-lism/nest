@@ -72,6 +72,7 @@ int64_t tt_current_size(TokenTree* tree);
 // get current chunk
 TokenChunk* tt_current(TokenTree* tree);
 // alloc sizeof_col * col_token_size to value
+// sizeof_col must be multiple of 8, returned address must be 64-bit aligned
 void* tt_alloc_memoize_table(TokenChunk* chunk, int64_t sizeof_col);
 ```
 

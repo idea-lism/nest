@@ -204,7 +204,7 @@ Parsing table layout (runtime structs):
 ```c
 struct Col${scope_name} {
   uint64_t bits[{bits_bucket_size}];
-  int32_t slots[{scoped_rule_size}];
+  int32_t slots[{(scoped_rule_size + 1) / 2 * 2}]; // 64-bit aligned, to prevent UB loading i64
 };
 ```
 
@@ -336,7 +336,7 @@ Final `Col` structure:
 ```c
 struct Col${scope_name} {
   uint64_t bits[{total_buckets}]; // all segments laid out contiguously
-  int32_t slots[{segment_count}];
+  int32_t slots[{(segment_count + 1) / 2 * 2}]; // 64-bit aligned, to prevent UB loading i64
 };
 ```
 

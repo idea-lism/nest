@@ -2,6 +2,8 @@
 #include "darray.h"
 #include "ustr.h"
 #include "xmalloc.h"
+#include <assert.h>
+#include <stdint.h>
 #include <string.h>
 
 TokenTree* tt_tree_new(const char* ustr) {
@@ -105,9 +107,11 @@ int64_t tt_current_size(TokenTree* tree) { return (int64_t)darray_size(tree->cur
 TokenChunk* tt_current(TokenTree* tree) { return tree->current; }
 
 void* tt_alloc_memoize_table(TokenChunk* chunk, int64_t sizeof_col) {
-  // alloc sizeof_col * col_token_size
-  size_t bytesize = darray_size(chunk->tokens) * sizeof_col;
+  // sizeof_col must be multiple of 8, returned address must be 64-bit aligned
+  assert(sizeof_col % 8 == 0);
+  size_t bytesize = darray_size(chunk->tokens) * (size_t)sizeof_col;
   void* v = XMALLOC(bytesize);
+  assert(((uintptr_t)v & 7) == 0); // XMALLOC guarantees 8-byte alignment
   memset(v, -1, bytesize);
   chunk->value = v;
   return v;
