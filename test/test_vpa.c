@@ -333,11 +333,12 @@ static VpaGenInput _empty_input(void) {
   input.scopes = darray_new(sizeof(VpaScope), 0);
   input.effect_decls = darray_new(sizeof(EffectDecl), 0);
   symtab_init(&input.tokens, 1);
-  symtab_init(&input.hooks, 0);
+  symtab_init(&input.hooks, 1);
   symtab_intern(&input.hooks, ".begin");
   symtab_intern(&input.hooks, ".end");
   symtab_intern(&input.hooks, ".fail");
   symtab_intern(&input.hooks, ".unparse");
+  symtab_intern(&input.hooks, ".noop");
   return input;
 }
 
@@ -425,7 +426,7 @@ TEST(test_vpa_gen_multi_scope) {
 
   // Add a call to inner scope in main's children
   VpaActionUnits call_au = darray_new(sizeof(int32_t), 0);
-  int32_t begin_au = 0; // -HOOK_ID_BEGIN = 0
+  int32_t begin_au = -HOOK_ID_BEGIN;
   darray_push(call_au, begin_au);
   VpaUnit call_u = {.kind = VPA_CALL, .call_scope_id = 1, .action_units = call_au};
   darray_push(input.scopes[0].children, call_u);

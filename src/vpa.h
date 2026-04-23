@@ -8,15 +8,16 @@
 #include <stdbool.h>
 #include <stdint.h>
 
-// builtin hook ids in the hooks symtab (start_num=0)
-#define HOOK_ID_BEGIN 0
-#define HOOK_ID_END 1
-#define HOOK_ID_FAIL 2
-#define HOOK_ID_UNPARSE 3
-#define HOOK_ID_BUILTIN_COUNT 4
+// builtin hook ids in the hooks symtab (start_num=1)
+#define HOOK_ID_BEGIN 1
+#define HOOK_ID_END 2
+#define HOOK_ID_FAIL 3
+#define HOOK_ID_UNPARSE 4
+#define HOOK_ID_NOOP 5
+#define HOOK_ID_BUILTIN_COUNT 6
 
 // action_unit_id > 0: maps to token_id
-// action_unit_id <= 0: maps to -hook_id
+// action_unit_id < 0: maps to -hook_id
 typedef int32_t* VpaActionUnits;
 
 typedef enum {
@@ -54,8 +55,8 @@ typedef struct {
   char* name;       // (owned)
   VpaUnit leader;
   VpaUnits children;
-  bool has_parser;
   bool is_macro;       // parse-time: macro rule, removed after inlining
+  bool has_parser;
   int32_t eof_action;  // action_id for VPA_EOF child, 0 = none
   int32_t source_line; // line in .nest file (for LLVM IR debug info), 0 = unknown
   int32_t source_col;

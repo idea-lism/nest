@@ -628,6 +628,8 @@ static int32_t _intern_hook(int32_t bootstrap_tok_id) {
     return HOOK_ID_FAIL;
   case TOK_HOOK_UNPARSE:
     return HOOK_ID_UNPARSE;
+  case TOK_HOOK_NOOP:
+    return HOOK_ID_NOOP;
   default:
     return -1;
   }
@@ -635,7 +637,7 @@ static int32_t _intern_hook(int32_t bootstrap_tok_id) {
 
 static bool _is_action(int32_t id) {
   return id == TOK_TOK_ID || id == TOK_HOOK_BEGIN || id == TOK_HOOK_END || id == TOK_HOOK_FAIL ||
-         id == TOK_HOOK_UNPARSE || id == TOK_USER_HOOK_ID;
+         id == TOK_HOOK_UNPARSE || id == TOK_HOOK_NOOP || id == TOK_USER_HOOK_ID;
 }
 
 // action = [ @tok_id | hooks | @user_hook_id ]
@@ -658,7 +660,7 @@ static void _parse_actions(ParseState* ps, TokenChunk* chunk, int32_t* tpos, Vpa
       darray_push(u->action_units, au);
     } else {
       int32_t hook_id = _intern_hook(t->term_id);
-      if (hook_id >= 0) {
+      if (hook_id > 0) {
         if (!u->action_units) {
           u->action_units = darray_new(sizeof(int32_t), 0);
         }
@@ -805,7 +807,7 @@ static bool _parse_ignore_toks(ParseState* ps, TokenChunk* chunk, int32_t* tpos)
 }
 
 // effect_spec = "%effect" @user_hook_id "=" effect+<"|">
-// effect = [ @tok_id | @hook_begin | @hook_end | @hook_fail | @hook_unparse ]
+// effect = [ @tok_id | @hook_begin | @hook_end | @hook_fail | @hook_unparse | @hook_noop ]
 static bool _parse_effect_spec(ParseState* ps, TokenChunk* chunk, int32_t* tpos) {
   if (!_at(chunk, *tpos, LIT_EFFECT)) {
     return false;
@@ -825,7 +827,7 @@ static bool _parse_effect_spec(ParseState* ps, TokenChunk* chunk, int32_t* tpos)
   for (;;) {
     Token* t = _peek(chunk, *tpos);
     if (!t || (t->term_id != TOK_TOK_ID && t->term_id != TOK_HOOK_BEGIN && t->term_id != TOK_HOOK_END &&
-               t->term_id != TOK_HOOK_FAIL && t->term_id != TOK_HOOK_UNPARSE)) {
+               t->term_id != TOK_HOOK_FAIL && t->term_id != TOK_HOOK_UNPARSE && t->term_id != TOK_HOOK_NOOP)) {
       _error_at(ps, t, "expected effect");
       darray_del(ed.effects);
       return false;
@@ -1375,11 +1377,12 @@ bool parse_nest(ParseState* ps, const char* src) {
 
   // init symtabs for VPA token/hook numbering
   symtab_init(&ps->tokens, TOK_START);
-  symtab_init(&ps->hooks, 0);
-  symtab_intern(&ps->hooks, ".begin");   // HOOK_ID_BEGIN = 0
-  symtab_intern(&ps->hooks, ".end");     // HOOK_ID_END = 1
-  symtab_intern(&ps->hooks, ".fail");    // HOOK_ID_FAIL = 2
-  symtab_intern(&ps->hooks, ".unparse"); // HOOK_ID_UNPARSE = 3
+  symtab_init(&ps->hooks, 1);
+  symtab_intern(&ps->hooks, ".begin");   // HOOK_ID_BEGIN = 1
+  symtab_intern(&ps->hooks, ".end");     // HOOK_ID_END = 2
+  symtab_intern(&ps->hooks, ".fail");    // HOOK_ID_FAIL = 3
+  symtab_intern(&ps->hooks, ".unparse"); // HOOK_ID_UNPARSE = 4
+  symtab_intern(&ps->hooks, ".noop");    // HOOK_ID_NOOP = 5
   symtab_init(&ps->scope_names, SCOPE_START);
   symtab_init(&ps->rule_names, 0);
   symtab_init(&ps->re_frag_names, 0);

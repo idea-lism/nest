@@ -21,11 +21,12 @@
 // Helper: init tokens, hooks, scope_names, and rule_names symtabs as parse_nest would
 static void _init_symtabs(ParseState* ps) {
   symtab_init(&ps->tokens, 1);
-  symtab_init(&ps->hooks, 0);
-  symtab_intern(&ps->hooks, ".begin");   // HOOK_ID_BEGIN = 0
-  symtab_intern(&ps->hooks, ".end");     // HOOK_ID_END = 1
-  symtab_intern(&ps->hooks, ".fail");    // HOOK_ID_FAIL = 2
-  symtab_intern(&ps->hooks, ".unparse"); // HOOK_ID_UNPARSE = 3
+  symtab_init(&ps->hooks, 1);
+  symtab_intern(&ps->hooks, ".begin");   // HOOK_ID_BEGIN = 1
+  symtab_intern(&ps->hooks, ".end");     // HOOK_ID_END = 2
+  symtab_intern(&ps->hooks, ".fail");    // HOOK_ID_FAIL = 3
+  symtab_intern(&ps->hooks, ".unparse"); // HOOK_ID_UNPARSE = 4
+  symtab_intern(&ps->hooks, ".noop");    // HOOK_ID_NOOP = 5
   symtab_init(&ps->scope_names, 0);
   symtab_init(&ps->rule_names, 0);
 }

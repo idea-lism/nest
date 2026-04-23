@@ -4,9 +4,9 @@
 #include <stdint.h>
 
 typedef enum {
-  SCOPE_START,
+  SCOPE_START = 1, // IMPORTANT: no scope / token at 0, so 0 can be used as sentinel
 
-  SCOPE_MAIN,
+  SCOPE_MAIN = 1,
   SCOPE_VPA,
   SCOPE_SCOPE,
   SCOPE_LIT_SCOPE,
@@ -70,6 +70,7 @@ typedef enum {
   TOK_HOOK_END,
   TOK_HOOK_FAIL,
   TOK_HOOK_UNPARSE,
+  TOK_HOOK_NOOP,
   TOK_VPA_ID,
   TOK_MODULE_ID,
   TOK_USER_HOOK_ID,
@@ -124,8 +125,8 @@ typedef struct {
   VpaScope* vpa_scopes;
   EffectDecls effect_decls;
   Symtab tokens;      // unified token numbering, start from 1
-  Symtab hooks;       // hook numbering, start from 0 (.begin=0, .end=1, .fail=2, .unparse=3)
-  Symtab scope_names; // scope numbering, start from 0
+  Symtab hooks;       // hook numbering, start from 1 (.begin=1, .end=2, .fail=3, .unparse=4, .noop=5)
+  Symtab scope_names; // scope numbering, start from 1
   Symtab rule_names;  // peg rule numbering, start from 0
 
   IgnoreSet ignores;

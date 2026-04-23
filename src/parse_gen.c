@@ -29,6 +29,7 @@ static void _build_vpa_commons(ReLex* l) {
   re_lex_add(l, "\\.end", __LINE__, 15, TOK_HOOK_END);
   re_lex_add(l, "\\.fail", __LINE__, 15, TOK_HOOK_FAIL);
   re_lex_add(l, "\\.unparse", __LINE__, 15, TOK_HOOK_UNPARSE);
+  re_lex_add(l, "\\.noop", __LINE__, 15, TOK_HOOK_NOOP);
 
   re_lex_add(l, "[a-z_][a-zA-Z0-9_]*", __LINE__, 15, TOK_VPA_ID);
   re_lex_add(l, "EOF", __LINE__, 15, TOK_PSEUDO_FRAG_EOF);

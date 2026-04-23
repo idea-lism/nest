@@ -36,7 +36,7 @@ typedef struct {
 
   // see the `action` rule in bootstrap.nest and numbering in parse.md
   // action_unit_id > 0: maps to token_id
-  // action_unit_id <= 0: maps to -hook_id
+  // action_unit_id < 0: maps to -hook_id
   VpaActionUnits action_units;
 
   int32_t source_line; // line in .nest file (for LLVM IR debug info), 0 = unknown
@@ -53,6 +53,7 @@ typedef struct {
   VpaUnits children;
   bool is_macro; // after pp_inline_macros no macro scope is left
   bool has_parser;
+  int32_t eof_action;  // action_id for VPA_EOF child, 0 = none
   int32_t source_line; // line in .nest file (for LLVM IR debug info), 0 = unknown
   int32_t source_col;
 } VpaScope;

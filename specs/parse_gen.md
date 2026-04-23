@@ -47,9 +47,9 @@ The tokens are defined in [src/parse.h](src/parse.h) as:
 
 ```c
 typedef enum {
-  SCOPE_START,
+  SCOPE_START = 1, // IMPORTANT: no scope / token at 0, so 0 can be used as sentinel
 
-  SCOPE_MAIN,
+  SCOPE_MAIN = 1,
   SCOPE_VPA,
   SCOPE_SCOPE,
   SCOPE_LIT_SCOPE,

@@ -284,7 +284,9 @@ static void _collect_peg_used_set(PegUnit* unit, int32_t** set, ParseState* ps, 
 }
 
 static const char* _term_name(ParseState* ps, int32_t id) {
-  if (id < symtab_count(&ps->scope_names)) {
+  int32_t scope_start = ps->scope_names.start_num;
+  int32_t scope_end = scope_start + symtab_count(&ps->scope_names);
+  if (id >= scope_start && id < scope_end) {
     return symtab_get(&ps->scope_names, id);
   }
   return symtab_get(&ps->tokens, id);
@@ -559,10 +561,12 @@ static const char* _unit_display_name(ParseState* ps, PegUnit* unit) {
     return _rule_name(ps, unit->id);
   }
   if (unit->kind == PEG_TERM) {
-    if (unit->id >= symtab_count(&ps->scope_names)) {
-      return symtab_get(&ps->tokens, unit->id);
-    } else {
+    int32_t scope_start = ps->scope_names.start_num;
+    int32_t scope_end = scope_start + symtab_count(&ps->scope_names);
+    if (unit->id >= scope_start && unit->id < scope_end) {
       return symtab_get(&ps->scope_names, unit->id);
+    } else {
+      return symtab_get(&ps->tokens, unit->id);
     }
   }
   return NULL;
@@ -756,7 +760,7 @@ bool pp_check_duplicate_tags(ParseState* ps) {
 
 static bool _au_has_hook(VpaActionUnits au, int32_t hook_id) {
   for (int32_t i = 0; i < (int32_t)darray_size(au); i++) {
-    if (au[i] <= 0 && (-au[i]) == hook_id) {
+    if (au[i] < 0 && (-au[i]) == hook_id) {
       return true;
     }
   }
@@ -768,13 +772,13 @@ static bool _unit_has_hook(VpaUnit* u, int32_t hook_id, ParseState* ps) {
     return true;
   }
   for (int32_t i = 0; i < (int32_t)darray_size(u->action_units); i++) {
-    if (u->action_units[i] <= 0) {
+    if (u->action_units[i] < 0) {
       int32_t hid = -u->action_units[i];
       if (hid >= HOOK_ID_BUILTIN_COUNT) {
         for (int32_t e = 0; e < (int32_t)darray_size(ps->effect_decls); e++) {
           if (ps->effect_decls[e].hook_id == hid) {
             for (int32_t ef = 0; ef < (int32_t)darray_size(ps->effect_decls[e].effects); ef++) {
-              if (ps->effect_decls[e].effects[ef] <= 0 && (-ps->effect_decls[e].effects[ef]) == hook_id) {
+              if (ps->effect_decls[e].effects[ef] < 0 && (-ps->effect_decls[e].effects[ef]) == hook_id) {
                 return true;
               }
             }

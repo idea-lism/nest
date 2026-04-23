@@ -82,7 +82,7 @@ static void _gen_scope_dfa(VpaGenInput* input, IrWriter* w, VpaScope* scope, Act
       const char* end_name = NULL;
       if (u->action_units) {
         for (int32_t j = 0; j < (int32_t)darray_size(u->action_units); j++) {
-          if (u->action_units[j] <= 0 && -u->action_units[j] == HOOK_ID_END) {
+          if (u->action_units[j] < 0 && -u->action_units[j] == HOOK_ID_END) {
             end_name = scope->name;
             break;
           }
@@ -110,7 +110,7 @@ static void _gen_scope_dfa(VpaGenInput* input, IrWriter* w, VpaScope* scope, Act
     if (action_au) {
       int32_t n_au = (int32_t)darray_size(action_au);
       for (int32_t j = 0; j < n_au; j++) {
-        if (action_au[j] <= 0 && -action_au[j] == HOOK_ID_END) {
+        if (action_au[j] < 0 && -action_au[j] == HOOK_ID_END) {
           end_name = scope->name;
           break;
         }
@@ -205,7 +205,7 @@ static void _gen_dispatch(VpaGenInput* input, IrWriter* w, Actions actions) {
     int32_t n_au = au ? (int32_t)darray_size(au) : 0;
     for (int32_t j = 0; j < n_au; j++) {
       int32_t auid = au[j];
-      if (auid <= 0) {
+      if (auid < 0) {
         int32_t hook_id = -auid;
         if (hook_id >= HOOK_ID_BUILTIN_COUNT) {
           const char* hook_name = symtab_get(&input->hooks, hook_id);
@@ -807,6 +807,7 @@ static void _gen_header(VpaGenInput* input, HeaderWriter* hw, const char* prefix
   // builtin hook ID defines (only user-facing ones)
   hdwriter_printf(hw, "#define HOOK_FAIL %d\n", -HOOK_ID_FAIL);
   hdwriter_printf(hw, "#define HOOK_UNPARSE %d\n", -HOOK_ID_UNPARSE);
+  hdwriter_printf(hw, "#define HOOK_NOOP %d\n", -HOOK_ID_NOOP);
   hdwriter_putc(hw, '\n');
 
   int32_t n_hooks = symtab_count(&input->hooks);

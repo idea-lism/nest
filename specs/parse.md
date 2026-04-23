@@ -349,11 +349,12 @@ ATTENTION: this numbering system is for produced AST, don't confuse it with the 
 Parser should produce what vpa_gen / peg_gen requires.
 
 - vpa_gen() & peg_gen() both needs tok_id, so we have symtab `ParseState.tokens` (num start from 1) for the uniq numbering
-- user defined needs hook_id, so we have symtab `ParseState.hooks` (num start from 0) for user-defined hook numbering
-  - the first enties are fixed for builtin hooks: .begin = 0, .end = 1, .fail = 2, .unparse = 3
+- user defined needs hook_id, so we have symtab `ParseState.hooks` (num start from 1) for hook numbering
+  - the first enties are fixed for builtin hooks: .begin = 1, .end = 2, .fail = 3, .unparse = 4, .noop = 5
+  - user-defined hooks number after primitive hooks
 - unified action_unit_id (see also `action` in [bootstrap syntax](bootstrap.nest)):
   - action_unit_id > 0: maps to token_id
-  - action_unit_id <= 0: maps to -hook_id
+  - action_unit_id < 0: maps to -hook_id
 
 ### Misc
 

@@ -508,7 +508,7 @@ TEST(test_hooks_structure) {
   assert(ok);
   // hooks has ".unparse"
   assert(symtab_find(&ps->hooks, ".unparse") >= 0);
-  // builtin hook IDs: .begin=0, .end=1, .unparse=3
+  // builtin hook IDs: .begin=1, .end=2, .unparse=4, .noop=5
   assert(symtab_find(&ps->hooks, ".begin") == HOOK_ID_BEGIN);
   assert(symtab_find(&ps->hooks, ".end") == HOOK_ID_END);
   assert(symtab_find(&ps->hooks, ".unparse") == HOOK_ID_UNPARSE);

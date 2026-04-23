@@ -47,6 +47,7 @@ vpa = /\s*\[\[vpa\]\]\n/ .begin {
   /\.end/ @hook_end
   /\.fail/ @hook_fail
   /\.unparse/ @hook_unparse
+  /\.noop/ @hook_noop
   ID @vpa_id
   "EOF" @pseudo_frag_eof
   /[A-Z]\w*/ @re_frag_id
@@ -185,6 +186,7 @@ effect = [
   @hook_end
   @hook_fail
   @hook_unparse
+  @hook_noop
 ]
 
 define_frag = "%define" @re_frag_id re
@@ -207,6 +209,7 @@ action = [
   @hook_end
   @hook_fail
   @hook_unparse
+  @hook_noop
   @user_hook_id
 ]
 
