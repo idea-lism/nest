@@ -396,6 +396,10 @@ Code generation and user API are specified in [peg_gen](peg_gen.md).
 
 `peg_analyze` returns a [PegGenInput](peg_gen.md) struct for code generation. Call `peg_analyze_free()` to release the analyzed closures when done.
 
+# Verbose level
+
+When verbose level > 1, print number of scopes, number of tag bits, color group allocations, final column layout for the memoize table.
+
 # Acceptance criteria
 
 - end-to-end test: create a terminal list (you can mimic json, for example), use generated code, to parse the list, and produce a memoize table, by the parsed memoize table, we can use the generated `{prefix}_load_{decl_rule_name}()` function to retrieve/drill-down the nodes, and the loading doesn't allocate heap memory at all.

@@ -1303,6 +1303,13 @@ PegGenInput peg_analyze(PegAnalyzeInput* input, int memoize_mode, const char* pr
     _alloc_tags(&lu, &closures[c]);
   }
 
+  if (input->verbose_level > 1) {
+    fprintf(stderr, "  [peg] %d scope closures, memoize=%s\n", closure_size,
+            memoize_mode == MEMOIZE_SHARED  ? "shared"
+            : memoize_mode == MEMOIZE_NAIVE ? "naive"
+                                            : "none");
+  }
+
   for (int32_t c = 0; c < closure_size; c++) {
     if (input->verbose_level) {
       fprintf(stderr, "  [peg] analyzing scope '%s'\n", closures[c].scope_name);
@@ -1314,6 +1321,29 @@ PegGenInput peg_analyze(PegAnalyzeInput* input, int memoize_mode, const char* pr
     } else {
       _alloc_naive_slots(&closures[c]);
       _alloc_tag_bits(&closures[c]);
+    }
+    if (input->verbose_level > 1) {
+      ScopeClosure* cl = &closures[c];
+      int32_t rule_size = (int32_t)darray_size(cl->scoped_rules);
+      int64_t aligned_slots = (cl->slots_size + 1) & ~(int64_t)1;
+      int64_t sizeof_col = cl->bits_bucket_size * 8 + aligned_slots * 4;
+      fprintf(stderr, "  [peg]   %d rules, %d color groups, sizeof_col=%lld bytes\n", rule_size, (int)cl->slots_size,
+              (long long)sizeof_col);
+      fprintf(stderr, "  [peg]   column layout: [bits %lld x i64][slots %lld x i32]\n", (long long)cl->bits_bucket_size,
+              (long long)aligned_slots);
+      for (int32_t r = 0; r < rule_size; r++) {
+        ScopedRule* sr = &cl->scoped_rules[r];
+        int32_t tag_size = symtab_count(&sr->tags);
+        fprintf(stderr, "  [peg]     %s: slot[%llu]", sr->scoped_rule_name, (unsigned long long)sr->slot_index);
+        if (memoize_mode == MEMOIZE_SHARED) {
+          fprintf(stderr, " seg[%llu]=0x%llx", (unsigned long long)sr->segment_index,
+                  (unsigned long long)sr->rule_bit_mask);
+        }
+        if (tag_size > 0) {
+          fprintf(stderr, " %d tags @bucket[%d]+%d", tag_size, sr->tag_bit_index, sr->tag_bit_offset);
+        }
+        fprintf(stderr, "\n");
+      }
     }
   }
 
