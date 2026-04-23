@@ -107,6 +107,8 @@ Some tokens and their meanings (details in bootstrap.nest):
 - `?` maybe, greedy
 - `+` plus, PEG possesive matching
 - `*` star, PEG possesive matching
+- `&` and-predicate (lookahead): `&e` succeeds iff `e` matches, consumes nothing
+- `!` not-predicate (lookahead): `!e` succeeds iff `e` fails, consumes nothing
 - string literals, replace them with auto-generated token the same way as in vpa parser.
   - for example, `"+"` auto-creates token `@lit.+`.
 
@@ -235,8 +237,7 @@ typedef void* DStr; // darray of chars
 bool _parse_peg_str(const char* src, TokenChunk* chunk, int32_t* tpos) {
   DStr buf = darray_new(sizeof(int32_t), 0);
   char* b = (char*)buf;
-  int32_t n = (int32_t)darray_size(chunk->tokens);
-  for (int32_t i = *tpos; i < n; i++) {
+  for (size_t i = *tpos; i < darray_size(chunk->tokens); i++) {
     Token* t = &chunk->tokens[i];
     switch (t->tok_id) {
       case TOK_CHAR: {
@@ -287,8 +288,7 @@ bool _parse_re_str(const char* src, TokenChunk* chunk, int32_t* tpos) {
   unit.tok_name = chunk->value;
 
   ReIr re = re_ir_new();
-  int32_t n = (int32_t)darray_size(chunk->tokens);
-  for (int32_t i = *tpos; i < n; i++) {
+  for (size_t i = *tpos; i < darray_size(chunk->tokens); i++) {
     Token* t = &chunk->tokens[i];
     switch (t->tok_id) {
       case TOK_CHAR: {

@@ -9,6 +9,7 @@ This subsystem depends **only** on [coloring](coloring.md) (and basic utilities:
 For one `ScopeClosure`:
 
 1. Compute per-rule exclusiveness info (`nullable`, `first_set`, `last_set`, `min_size`, `max_size`) via fix-point analysis.
+   - `SCOPED_UNIT_AND` / `SCOPED_UNIT_NOT` (lookaheads) are always `nullable = true`, `min_size = 0`, `max_size = 0`, and contribute nothing to `first_set` / `last_set` (they consume no tokens).
 2. Build an interference graph and k-color it (via [coloring](coloring.md)).
 3. Allocate tag bits (mode-dependent).
 4. Finalize physical layout: fill `bits[]` bucket indices, slot indices, and update `ScopeClosure.bits_bucket_size` / `ScopeClosure.slots_size`.

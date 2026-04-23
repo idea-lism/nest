@@ -43,6 +43,8 @@ struct PegUnit {
   PegUnitKind interlace_rhs_kind; // 0 | PEG_CALL | PEG_TERM
   int32_t interlace_rhs_id; // calee rule's global_id | token id | scope id
 
+  char lookahead; // '&', '!', or 0 — prefix predicate (see bootstrap.nest peg_unit)
+
   char* tag;         // (owned, may be NULL)
   PegUnits children; // seq members or branch members; may be NULL (darray_size handles NULL → 0)
 };
@@ -92,6 +94,14 @@ It breaks down multiplier rules so we can use "linked-list" in memoize table to 
   - check [PEG IR](peg_ir.md) and the `has_elem` and `get_next` functions in [PEG GEN](peg_gen.md) for more details about the single-bit linking works.
 - analysis don't need to consider nested case, because by syntax, there won't be any multiplier inside multiplier -- we won't have labels like `foo$bar$1$2`.
 
+It transforms lookahead predicates:
+- When `PegUnit.lookahead == '&'`: create `ScopedUnit` with `kind = SCOPED_UNIT_AND`, `as.base` points to the recursively-converted inner unit.
+- When `PegUnit.lookahead == '!'`: same, but `kind = SCOPED_UNIT_NOT`.
+- Lookaheads do **not** generate child memoize rules. They are inline-only: the inner expression is parsed but never cached on its own. (The parent rule's slot still caches the entire rule's result, including the fact that the lookahead succeeded/failed.)
+- Lookaheads **cannot** carry tags (`tag_bit_local_offset = -1`). A lookahead consumes nothing, so there is nothing meaningful to tag.
+- The entire inner subtree must also have all `tag_bit_local_offset` forced to `-1`. The inner parse is speculative — writing tag bits would contaminate the parent rule's `%tag_bits` with meaningless state (col is always restored regardless of match outcome).
+- `multiplier` must be `0` when `lookahead != 0` (enforced by parser grammar).
+
 Then we will have this info:
 
 ```c
@@ -103,7 +113,9 @@ typedef enum {
 
   SCOPED_UNIT_MAYBE,
   SCOPED_UNIT_STAR,
-  SCOPED_UNIT_PLUS
+  SCOPED_UNIT_PLUS,
+  SCOPED_UNIT_AND, // &e — and-predicate (lookahead)
+  SCOPED_UNIT_NOT, // !e — not-predicate (lookahead)
 } ScopedUnitKind;
 
 struct ScopedUnit;
@@ -123,7 +135,7 @@ struct ScopedUnit {
     const char* callee; // scoped_rule_name from symtab, not owned
     int32_t term_id;
     ScopedUnits children; // for branches & seq
-    ScopedUnit* base; // maybe
+    ScopedUnit* base; // maybe, and-predicate, not-predicate
     ScopedInterlace interlace; // for star & plus
   } as;
 

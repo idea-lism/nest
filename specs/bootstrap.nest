@@ -76,6 +76,8 @@ lit_scope = "@{" .begin {
   "?"
   "+"
   "*"
+  "&"
+  "!"
 }
 
 peg = /\s*\[\[peg\]\]\n/ .begin {
@@ -285,13 +287,24 @@ peg_rule = @peg_id @peg_assign seq
 seq = peg_unit+
 
 peg_unit = [
+  "&" peg_lookahead_unit
+  "!" peg_lookahead_unit
   @peg_id multiplier?
   @peg_tok_id multiplier?
   peg_str multiplier?
   branches
 ]
 
+peg_lookahead_unit = [
+  @peg_id
+  @peg_tok_id
+  peg_str
+  branches
+]
+
 peg_simple_unit = [
+  "&" peg_lookahead_unit
+  "!" peg_lookahead_unit
   @peg_id multiplier?
   @peg_tok_id multiplier?
   peg_str multiplier?

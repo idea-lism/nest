@@ -327,6 +327,8 @@ typedef struct {
 
 just replace the `@` & `.` with `_` for tokens.
 
+Lookahead predicates (`&e`, `!e`) consume no input and produce no node fields. The node field layout walker skips `SCOPED_UNIT_AND` and `SCOPED_UNIT_NOT`.
+
 # Error handling in generated code
 
 TODO: implement cut operator `^`, when no terminal can match after cut, report cut error.

@@ -247,10 +247,47 @@ sep_fail:
 end_bb:
 ```
 
+### And-predicate (&)
+
+Succeeds iff `e` matches. Consumes nothing — `col` is always restored.
+
+```c
+gen(&e, fail):
+  save(col)
+  gen(e, and_fail)
+  restore()
+  discard()
+  br(done_bb)
+and_fail:
+  restore()
+  discard()
+  br(fail)
+done_bb:
+```
+
+### Not-predicate (!)
+
+Succeeds iff `e` fails. Consumes nothing — `col` is always restored.
+
+```c
+gen(!e, fail):
+  save(col)
+  gen(e, not_succ)
+  restore()
+  discard()
+  br(fail)
+not_succ:
+  restore()
+  discard()
+  br(done_bb)
+done_bb:
+```
+
 # Notes
 
 - `gen` always has an `fail` label. On failure, control transfers there. On success, it falls through and returns the match length.
 - `?` and `*` always succeed — they never branch to `fail`.
+- `&` and `!` always restore `col` — they never consume input.
 - `+` and `*` are possessive (no backtracking).
 - `+<sep>` / `*<sep>` interlace: the separator is only consumed when followed by a successful element match. The loop exits before accumulating the separator, discarding both `sr` and `er`.
 
