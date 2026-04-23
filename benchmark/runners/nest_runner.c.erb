@@ -68,11 +68,11 @@ int main(int argc, char** argv) {
     // One more parse to collect stats
     ParseContext ctx = {0};
     ParseResult res = <%= prefix %>_parse(&ctx, src);
-    int32_t token_count = res.main.tc ? (int32_t)darray_size(res.main.tc->tokens) : 0;
-    int32_t chunk_count = res.tt ? (int32_t)darray_size(res.tt->table) : 0;
-    int32_t error_count = res.errors ? (int32_t)darray_size(res.errors) : 0;
+    size_t token_count = res.main.tc ? darray_size(res.main.tc->tokens) : 0;
+    size_t chunk_count = res.tt ? darray_size(res.tt->table) : 0;
+    size_t error_count = res.errors ? darray_size(res.errors) : 0;
     if (error_count > 0) {
-        for (int32_t i = 0; i < error_count; i++) {
+        for (size_t i = 0; i < error_count; i++) {
             fprintf(stderr, "parse error: %s (offset %d)\n",
                     res.errors[i].message ? res.errors[i].message : "(null)",
                     res.errors[i].cp_offset);

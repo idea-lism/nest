@@ -179,7 +179,7 @@ static int32_t _cmd_lex(int32_t argc, char** argv) {
 }
 
 static bool _is_scope_term_ex(Symtab* scope_names, int32_t id) {
-  return id < symtab_count(scope_names) + scope_names->start_num;
+  return id < (int32_t)symtab_count(scope_names) + scope_names->start_num;
 }
 
 static const char* _term_name_ex(Symtab* tokens, Symtab* scope_names, int32_t id) {
@@ -334,8 +334,7 @@ static void _gen_example_c(FILE* f, const char* prefix, ParseState* ps) {
   // Token list printer: walk chunks recursively, scope tokens recurse with depth+1
   int32_t total_scope_ids = symtab_count(scope_names) + scope_names->start_num;
   fprintf(f, "static void print_tokens(TokenTree* tt, TokenChunk* chunk, int depth) {\n");
-  fprintf(f, "  int32_t n = (int32_t)darray_size(chunk->tokens);\n");
-  fprintf(f, "  for (int32_t i = 0; i < n; i++) {\n");
+  fprintf(f, "  for (size_t i = 0; i < darray_size(chunk->tokens); i++) {\n");
   fprintf(f, "    Token* tok = &chunk->tokens[i];\n");
   fprintf(f, "    if (tok->term_id < %d) {\n", total_scope_ids);
   fprintf(f, "      print_tokens(tt, &tt->table[tok->chunk_id], depth + 1);\n");
@@ -374,9 +373,9 @@ static void _gen_example_c(FILE* f, const char* prefix, ParseState* ps) {
                           rule_names, &fd);
       _exd_free(&fd);
     } else if (body->kind == PEG_BRANCHES) {
-      int32_t nb = (int32_t)darray_size(body->children);
+      size_t nb = darray_size(body->children);
       bool all_tagged = true;
-      for (int32_t bi = 0; bi < nb; bi++) {
+      for (size_t bi = 0; bi < nb; bi++) {
         if (!body->children[bi].tag) {
           all_tagged = false;
         }
@@ -384,7 +383,7 @@ static void _gen_example_c(FILE* f, const char* prefix, ParseState* ps) {
       ExDedup fd;
       _exd_init(&fd);
       if (all_tagged) {
-        for (int32_t bi = 0; bi < nb; bi++) {
+        for (size_t bi = 0; bi < nb; bi++) {
           PegUnit* branch = &body->children[bi];
           char* stag = _sanitize_ex(branch->tag);
           fprintf(f, "  %s (_n.is.%s) {\n", bi == 0 ? "if" : "} else if", stag);
@@ -399,7 +398,7 @@ static void _gen_example_c(FILE* f, const char* prefix, ParseState* ps) {
         fprintf(f, "  }\n");
       } else {
         // Untagged branches — all children share one dedup, only matched ones print.
-        for (int32_t bi = 0; bi < nb; bi++) {
+        for (size_t bi = 0; bi < nb; bi++) {
           PegUnit* branch = &body->children[bi];
           if (branch->kind == PEG_SEQ) {
             _gen_print_children(f, prefix, branch->children, (int32_t)darray_size(branch->children), tokens,

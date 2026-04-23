@@ -242,19 +242,19 @@ static VpaActionUnits _make_au_tok(int32_t tok_id) {
 }
 
 static void _free_gen_input(VpaGenInput* input) {
-  for (int32_t i = 0; i < (int32_t)darray_size(input->scopes); i++) {
+  for (size_t i = 0; i < darray_size(input->scopes); i++) {
     VpaScope* s = &input->scopes[i];
     free(s->name);
     re_ir_free(s->leader.re);
     darray_del(s->leader.action_units);
-    for (int32_t j = 0; j < (int32_t)darray_size(s->children); j++) {
+    for (size_t j = 0; j < darray_size(s->children); j++) {
       re_ir_free(s->children[j].re);
       darray_del(s->children[j].action_units);
     }
     darray_del(s->children);
   }
   darray_del(input->scopes);
-  for (int32_t i = 0; i < (int32_t)darray_size(input->effect_decls); i++) {
+  for (size_t i = 0; i < darray_size(input->effect_decls); i++) {
     darray_del(input->effect_decls[i].effects);
   }
   darray_del(input->effect_decls);

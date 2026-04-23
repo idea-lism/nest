@@ -2,6 +2,7 @@
 #pragma once
 
 #include <stdint.h>
+#include <stddef.h>
 
 typedef struct {
   char* buf;         // darray of char — all strings concatenated, '\0'-separated
@@ -16,4 +17,4 @@ int32_t symtab_intern_f(Symtab* st, const char* fmt_str, ...);
 int32_t symtab_find(const Symtab* st, const char* name);
 int32_t symtab_find_f(const Symtab* st, const char* fmt_str, ...);
 const char* symtab_get(const Symtab* st, int32_t id);
-int32_t symtab_count(const Symtab* st);
+size_t symtab_count(const Symtab* st);

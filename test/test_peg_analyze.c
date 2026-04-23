@@ -23,7 +23,7 @@
 static void _free_unit(PegUnit* u) {
   free(u->tag);
   if (u->children) {
-    for (int32_t i = 0; i < (int32_t)darray_size(u->children); i++) {
+    for (size_t i = 0; i < darray_size(u->children); i++) {
       _free_unit(&u->children[i]);
     }
     darray_del(u->children);
@@ -31,7 +31,7 @@ static void _free_unit(PegUnit* u) {
 }
 
 static void _free_input(PegAnalyzeInput* input) {
-  for (int32_t i = 0; i < (int32_t)darray_size(input->rules); i++) {
+  for (size_t i = 0; i < darray_size(input->rules); i++) {
     _free_unit(&input->rules[i].body);
   }
   darray_del(input->rules);
@@ -137,7 +137,7 @@ TEST(test_scoped_rules_breakdown) {
   ScopeClosure* cl = &result.scope_closures[0];
 
   // should have scoped rules: main, value, array, value_list, plus sub-rules from multipliers
-  int32_t rule_count = (int32_t)darray_size(cl->scoped_rules);
+  size_t rule_count = darray_size(cl->scoped_rules);
   assert(rule_count >= 4); // at least 4 original rules
 
   // check named rules exist

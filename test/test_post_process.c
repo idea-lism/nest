@@ -33,7 +33,7 @@ static void _init_symtabs(ParseState* ps) {
 
 // Helper: get the first token name from a VpaUnit's action_units, or NULL
 static const char* _unit_tok_name(VpaUnit* u, Symtab* tokens) {
-  for (int32_t i = 0; i < (int32_t)darray_size(u->action_units); i++) {
+  for (size_t i = 0; i < darray_size(u->action_units); i++) {
     if (u->action_units[i] > 0) {
       return symtab_get(tokens, u->action_units[i]);
     }
@@ -128,7 +128,7 @@ TEST(test_inline_macros) {
   bool found_space = false;
   bool found_nl = false;
   VpaScope* mr = &ps->vpa_scopes[0];
-  for (int32_t j = 0; j < (int32_t)darray_size(mr->children); j++) {
+  for (size_t j = 0; j < darray_size(mr->children); j++) {
     VpaUnit* u = &mr->children[j];
     const char* tok = _unit_tok_name(u, &ps->tokens);
     if (u->kind == VPA_RE && tok) {
@@ -553,7 +553,7 @@ TEST(test_inline_macros_literals) {
   VpaScope* mr = &ps->vpa_scopes[0];
   bool found_plus = false;
   bool found_minus = false;
-  for (int32_t j = 0; j < (int32_t)darray_size(mr->children); j++) {
+  for (size_t j = 0; j < darray_size(mr->children); j++) {
     VpaUnit* u = &mr->children[j];
     const char* tok = _unit_tok_name(u, &ps->tokens);
     if (u->kind == VPA_RE && tok) {

@@ -68,7 +68,7 @@ static PegRule* _lookup_rule(RuleLookup* lu, int32_t global_id) {
 static void _free_rule_lookup(RuleLookup* lu) { XFREE(lu->rule_by_gid); }
 
 static bool _is_scope_term(PegAnalyzeInput* input, int32_t id) {
-  return id < symtab_count(&input->scope_names) + input->scope_names.start_num;
+  return id < (int32_t)symtab_count(&input->scope_names) + input->scope_names.start_num;
 }
 
 static const char* _term_name(PegAnalyzeInput* input, int32_t id) {

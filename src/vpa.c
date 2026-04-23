@@ -28,8 +28,8 @@ static bool _au_equal(VpaActionUnits a, VpaActionUnits b) {
   if (!a || !b) {
     return false;
   }
-  int32_t na = (int32_t)darray_size(a);
-  int32_t nb = (int32_t)darray_size(b);
+  size_t na = darray_size(a);
+  size_t nb = darray_size(b);
   if (na != nb) {
     return false;
   }
@@ -40,8 +40,8 @@ static int32_t _intern_action(Actions* actions, VpaActionUnits au, const char* e
   if (!au || darray_size(au) == 0) {
     return 0;
   }
-  int32_t n = (int32_t)darray_size(*actions);
-  for (int32_t i = 1; i < n; i++) {
+  size_t n = darray_size(*actions);
+  for (size_t i = 1; i < n; i++) {
     if (_au_equal((*actions)[i].action_units, au)) {
       return i;
     }
@@ -52,8 +52,8 @@ static int32_t _intern_action(Actions* actions, VpaActionUnits au, const char* e
 }
 
 static EffectDecl* _find_effect(VpaGenInput* input, int32_t hook_id) {
-  int32_t n = (int32_t)darray_size(input->effect_decls);
-  for (int32_t i = 0; i < n; i++) {
+  size_t n = darray_size(input->effect_decls);
+  for (size_t i = 0; i < n; i++) {
     if (input->effect_decls[i].hook_id == hook_id) {
       return &input->effect_decls[i];
     }
@@ -81,7 +81,7 @@ static void _gen_scope_dfa(VpaGenInput* input, IrWriter* w, VpaScope* scope, Act
     if (u->kind == VPA_EOF) {
       const char* end_name = NULL;
       if (u->action_units) {
-        for (int32_t j = 0; j < (int32_t)darray_size(u->action_units); j++) {
+        for (size_t j = 0; j < darray_size(u->action_units); j++) {
           if (u->action_units[j] < 0 && -u->action_units[j] == HOOK_ID_END) {
             end_name = scope->name;
             break;
@@ -95,7 +95,7 @@ static void _gen_scope_dfa(VpaGenInput* input, IrWriter* w, VpaScope* scope, Act
     VpaActionUnits action_au = u->action_units;
     int32_t begin_scope_id = -1;
     if (u->kind == VPA_CALL) {
-      for (int32_t s = 0; s < (int32_t)darray_size(input->scopes); s++) {
+      for (size_t s = 0; s < darray_size(input->scopes); s++) {
         if (input->scopes[s].scope_id == u->call_scope_id) {
           if (input->scopes[s].leader.action_units) {
             action_au = input->scopes[s].leader.action_units;
@@ -126,7 +126,7 @@ static void _gen_scope_dfa(VpaGenInput* input, IrWriter* w, VpaScope* scope, Act
     if (u->kind == VPA_RE) {
       ir = u->re;
     } else if (u->kind == VPA_CALL) {
-      for (int32_t s = 0; s < (int32_t)darray_size(input->scopes); s++) {
+      for (size_t s = 0; s < darray_size(input->scopes); s++) {
         if (input->scopes[s].scope_id == u->call_scope_id) {
           ir = input->scopes[s].leader.re;
           break;

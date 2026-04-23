@@ -61,7 +61,7 @@ static ScopeClosure _make_closure(const char* scope_name, int32_t rule_size, con
 }
 
 static void _free_closure(ScopeClosure* cl) {
-  for (int32_t i = 0; i < (int32_t)darray_size(cl->scoped_rules); i++) {
+  for (size_t i = 0; i < darray_size(cl->scoped_rules); i++) {
     ScopedRule* sr = &cl->scoped_rules[i];
     symtab_free(&sr->tags);
     if (sr->first_set) {
@@ -91,13 +91,13 @@ static BucketUsage _compute_usage_shared(ScopeClosure* cl) {
     u.used_in_bucket[i] = 0;
   }
 
-  int32_t rule_size = (int32_t)darray_size(cl->scoped_rules);
+  size_t rule_size = darray_size(cl->scoped_rules);
 
   // Slot bits: one set per segment (use rule_bit_mask popcount summed).
   // Safer: use segment_mask's popcount once per seen segment.
   int32_t seen_size = (int32_t)cl->slots_size;
   bool* seg_seen = calloc((size_t)seen_size, sizeof(bool));
-  for (int32_t i = 0; i < rule_size; i++) {
+  for (size_t i = 0; i < rule_size; i++) {
     ScopedRule* sr = &cl->scoped_rules[i];
     int32_t color = sr->segment_color;
     if (color >= 0 && color < seen_size && !seg_seen[color]) {
@@ -110,7 +110,7 @@ static BucketUsage _compute_usage_shared(ScopeClosure* cl) {
 
   // Tag bits: each rule adds tag_bit_count bits starting at tag_bit_index + tag_bit_offset.
   // Bits may span multiple buckets (big rules).
-  for (int32_t i = 0; i < rule_size; i++) {
+  for (size_t i = 0; i < rule_size; i++) {
     ScopedRule* sr = &cl->scoped_rules[i];
     if (sr->tag_bit_count <= 0) {
       continue;
@@ -138,8 +138,8 @@ static BucketUsage _compute_usage_naive(ScopeClosure* cl) {
     u.used_in_bucket[i] = 0;
   }
 
-  int32_t rule_size = (int32_t)darray_size(cl->scoped_rules);
-  for (int32_t i = 0; i < rule_size; i++) {
+  size_t rule_size = darray_size(cl->scoped_rules);
+  for (size_t i = 0; i < rule_size; i++) {
     ScopedRule* sr = &cl->scoped_rules[i];
     if (sr->tag_bit_count <= 0) {
       continue;

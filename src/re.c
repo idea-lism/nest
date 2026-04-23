@@ -61,7 +61,7 @@ void re_range_neg(ReRange* range) {
   ReInterval* gaps = darray_new(sizeof(ReInterval), 0);
   int32_t pos = 0;
 
-  for (int32_t i = 0; i < (int32_t)darray_size(range->ivs); i++) {
+  for (size_t i = 0; i < darray_size(range->ivs); i++) {
     if (pos < range->ivs[i].start) {
       ReInterval iv = {pos, range->ivs[i].start - 1};
       darray_push(gaps, iv);
@@ -184,7 +184,7 @@ void re_append_range(Re* re, ReRange* range, DebugInfo di) {
   assert(darray_size(range->ivs) > 0);
   GroupFrame* f = _top(re);
   int32_t s = _alloc_state(re);
-  for (int32_t i = 0; i < (int32_t)darray_size(range->ivs); i++) {
+  for (size_t i = 0; i < darray_size(range->ivs); i++) {
     aut_transition(re->aut, (TransitionDef){f->cur_state, s, range->ivs[i].start, range->ivs[i].end}, di);
   }
   f->cur_state = s;
@@ -275,7 +275,7 @@ void re_rparen(Re* re) {
   _save_branch_end(f, f->cur_state);
 
   int32_t exit_state = _alloc_state(re);
-  for (int32_t i = 0; i < (int32_t)darray_size(f->branch_ends); i++) {
+  for (size_t i = 0; i < darray_size(f->branch_ends); i++) {
     aut_epsilon(re->aut, f->branch_ends[i], exit_state);
   }
 

@@ -22,8 +22,7 @@ void symtab_free(Symtab* st) {
 }
 
 int32_t symtab_find(const Symtab* st, const char* name) {
-  int32_t n = (int32_t)darray_size(st->offsets);
-  for (int32_t i = 0; i < n; i++) {
+  for (size_t i = 0; i < darray_size(st->offsets); i++) {
     if (strcmp(st->buf + st->offsets[i], name) == 0) {
       return i + st->start_num;
     }
@@ -77,4 +76,4 @@ int32_t symtab_intern_f(Symtab* st, const char* fmt_str, ...) {
 
 const char* symtab_get(const Symtab* st, int32_t id) { return st->buf + st->offsets[id - st->start_num]; }
 
-int32_t symtab_count(const Symtab* st) { return (int32_t)darray_size(st->offsets); }
+size_t symtab_count(const Symtab* st) { return darray_size(st->offsets); }

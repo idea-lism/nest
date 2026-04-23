@@ -459,7 +459,7 @@ static ReIr _parse_re_unit(ParseState* ps, TokenChunk* chunk, int32_t* tpos, ReI
   case SCOPE_RE_REF: {
     _next(chunk, tpos);
     TokenChunk* ref_chunk = _scope_chunk(ps, t);
-    for (int32_t i = 0; i < (int32_t)darray_size(ref_chunk->tokens); i++) {
+    for (size_t i = 0; i < darray_size(ref_chunk->tokens); i++) {
       if (ref_chunk->tokens[i].term_id == TOK_RE_REF) {
         Token* ref_tok = &ref_chunk->tokens[i];
         int32_t fid = _frag_id(ps, ref_tok);
@@ -484,9 +484,9 @@ static ReIr _parse_re_unit(ParseState* ps, TokenChunk* chunk, int32_t* tpos, ReI
 
 // re_quantified = re_unit [ "?" | "+" | "*" | (none) ]
 static ReIr _parse_re_quantified(ParseState* ps, TokenChunk* chunk, int32_t* tpos, ReIr ir, bool icase) {
-  int32_t s = (int32_t)darray_size(ir);
+  size_t s = darray_size(ir);
   ir = _parse_re_unit(ps, chunk, tpos, ir, icase);
-  int32_t e = (int32_t)darray_size(ir);
+  size_t e = darray_size(ir);
   if (s == e) {
     return ir;
   }
@@ -564,7 +564,7 @@ static bool _parse_charclass(ParseState* ps, TokenChunk* chunk) {
 static bool _parse_re_str(ParseState* ps, TokenChunk* chunk) {
   _parse_peg_str(ps, chunk);
   ReIr ir = re_ir_new();
-  for (int32_t i = 0; i < (int32_t)darray_size(chunk->tokens); i++) {
+  for (size_t i = 0; i < darray_size(chunk->tokens); i++) {
     Token* t = &chunk->tokens[i];
     if (_is_str_char(t->term_id)) {
       Location loc = _tloc(ps, t);
@@ -579,7 +579,7 @@ static bool _parse_re_str(ParseState* ps, TokenChunk* chunk) {
 // peg_str scope → owned string
 static bool _parse_peg_str(ParseState* ps, TokenChunk* chunk) {
   char* buf = darray_new(sizeof(char), 0);
-  for (int32_t i = 0; i < (int32_t)darray_size(chunk->tokens); i++) {
+  for (size_t i = 0; i < darray_size(chunk->tokens); i++) {
     Token* t = &chunk->tokens[i];
     if (!_is_str_char(t->term_id)) {
       return false;
@@ -1051,14 +1051,13 @@ static bool _validate_re_unit(ParseState* ps, VpaUnit* u) {
 }
 
 static bool _validate_all_re_ir(ParseState* ps) {
-  int32_t n = (int32_t)darray_size(ps->vpa_scopes);
-  for (int32_t i = 0; i < n; i++) {
+  for (size_t i = 0; i < darray_size(ps->vpa_scopes); i++) {
     VpaScope* scope = &ps->vpa_scopes[i];
     if (!_validate_re_unit(ps, &scope->leader)) {
       return false;
     }
-    int32_t m = (int32_t)darray_size(scope->children);
-    for (int32_t j = 0; j < m; j++) {
+    size_t m = darray_size(scope->children);
+    for (size_t j = 0; j < m; j++) {
       if (!_validate_re_unit(ps, &scope->children[j])) {
         return false;
       }
@@ -1245,7 +1244,7 @@ static bool _parse_branch_line(ParseState* ps, TokenChunk* chunk, int32_t* tpos,
   } else if (_at(chunk, *tpos, SCOPE_PEG_TAG)) {
     Token* sc = _next(chunk, tpos);
     TokenChunk* tag_chunk = _scope_chunk(ps, sc);
-    for (int32_t i = 0; i < (int32_t)darray_size(tag_chunk->tokens); i++) {
+    for (size_t i = 0; i < darray_size(tag_chunk->tokens); i++) {
       if (tag_chunk->tokens[i].term_id == TOK_TAG_ID) {
         b->tag = _tok_str(ps, &tag_chunk->tokens[i]);
         break;
@@ -1298,7 +1297,7 @@ static void _free_vpa_unit(VpaUnit* u) {
 
 static void _free_peg_unit(PegUnit* u) {
   XFREE(u->tag);
-  for (int32_t i = 0; i < (int32_t)darray_size(u->children); i++) {
+  for (size_t i = 0; i < darray_size(u->children); i++) {
     _free_peg_unit(&u->children[i]);
   }
   darray_del(u->children);
@@ -1318,25 +1317,25 @@ static void _free_state(ParseState* ps) {
     }
   }
   tt_tree_del(ps->tree, false);
-  for (int32_t i = 0; i < (int32_t)darray_size(ps->vpa_scopes); i++) {
+  for (size_t i = 0; i < darray_size(ps->vpa_scopes); i++) {
     XFREE(ps->vpa_scopes[i].name);
     _free_vpa_unit(&ps->vpa_scopes[i].leader);
-    for (int32_t j = 0; j < (int32_t)darray_size(ps->vpa_scopes[i].children); j++) {
+    for (size_t j = 0; j < darray_size(ps->vpa_scopes[i].children); j++) {
       _free_vpa_unit(&ps->vpa_scopes[i].children[j]);
     }
     darray_del(ps->vpa_scopes[i].children);
   }
   darray_del(ps->vpa_scopes);
-  for (int32_t i = 0; i < (int32_t)darray_size(ps->peg_rules); i++) {
+  for (size_t i = 0; i < darray_size(ps->peg_rules); i++) {
     _free_peg_unit(&ps->peg_rules[i].body);
   }
   darray_del(ps->peg_rules);
-  for (int32_t i = 0; i < (int32_t)darray_size(ps->re_frags); i++) {
+  for (size_t i = 0; i < darray_size(ps->re_frags); i++) {
     re_ir_free(ps->re_frags[i]);
   }
   darray_del(ps->re_frags);
   symtab_free(&ps->re_frag_names);
-  for (int32_t i = 0; i < (int32_t)darray_size(ps->effect_decls); i++) {
+  for (size_t i = 0; i < darray_size(ps->effect_decls); i++) {
     darray_del(ps->effect_decls[i].effects);
   }
   darray_del(ps->effect_decls);
@@ -1394,7 +1393,7 @@ bool parse_nest(ParseState* ps, const char* src) {
   _lex_scope(&lctx, SCOPE_MAIN);
 
   int32_t vpa_idx = -1, peg_idx = -1;
-  for (int32_t i = 0; i < (int32_t)darray_size(ps->tree->table); i++) {
+  for (size_t i = 0; i < darray_size(ps->tree->table); i++) {
     if (ps->tree->table[i].scope_id == SCOPE_VPA && vpa_idx < 0) {
       vpa_idx = i;
     } else if (ps->tree->table[i].scope_id == SCOPE_PEG && peg_idx < 0) {

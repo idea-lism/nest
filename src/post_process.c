@@ -23,9 +23,9 @@ static VpaUnit _clone_vpa_unit(VpaUnit* src) {
   dst.re = re_ir_clone(src->re);
   dst.macro_name = src->macro_name ? strdup(src->macro_name) : NULL;
   if (src->action_units) {
-    int32_t n = (int32_t)darray_size(src->action_units);
-    dst.action_units = darray_new(sizeof(int32_t), (size_t)n);
-    for (int32_t i = 0; i < n; i++) {
+    size_t n = darray_size(src->action_units);
+    dst.action_units = darray_new(sizeof(int32_t), n);
+    for (size_t i = 0; i < n; i++) {
       dst.action_units[i] = src->action_units[i];
     }
   }
@@ -39,7 +39,7 @@ static bool _has_leader(VpaScope* s) { return s->leader.re != NULL; }
 // --- Integer set utilities (darray of int32_t) ---
 
 static bool _id_set_has(int32_t* set, int32_t id) {
-  for (int32_t i = 0; i < (int32_t)darray_size(set); i++) {
+  for (size_t i = 0; i < darray_size(set); i++) {
     if (set[i] == id) {
       return true;
     }
@@ -56,7 +56,7 @@ static void _id_set_add(int32_t** set, int32_t id) {
 // --- Lookup functions ---
 
 static VpaScope* _find_scope(ParseState* ps, const char* name) {
-  for (int32_t i = 0; i < (int32_t)darray_size(ps->vpa_scopes); i++) {
+  for (size_t i = 0; i < darray_size(ps->vpa_scopes); i++) {
     if (strcmp(ps->vpa_scopes[i].name, name) == 0) {
       return &ps->vpa_scopes[i];
     }
@@ -67,7 +67,7 @@ static VpaScope* _find_scope(ParseState* ps, const char* name) {
 static const char* _rule_name(ParseState* ps, int32_t global_id) { return symtab_get(&ps->rule_names, global_id); }
 
 static PegRule* _find_peg_rule(ParseState* ps, const char* name) {
-  for (int32_t i = 0; i < (int32_t)darray_size(ps->peg_rules); i++) {
+  for (size_t i = 0; i < darray_size(ps->peg_rules); i++) {
     const char* rn = _rule_name(ps, ps->peg_rules[i].global_id);
     if (rn && strcmp(rn, name) == 0) {
       return &ps->peg_rules[i];
@@ -79,7 +79,7 @@ static PegRule* _find_peg_rule(ParseState* ps, const char* name) {
 // --- Post-processing: inline macros ---
 
 static VpaScope* _find_macro(ParseState* ps, const char* name) {
-  for (int32_t i = 0; i < (int32_t)darray_size(ps->vpa_scopes); i++) {
+  for (size_t i = 0; i < darray_size(ps->vpa_scopes); i++) {
     if (ps->vpa_scopes[i].is_macro && strcmp(ps->vpa_scopes[i].name, name) == 0) {
       return &ps->vpa_scopes[i];
     }
@@ -89,12 +89,12 @@ static VpaScope* _find_macro(ParseState* ps, const char* name) {
 
 bool pp_inline_macros(ParseState* ps) {
   // inline macro references (VPA_MACRO_REF)
-  for (int32_t r = 0; r < (int32_t)darray_size(ps->vpa_scopes); r++) {
+  for (size_t r = 0; r < darray_size(ps->vpa_scopes); r++) {
     VpaScope* scope = &ps->vpa_scopes[r];
     if (scope->is_macro) {
       continue;
     }
-    for (int32_t i = 0; i < (int32_t)darray_size(scope->children); i++) {
+    for (size_t i = 0; i < darray_size(scope->children); i++) {
       VpaUnit* unit = &scope->children[i];
       if (unit->kind != VPA_MACRO_REF) {
         continue;
@@ -125,18 +125,18 @@ bool pp_inline_macros(ParseState* ps) {
   }
 
   // Check sub-scope calls: if a sub-scope call targets a macro, report error
-  for (int32_t r = 0; r < (int32_t)darray_size(ps->vpa_scopes); r++) {
+  for (size_t r = 0; r < darray_size(ps->vpa_scopes); r++) {
     VpaScope* scope = &ps->vpa_scopes[r];
     if (scope->is_macro) {
       continue;
     }
-    for (int32_t i = 0; i < (int32_t)darray_size(scope->children); i++) {
+    for (size_t i = 0; i < darray_size(scope->children); i++) {
       VpaUnit* unit = &scope->children[i];
       if (unit->kind != VPA_CALL) {
         continue;
       }
       bool is_real_scope = false;
-      for (int32_t j = 0; j < (int32_t)darray_size(ps->vpa_scopes); j++) {
+      for (size_t j = 0; j < darray_size(ps->vpa_scopes); j++) {
         if (ps->vpa_scopes[j].scope_id == unit->call_scope_id && !ps->vpa_scopes[j].is_macro) {
           is_real_scope = true;
           break;
@@ -162,7 +162,7 @@ bool pp_inline_macros(ParseState* ps) {
   VpaScope* old = ps->vpa_scopes;
   VpaScope* fresh = darray_new(sizeof(VpaScope), 0);
 
-  for (int32_t i = 0; i < (int32_t)darray_size(old); i++) {
+  for (size_t i = 0; i < darray_size(old); i++) {
     if (old[i].is_macro) {
       continue;
     }
@@ -173,10 +173,10 @@ bool pp_inline_macros(ParseState* ps) {
     darray_push(fresh, s);
   }
 
-  for (int32_t i = 0; i < (int32_t)darray_size(old); i++) {
+  for (size_t i = 0; i < darray_size(old); i++) {
     XFREE(old[i].name);
     _free_vpa_unit(&old[i].leader);
-    for (int32_t j = 0; j < (int32_t)darray_size(old[i].children); j++) {
+    for (size_t j = 0; j < darray_size(old[i].children); j++) {
       _free_vpa_unit(&old[i].children[j]);
     }
     darray_del(old[i].children);
@@ -190,7 +190,7 @@ bool pp_inline_macros(ParseState* ps) {
 // --- Token set validation ---
 
 static VpaScope* _find_scope_by_id(ParseState* ps, int32_t scope_id) {
-  for (int32_t i = 0; i < (int32_t)darray_size(ps->vpa_scopes); i++) {
+  for (size_t i = 0; i < darray_size(ps->vpa_scopes); i++) {
     if (ps->vpa_scopes[i].scope_id == scope_id) {
       return &ps->vpa_scopes[i];
     }
@@ -199,13 +199,13 @@ static VpaScope* _find_scope_by_id(ParseState* ps, int32_t scope_id) {
 }
 
 static void _collect_post_end_tokens(VpaUnits units, int32_t** set) {
-  for (int32_t i = 0; i < (int32_t)darray_size(units); i++) {
+  for (size_t i = 0; i < darray_size(units); i++) {
     VpaUnit* u = &units[i];
     if (u->kind != VPA_RE) {
       continue;
     }
     bool after_end = false;
-    for (int32_t j = 0; j < (int32_t)darray_size(u->action_units); j++) {
+    for (size_t j = 0; j < darray_size(u->action_units); j++) {
       if (u->action_units[j] == -HOOK_ID_END) {
         after_end = true;
       } else if (after_end && u->action_units[j] > 0) {
@@ -216,11 +216,11 @@ static void _collect_post_end_tokens(VpaUnits units, int32_t** set) {
 }
 
 static void _collect_emit_set(VpaUnits units, int32_t** set, ParseState* ps, bool stop_at_end) {
-  for (int32_t i = 0; i < (int32_t)darray_size(units); i++) {
+  for (size_t i = 0; i < darray_size(units); i++) {
     VpaUnit* u = &units[i];
 
     if (u->kind == VPA_RE) {
-      for (int32_t j = 0; j < (int32_t)darray_size(u->action_units); j++) {
+      for (size_t j = 0; j < darray_size(u->action_units); j++) {
         if (stop_at_end && u->action_units[j] == -HOOK_ID_END) {
           break;
         }
@@ -278,7 +278,7 @@ static void _collect_peg_used_set(PegUnit* unit, int32_t** set, ParseState* ps, 
       }
     }
   }
-  for (int32_t i = 0; i < (int32_t)darray_size(unit->children); i++) {
+  for (size_t i = 0; i < darray_size(unit->children); i++) {
     _collect_peg_used_set(&unit->children[i], set, ps, visited_rules);
   }
 }
@@ -295,7 +295,7 @@ static const char* _term_name(ParseState* ps, int32_t id) {
 static bool _is_ignored(ParseState* ps, const char* name) { return symtab_find(&ps->ignores.names, name) >= 0; }
 
 static bool _validate_token_sets(ParseState* ps) {
-  for (int32_t v = 0; v < (int32_t)darray_size(ps->vpa_scopes); v++) {
+  for (size_t v = 0; v < darray_size(ps->vpa_scopes); v++) {
     VpaScope* scope = &ps->vpa_scopes[v];
 
     PegRule* entry = _find_peg_rule(ps, scope->name);
@@ -309,7 +309,7 @@ static bool _validate_token_sets(ParseState* ps) {
     // Leader tokens after .begin are emitted into the child scope
     VpaActionUnits lau = scope->leader.action_units;
     bool after_begin = false;
-    for (int32_t i = 0; i < (int32_t)darray_size(lau); i++) {
+    for (size_t i = 0; i < darray_size(lau); i++) {
       if (lau[i] == -HOOK_ID_BEGIN) {
         after_begin = true;
       } else if (after_begin && lau[i] > 0) {
@@ -318,7 +318,7 @@ static bool _validate_token_sets(ParseState* ps) {
     }
 
     int32_t* filtered_emit = darray_new(sizeof(int32_t), 0);
-    for (int32_t i = 0; i < (int32_t)darray_size(emit_set); i++) {
+    for (size_t i = 0; i < darray_size(emit_set); i++) {
       const char* name = _term_name(ps, emit_set[i]);
       if (!name || !_is_ignored(ps, name)) {
         darray_push(filtered_emit, emit_set[i]);
@@ -331,7 +331,7 @@ static bool _validate_token_sets(ParseState* ps) {
     _collect_peg_used_set(&entry->body, &used_set, ps, &visited_rules);
     darray_del(visited_rules);
 
-    for (int32_t i = 0; i < (int32_t)darray_size(used_set); i++) {
+    for (size_t i = 0; i < darray_size(used_set); i++) {
       if (!_id_set_has(filtered_emit, used_set[i])) {
         parse_error(ps,
                     "scope '%s': peg uses token %s not emitted by vpa, did you forgot to add `@` for literal scopes?",
@@ -342,7 +342,7 @@ static bool _validate_token_sets(ParseState* ps) {
       }
     }
 
-    for (int32_t i = 0; i < (int32_t)darray_size(filtered_emit); i++) {
+    for (size_t i = 0; i < darray_size(filtered_emit); i++) {
       if (!_id_set_has(used_set, filtered_emit[i])) {
         parse_error(ps, "scope '%s': vpa emits token %s not used by peg", scope->name,
                     _term_name(ps, filtered_emit[i]));
@@ -365,14 +365,14 @@ static bool _can_be_empty(PegUnit* unit) {
     return true;
   }
   if (unit->kind == PEG_BRANCHES) {
-    for (int32_t i = 0; i < (int32_t)darray_size(unit->children); i++) {
+    for (size_t i = 0; i < darray_size(unit->children); i++) {
       if (_can_be_empty(&unit->children[i])) {
         return true;
       }
     }
   }
   if (unit->kind == PEG_SEQ) {
-    for (int32_t i = 0; i < (int32_t)darray_size(unit->children); i++) {
+    for (size_t i = 0; i < darray_size(unit->children); i++) {
       if (!_can_be_empty(&unit->children[i])) {
         return false;
       }
@@ -399,14 +399,14 @@ static bool _is_nullable(ParseState* ps, PegUnit* unit, int32_t** visited) {
     return ref && _is_nullable(ps, &ref->body, visited);
   }
   case PEG_BRANCHES:
-    for (int32_t i = 0; i < (int32_t)darray_size(unit->children); i++) {
+    for (size_t i = 0; i < darray_size(unit->children); i++) {
       if (_is_nullable(ps, &unit->children[i], visited)) {
         return true;
       }
     }
     return false;
   case PEG_SEQ:
-    for (int32_t i = 0; i < (int32_t)darray_size(unit->children); i++) {
+    for (size_t i = 0; i < darray_size(unit->children); i++) {
       if (!_is_nullable(ps, &unit->children[i], visited)) {
         return false;
       }
@@ -431,7 +431,7 @@ static bool _check_interlace_loops(ParseState* ps, PegUnit* unit, const char* ru
       return false;
     }
   }
-  for (int32_t i = 0; i < (int32_t)darray_size(unit->children); i++) {
+  for (size_t i = 0; i < darray_size(unit->children); i++) {
     if (!_check_interlace_loops(ps, &unit->children[i], rule_name)) {
       return false;
     }
@@ -461,14 +461,14 @@ static bool _check_left_rec(ParseState* ps, PegUnit* unit, int32_t target_id, in
   case PEG_TERM:
     break;
   case PEG_BRANCHES:
-    for (int32_t i = 0; i < (int32_t)darray_size(unit->children); i++) {
+    for (size_t i = 0; i < darray_size(unit->children); i++) {
       if (_check_left_rec(ps, &unit->children[i], target_id, visiting)) {
         return true;
       }
     }
     break;
   case PEG_SEQ:
-    for (int32_t i = 0; i < (int32_t)darray_size(unit->children); i++) {
+    for (size_t i = 0; i < darray_size(unit->children); i++) {
       if (_check_left_rec(ps, &unit->children[i], target_id, visiting)) {
         return true;
       }
@@ -504,7 +504,7 @@ static bool _check_undefined_calls(ParseState* ps, PegUnit* unit, const char* ru
       return false;
     }
   }
-  for (int32_t i = 0; i < (int32_t)darray_size(unit->children); i++) {
+  for (size_t i = 0; i < darray_size(unit->children); i++) {
     if (!_check_undefined_calls(ps, &unit->children[i], rule_name)) {
       return false;
     }
@@ -513,7 +513,7 @@ static bool _check_undefined_calls(ParseState* ps, PegUnit* unit, const char* ru
 }
 
 bool pp_detect_left_recursions(ParseState* ps) {
-  for (int32_t r = 0; r < (int32_t)darray_size(ps->peg_rules); r++) {
+  for (size_t r = 0; r < darray_size(ps->peg_rules); r++) {
     PegRule* rule = &ps->peg_rules[r];
     const char* rn = _rule_name(ps, rule->global_id);
     if (!rn) {
@@ -524,7 +524,7 @@ bool pp_detect_left_recursions(ParseState* ps) {
     }
   }
 
-  for (int32_t r = 0; r < (int32_t)darray_size(ps->peg_rules); r++) {
+  for (size_t r = 0; r < darray_size(ps->peg_rules); r++) {
     PegRule* rule = &ps->peg_rules[r];
     const char* rn = _rule_name(ps, rule->global_id);
     if (!rn) {
@@ -540,7 +540,7 @@ bool pp_detect_left_recursions(ParseState* ps) {
     }
   }
 
-  for (int32_t r = 0; r < (int32_t)darray_size(ps->peg_rules); r++) {
+  for (size_t r = 0; r < darray_size(ps->peg_rules); r++) {
     PegRule* rule = &ps->peg_rules[r];
     const char* rn = _rule_name(ps, rule->global_id);
     if (!rn) {
@@ -574,7 +574,7 @@ static const char* _unit_display_name(ParseState* ps, PegUnit* unit) {
 
 static bool _auto_tag_unit(ParseState* ps, PegRule* rule, PegUnit* unit) {
   if (unit->kind == PEG_BRANCHES) {
-    for (int32_t i = 0; i < (int32_t)darray_size(unit->children); i++) {
+    for (size_t i = 0; i < darray_size(unit->children); i++) {
       PegUnit* branch = &unit->children[i];
       if (!branch->tag || branch->tag[0] == '\0') {
         const char* dn = NULL;
@@ -595,7 +595,7 @@ static bool _auto_tag_unit(ParseState* ps, PegRule* rule, PegUnit* unit) {
     }
   }
 
-  for (int32_t i = 0; i < (int32_t)darray_size(unit->children); i++) {
+  for (size_t i = 0; i < darray_size(unit->children); i++) {
     if (!_auto_tag_unit(ps, rule, &unit->children[i])) {
       return false;
     }
@@ -604,7 +604,7 @@ static bool _auto_tag_unit(ParseState* ps, PegRule* rule, PegUnit* unit) {
 }
 
 bool pp_auto_tag_branches(ParseState* ps) {
-  for (int32_t r = 0; r < (int32_t)darray_size(ps->peg_rules); r++) {
+  for (size_t r = 0; r < darray_size(ps->peg_rules); r++) {
     const char* rn = _rule_name(ps, ps->peg_rules[r].global_id);
     if (rn && strlen(rn) > 128) {
       parse_error(ps, "rule name '%s' exceeds 128 bytes", rn);
@@ -696,7 +696,7 @@ static bool _check_keyword_tags(ParseState* ps, PegUnit* unit, const char* rn) {
     parse_error(ps, "tag '%s' in rule '%s' is a C keyword", unit->tag, rn);
     return false;
   }
-  for (int32_t i = 0; i < (int32_t)darray_size(unit->children); i++) {
+  for (size_t i = 0; i < darray_size(unit->children); i++) {
     if (!_check_keyword_tags(ps, &unit->children[i], rn)) {
       return false;
     }
@@ -705,12 +705,12 @@ static bool _check_keyword_tags(ParseState* ps, PegUnit* unit, const char* rn) {
 }
 
 static bool _check_dup_tags_in_branches(ParseState* ps, PegUnit* br, char*** tags, const char* rn) {
-  for (int32_t j = 0; j < (int32_t)darray_size(br->children); j++) {
+  for (size_t j = 0; j < darray_size(br->children); j++) {
     char* tag = br->children[j].tag;
     if (!tag || !tag[0]) {
       continue;
     }
-    for (int32_t k = 0; k < (int32_t)darray_size(*tags); k++) {
+    for (size_t k = 0; k < darray_size(*tags); k++) {
       if (strcmp((*tags)[k], tag) == 0) {
         parse_error(ps, "duplicate tag '%s' across bracket groups in rule '%s'", tag, rn);
         return false;
@@ -722,7 +722,7 @@ static bool _check_dup_tags_in_branches(ParseState* ps, PegUnit* br, char*** tag
 }
 
 bool pp_check_duplicate_tags(ParseState* ps) {
-  for (int32_t r = 0; r < (int32_t)darray_size(ps->peg_rules); r++) {
+  for (size_t r = 0; r < darray_size(ps->peg_rules); r++) {
     PegRule* rule = &ps->peg_rules[r];
     const char* rn = _rule_name(ps, rule->global_id);
 
@@ -737,7 +737,7 @@ bool pp_check_duplicate_tags(ParseState* ps) {
     if (rule->body.kind == PEG_BRANCHES) {
       ok = _check_dup_tags_in_branches(ps, &rule->body, &tags, rn);
     } else {
-      for (int32_t i = 0; i < (int32_t)darray_size(rule->body.children); i++) {
+      for (size_t i = 0; i < darray_size(rule->body.children); i++) {
         PegUnit* child = &rule->body.children[i];
         if (child->kind != PEG_BRANCHES) {
           continue;
@@ -759,7 +759,7 @@ bool pp_check_duplicate_tags(ParseState* ps) {
 // --- Helpers for hook resolution ---
 
 static bool _au_has_hook(VpaActionUnits au, int32_t hook_id) {
-  for (int32_t i = 0; i < (int32_t)darray_size(au); i++) {
+  for (size_t i = 0; i < darray_size(au); i++) {
     if (au[i] < 0 && (-au[i]) == hook_id) {
       return true;
     }
@@ -771,11 +771,11 @@ static bool _unit_has_hook(VpaUnit* u, int32_t hook_id, ParseState* ps) {
   if (_au_has_hook(u->action_units, hook_id)) {
     return true;
   }
-  for (int32_t i = 0; i < (int32_t)darray_size(u->action_units); i++) {
+  for (size_t i = 0; i < darray_size(u->action_units); i++) {
     if (u->action_units[i] < 0) {
       int32_t hid = -u->action_units[i];
       if (hid >= HOOK_ID_BUILTIN_COUNT) {
-        for (int32_t e = 0; e < (int32_t)darray_size(ps->effect_decls); e++) {
+        for (size_t e = 0; e < darray_size(ps->effect_decls); e++) {
           if (ps->effect_decls[e].hook_id == hid) {
             for (int32_t ef = 0; ef < (int32_t)darray_size(ps->effect_decls[e].effects); ef++) {
               if (ps->effect_decls[e].effects[ef] < 0 && (-ps->effect_decls[e].effects[ef]) == hook_id) {
@@ -794,12 +794,12 @@ static bool _unit_has_hook(VpaUnit* u, int32_t hook_id, ParseState* ps) {
 
 bool pp_validate_vpa_scopes(ParseState* ps) {
   bool has_main = false;
-  for (int32_t i = 0; i < (int32_t)darray_size(ps->vpa_scopes); i++) {
+  for (size_t i = 0; i < darray_size(ps->vpa_scopes); i++) {
     VpaScope* scope = &ps->vpa_scopes[i];
     if (strcmp(scope->name, "main") == 0) {
       has_main = true;
     }
-    for (int32_t j = 0; j < i; j++) {
+    for (size_t j = 0; j < i; j++) {
       if (strcmp(ps->vpa_scopes[j].name, scope->name) == 0) {
         parse_error(ps, "duplicate vpa scope name '%s'", scope->name);
         return false;
@@ -811,7 +811,7 @@ bool pp_validate_vpa_scopes(ParseState* ps) {
     return false;
   }
 
-  for (int32_t i = 0; i < (int32_t)darray_size(ps->vpa_scopes); i++) {
+  for (size_t i = 0; i < darray_size(ps->vpa_scopes); i++) {
     VpaScope* scope = &ps->vpa_scopes[i];
     bool is_main = strcmp(scope->name, "main") == 0;
 
@@ -830,7 +830,7 @@ bool pp_validate_vpa_scopes(ParseState* ps) {
       if (_unit_has_hook(&scope->leader, HOOK_ID_END, ps)) {
         has_end = true;
       }
-      for (int32_t j = 0; j < (int32_t)darray_size(scope->children); j++) {
+      for (size_t j = 0; j < darray_size(scope->children); j++) {
         if (_unit_has_hook(&scope->children[j], HOOK_ID_BEGIN, ps)) {
           has_begin = true;
         }
@@ -853,7 +853,7 @@ bool pp_validate_vpa_scopes(ParseState* ps) {
     }
 
     int32_t empty_count = 0;
-    for (int32_t j = 0; j < (int32_t)darray_size(scope->children); j++) {
+    for (size_t j = 0; j < darray_size(scope->children); j++) {
       VpaUnit* u = &scope->children[j];
       if (u->kind != VPA_RE) {
         continue;
@@ -879,12 +879,12 @@ bool pp_validate_vpa_scopes(ParseState* ps) {
 
 bool pp_validate_peg_rules(ParseState* ps) {
   bool has_main = false;
-  for (int32_t i = 0; i < (int32_t)darray_size(ps->peg_rules); i++) {
+  for (size_t i = 0; i < darray_size(ps->peg_rules); i++) {
     const char* rn = _rule_name(ps, ps->peg_rules[i].global_id);
     if (rn && strcmp(rn, "main") == 0) {
       has_main = true;
     }
-    for (int32_t j = 0; j < i; j++) {
+    for (size_t j = 0; j < i; j++) {
       const char* rn2 = _rule_name(ps, ps->peg_rules[j].global_id);
       if (rn && rn2 && strcmp(rn, rn2) == 0) {
         parse_error(ps, "duplicate peg rule name '%s'", rn);
@@ -902,7 +902,7 @@ bool pp_validate_peg_rules(ParseState* ps) {
 // --- vpa & peg scope matching ---
 
 bool pp_match_scopes(ParseState* ps) {
-  for (int32_t p = 0; p < (int32_t)darray_size(ps->peg_rules); p++) {
+  for (size_t p = 0; p < darray_size(ps->peg_rules); p++) {
     const char* rn = _rule_name(ps, ps->peg_rules[p].global_id);
     if (!rn) {
       continue;

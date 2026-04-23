@@ -107,8 +107,8 @@ static void _alloc_tag_bits(ScopeClosure* cl) {
 // ============================================================
 
 static void _alloc_naive_slots(ScopeClosure* cl) {
-  int32_t n = (int32_t)darray_size(cl->scoped_rules);
-  for (int32_t i = 0; i < n; i++) {
+  size_t n = darray_size(cl->scoped_rules);
+  for (size_t i = 0; i < n; i++) {
     cl->scoped_rules[i].slot_index = (uint64_t)i;
   }
   cl->slots_size = n;
@@ -387,14 +387,14 @@ static bool _are_exclusive(ScopedRule* a, ScopedRule* b) {
 }
 
 static void _alloc_slot_bits(ScopeClosure* cl) {
-  int32_t n = (int32_t)darray_size(cl->scoped_rules);
+  size_t n = darray_size(cl->scoped_rules);
   if (n == 0) {
     cl->slots_size = 0;
     return;
   }
   Graph* g = graph_new(n);
-  for (int32_t i = 0; i < n; i++) {
-    for (int32_t j = i + 1; j < n; j++) {
+  for (size_t i = 0; i < n; i++) {
+    for (size_t j = i + 1; j < n; j++) {
       if (!_are_exclusive(&cl->scoped_rules[i], &cl->scoped_rules[j])) {
         graph_add_edge(g, i, j);
       }
@@ -403,7 +403,7 @@ static void _alloc_slot_bits(ScopeClosure* cl) {
   int32_t* edges = graph_edges(g);
   int32_t edge_size = graph_n_edges(g);
   ColoringResult* cr = NULL;
-  for (int32_t k = 1; k <= n; k++) {
+  for (size_t k = 1; k <= n; k++) {
     cr = coloring_solve(n, edges, edge_size, k, 10000, 42);
     if (cr) {
       break;
@@ -412,7 +412,7 @@ static void _alloc_slot_bits(ScopeClosure* cl) {
   graph_del(g);
   assert(cr);
   cl->slots_size = coloring_get_sg_size(cr);
-  for (int32_t i = 0; i < n; i++) {
+  for (size_t i = 0; i < n; i++) {
     int32_t sg_id;
     int64_t seg_mask;
     coloring_get_segment_info(cr, i, &sg_id, &seg_mask);
@@ -420,10 +420,10 @@ static void _alloc_slot_bits(ScopeClosure* cl) {
     cl->scoped_rules[i].rule_bit_mask = (uint64_t)seg_mask;
   }
   // compute segment_mask (union of all rule_bit_masks in same color group)
-  for (int32_t i = 0; i < n; i++) {
+  for (size_t i = 0; i < n; i++) {
     uint64_t seg_union = 0;
     int32_t color = cl->scoped_rules[i].segment_color;
-    for (int32_t j = 0; j < n; j++) {
+    for (size_t j = 0; j < n; j++) {
       if (cl->scoped_rules[j].segment_color == color) {
         seg_union |= cl->scoped_rules[j].rule_bit_mask;
       }
@@ -436,14 +436,14 @@ static void _alloc_slot_bits(ScopeClosure* cl) {
 // Physical layout pass: pack segments into shared buckets (slot bits +
 // packed tag bits), then append dedicated tag buckets for big-tag segments.
 static void _finalize_layout(ScopeClosure* cl, int32_t* seg_max_tags) {
-  int32_t rule_size = (int32_t)darray_size(cl->scoped_rules);
-  int32_t segment_size = (int32_t)cl->slots_size;
+  size_t rule_size = darray_size(cl->scoped_rules);
+  size_t segment_size = cl->slots_size;
 
   // Compute slot_bit_count per segment (popcount of segment_mask)
   int32_t* seg_slot_bits = XCALLOC((size_t)segment_size, sizeof(int32_t));
-  for (int32_t i = 0; i < rule_size; i++) {
+  for (size_t i = 0; i < rule_size; i++) {
     int32_t seg = cl->scoped_rules[i].segment_color;
-    if (seg >= 0 && seg < segment_size && seg_slot_bits[seg] == 0) {
+    if (seg >= 0 && seg < (int32_t)segment_size && seg_slot_bits[seg] == 0) {
       seg_slot_bits[seg] = (int32_t)__builtin_popcountll(cl->scoped_rules[i].segment_mask);
     }
   }
@@ -452,7 +452,7 @@ static void _finalize_layout(ScopeClosure* cl, int32_t* seg_max_tags) {
   // tag bits are packed or require dedicated buckets.
   int32_t* seg_footprint = XCALLOC((size_t)segment_size, sizeof(int32_t));
   bool* seg_tag_packed = XCALLOC((size_t)segment_size, sizeof(bool));
-  for (int32_t s = 0; s < segment_size; s++) {
+  for (size_t s = 0; s < segment_size; s++) {
     int32_t slot_bits = seg_slot_bits[s];
     int32_t tag_bits = seg_max_tags[s];
     if (tag_bits > 0 && tag_bits <= 64 - slot_bits) {
@@ -468,11 +468,11 @@ static void _finalize_layout(ScopeClosure* cl, int32_t* seg_max_tags) {
   // Process segments in descending footprint order (stable: break ties by
   // segment id ascending).
   int32_t* order = XCALLOC((size_t)segment_size, sizeof(int32_t));
-  for (int32_t s = 0; s < segment_size; s++) {
+  for (size_t s = 0; s < segment_size; s++) {
     order[s] = s;
   }
-  for (int32_t i = 1; i < segment_size; i++) {
-    for (int32_t j = i; j > 0; j--) {
+  for (size_t i = 1; i < segment_size; i++) {
+    for (size_t j = i; j > 0; j--) {
       if (seg_footprint[order[j]] > seg_footprint[order[j - 1]]) {
         int32_t t = order[j];
         order[j] = order[j - 1];
@@ -488,8 +488,8 @@ static void _finalize_layout(ScopeClosure* cl, int32_t* seg_max_tags) {
   int32_t* bucket_used = NULL;
   int32_t bucket_size = 0;
 
-  for (int32_t k = 0; k < segment_size; k++) {
-    int32_t s = order[k];
+  for (size_t k = 0; k < segment_size; k++) {
+    size_t s = order[k];
     int32_t foot = seg_footprint[s];
     if (foot == 0) {
       // Empty segment (no slot bits, no tags). Give it an arbitrary slot bucket
@@ -519,7 +519,7 @@ static void _finalize_layout(ScopeClosure* cl, int32_t* seg_max_tags) {
   int32_t* seg_tag_index = XCALLOC((size_t)segment_size, sizeof(int32_t));
   int32_t* seg_tag_offset = XCALLOC((size_t)segment_size, sizeof(int32_t));
   int32_t total_buckets = bucket_size;
-  for (int32_t s = 0; s < segment_size; s++) {
+  for (size_t s = 0; s < segment_size; s++) {
     int32_t tag_bits = seg_max_tags[s];
     if (tag_bits == 0) {
       seg_tag_index[s] = seg_phys_index[s];
@@ -536,10 +536,10 @@ static void _finalize_layout(ScopeClosure* cl, int32_t* seg_max_tags) {
 
   // Shift segment_mask and rule_bit_mask into each segment's bit-range within
   // its shared bucket. Before this pass the masks were based at bit 0.
-  for (int32_t i = 0; i < rule_size; i++) {
+  for (size_t i = 0; i < rule_size; i++) {
     ScopedRule* sr = &cl->scoped_rules[i];
     int32_t seg = sr->segment_color;
-    if (seg < 0 || seg >= segment_size) {
+    if (seg < 0 || seg >= (int32_t)segment_size) {
       continue;
     }
     int32_t shift = seg_bit_offset[seg];

@@ -119,14 +119,14 @@ typedef struct {
 
 static RuleScopeMap _build_scope_map(PegGenInput* input) {
   ScopeClosure* closures = input->scope_closures;
-  int32_t closure_size = (int32_t)darray_size(closures);
+  size_t closure_size = darray_size(closures);
   RuleScopeMap map = {
       .start_num = input->rule_names.start_num,
       .size = symtab_count(&input->rule_names),
   };
   map.entries = XCALLOC((size_t)map.size, sizeof(RuleScopeEntry*));
   map.counts = XCALLOC((size_t)map.size, sizeof(int32_t));
-  for (int32_t c = 0; c < closure_size; c++) {
+  for (size_t c = 0; c < closure_size; c++) {
     ScopeClosure* cl = &closures[c];
     for (size_t i = 0; i < darray_size(cl->scoped_rules); i++) {
       ScopedRule* sr = &cl->scoped_rules[i];
