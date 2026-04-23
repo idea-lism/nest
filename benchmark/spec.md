@@ -21,18 +21,15 @@ benchmark/
   setup.rb             # install competitors (packcc, tree-sitter)
   run.rb               # main benchmark orchestrator
   grammars/
-    calc/
-      grammar.nest     # nest version
-      grammar.peg      # packcc version (from packcc repo)
-      grammar.js        # tree-sitter version
-    json/
-      grammar.nest
-      grammar.peg
-      grammar.js
-    kotlin/
-      grammar.nest     # nest equivalent of kotlin.peg
-      grammar.peg
-      grammar.js        # tree-sitter-kotlin
+    calc.nest          # nest version
+    calc.peg           # packcc version (from packcc repo)
+    calc.js            # tree-sitter version
+    json.nest
+    json.peg
+    json.js
+    kotlin.nest        # nest equivalent of kotlin.peg
+    kotlin.peg
+    kotlin.js          # tree-sitter-kotlin
   inputs/
     gen_inputs.rb      # deterministic generator for internal benchmarks only
     internal/
@@ -259,26 +256,3 @@ Generate 2 * input_sizes internal tables:
 | packcc       | 1200     | 83.3  | 1800   | 12         | 28        |
 | tree-sitter  | 1500     | 66.7  | 4096   | 200        | 180       |
 ```
-
-## Implementation Order
-
-Each file must be completed fully before moving to the next. No scaffolding stubs, no placeholders, no "TODO" passes. A file is either not started or done.
-
-1. `benchmark/grammars/calc/grammar.nest` — complete nest calc grammar
-2. `benchmark/grammars/json/grammar.nest` — complete nest json grammar
-3. `benchmark/grammars/calc/grammar.peg` — copy from packcc repo
-4. `benchmark/grammars/json/grammar.peg` — copy from packcc repo
-5. `benchmark/grammars/calc/grammar.js` — tree-sitter calc grammar
-6. `benchmark/grammars/json/grammar.js` — tree-sitter json grammar (from tree-sitter-json)
-7. `benchmark/inputs/gen_inputs.rb` — full input generator for internal benchmarks / ablation studies only, working end-to-end
-8. `benchmark/setup.rb` — install packcc + tree-sitter + grammar repos into vendor/, fully working
-9. `benchmark/runners/nest_runner.c.erb` — complete timing harness, CSV output, all metrics
-10. `benchmark/runners/packcc_runner.c` — complete timing harness, CSV output
-11. `benchmark/runners/treesitter_runner.c` — complete timing harness, CSV output
-12. `benchmark/internal/run_internal.rb` — full internal benchmark: build + run nest across memoize × opt matrix (`-O0` only for calc), CSV output + markdown report with calc `-O0/-O2` table plus all-grammar `-O2` table
-13. `benchmark/run.rb` — full orchestrator: setup/gen/internal/compare/report/all subcommands, complete
-14. `benchmark/grammars/kotlin/grammar.nest` — translate kotlin.peg to .nest, complete
-15. `benchmark/grammars/kotlin/grammar.peg` — copy from packcc repo
-16. `benchmark/grammars/kotlin/grammar.js` — tree-sitter-kotlin grammar
-17. `benchmark/licenses/*` — upstream licenses for reused PackCC/tree-sitter benchmark assets
-18. `benchmark/benchmark` — one-shot shell script entry point, calls `ruby benchmark/run.rb all`

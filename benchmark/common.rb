@@ -32,17 +32,18 @@ module BenchmarkCommon
       input_ext: ".txt",
       compare_input: File.join(INPUTS_COMPARE_DIR, "calc.txt"),
       internal_dir: File.join(INPUTS_INTERNAL_DIR, "calc"),
-      nest_grammar: File.join(GRAMMARS_DIR, "calc", "grammar.nest"),
-      packcc_grammar: File.join(GRAMMARS_DIR, "calc", "grammar.peg"),
+      nest_grammar: File.join(GRAMMARS_DIR, "calc.nest"),
+      packcc_grammar: File.join(GRAMMARS_DIR, "calc.peg"),
       tree_sitter_dir: File.join(GRAMMARS_DIR, "calc"),
+      tree_sitter_grammar_js: File.join(GRAMMARS_DIR, "calc.js"),
       tree_sitter_lang: "calc"
     },
     "json" => {
       input_ext: ".json",
       compare_input: File.join(INPUTS_COMPARE_DIR, "json.json"),
       internal_dir: File.join(INPUTS_INTERNAL_DIR, "json"),
-      nest_grammar: File.join(GRAMMARS_DIR, "json", "grammar.nest"),
-      packcc_grammar: File.join(GRAMMARS_DIR, "json", "grammar.peg"),
+      nest_grammar: File.join(GRAMMARS_DIR, "json.nest"),
+      packcc_grammar: File.join(GRAMMARS_DIR, "json.peg"),
       tree_sitter_dir: File.join(VENDOR_DIR, "tree-sitter-json"),
       tree_sitter_lang: "json"
     },
@@ -50,8 +51,8 @@ module BenchmarkCommon
       input_ext: ".kt",
       compare_input: File.join(INPUTS_COMPARE_DIR, "kotlin.kt"),
       internal_dir: File.join(INPUTS_INTERNAL_DIR, "kotlin"),
-      nest_grammar: File.join(GRAMMARS_DIR, "kotlin", "grammar.nest"),
-      packcc_grammar: File.join(GRAMMARS_DIR, "kotlin", "grammar.peg"),
+      nest_grammar: File.join(GRAMMARS_DIR, "kotlin.nest"),
+      packcc_grammar: File.join(GRAMMARS_DIR, "kotlin.peg"),
       tree_sitter_dir: File.join(VENDOR_DIR, "tree-sitter-kotlin"),
       tree_sitter_lang: "kotlin"
     }
