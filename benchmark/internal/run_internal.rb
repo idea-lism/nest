@@ -191,7 +191,7 @@ def report_calc_tables(lines, grammar_rows)
     input_name = preferred_input_name(calc_rows, size_label)
     next unless input_name
 
-    lines << "## calc — #{input_name}\n\n"
+    lines << "## calc — #{size_label}\n\n"
     headers = ["Memoize"] + ["-O0", "-O2"].flat_map { |opt| REPORT_METRICS.map { |metric| "#{opt} #{metric}" } }
     rows = MEMOIZE_MODES.map do |memoize|
       [memoize] +

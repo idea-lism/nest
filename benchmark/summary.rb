@@ -74,7 +74,7 @@ def print_calc_tables(grammar_rows)
     input_name = preferred_input_name(calc_rows, size_label)
     next unless input_name
 
-    puts "### calc — #{input_name}\n\n"
+    puts "### calc — #{size_label}\n\n"
     headers = ["Mode"] + ["-O0", "-O2"].flat_map { |opt| METRICS.map { |metric| "#{opt} #{metric}" } }
     rows = MEMOIZE_MODES.map do |memoize|
       [memoize] +

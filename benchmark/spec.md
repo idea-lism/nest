@@ -36,7 +36,7 @@ benchmark/
   inputs/
     gen_inputs.rb      # deterministic generator for internal benchmarks only
     internal/
-      calc/            # generated: xs(1K) sm(10K) lg(1M)
+      calc/            # generated: 1k, 10k, 1m
       json/
       kotlin/
     compare/           # copied from PackCC benchmark repo
