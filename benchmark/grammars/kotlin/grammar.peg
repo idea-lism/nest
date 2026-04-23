@@ -1,3 +1,5 @@
+%prefix "kotlin"
+
 file <- shebangLine? NL* fileAnnotation* _* packageHeader* _* importList* _* (filePart / _ / unparsable)* EOF
 filePart <- (topLevelObject / (statement _* semi))
 unparsable <- [^\n]+ NL* { printf("Syntax error at byte %d\n", $0s);}

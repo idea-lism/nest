@@ -1,3 +1,18 @@
-1:1: token error
 ------
+@lit.let "let"
+@ident "x"
+@assign "="
+@number "1"
+@semi ";"
 ------
+main
+  decl
+    let_decl
+      @lit.let
+      @ident
+      @assign
+      expr
+        term
+          factor
+            @number
+      @semi

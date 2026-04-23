@@ -640,7 +640,7 @@ static int32_t _cmd_compile(int32_t argc, char** argv) {
           .tokens = ps->tokens,
           .scope_names = ps->scope_names,
           .rule_names = ps->rule_names,
-          .verbose = verbose,
+          .verbose_level = verbose,
       },
       memoize_mode, prefix);
   if (verbose) {

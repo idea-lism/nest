@@ -1,7 +1,9 @@
 #include "../src/darray.h"
 #include "../src/parse.h"
+#include "../src/re_ir.h"
 #include "../src/symtab.h"
 #include "../src/ustr.h"
+#include "../src/vpa.h"
 #include "../src/xmalloc.h"
 #include <assert.h>
 #include <stdio.h>
@@ -604,6 +606,96 @@ TEST(test_multiple_tokens_structure) {
   parse_state_del(ps);
 }
 
+// --- ReIr ordering tests ---
+
+// helper: find the first VPA child unit whose ReIr contains a given op kind
+static ReIr _find_re_with_op(ParseState* ps, const char* scope_name, ReIrKind op_kind) {
+  for (size_t s = 0; s < darray_size(ps->vpa_scopes); s++) {
+    VpaScope* sc = &ps->vpa_scopes[s];
+    if (!sc->name || strcmp(sc->name, scope_name) != 0) {
+      continue;
+    }
+    for (size_t i = 0; i < darray_size(sc->children); i++) {
+      VpaUnit* u = &sc->children[i];
+      if (u->kind != VPA_RE || !u->re) {
+        continue;
+      }
+      for (size_t j = 0; j < darray_size(u->re); j++) {
+        if (u->re[j].kind == op_kind) {
+          return u->re;
+        }
+      }
+    }
+  }
+  return NULL;
+}
+
+static const char NEG_CHARCLASS_NEST[] = "[[vpa]]\n"
+                                         "main = {\n"
+                                         "  /[^abc]+/ @not_abc\n"
+                                         "  /[abc]+/ @abc\n"
+                                         "}\n"
+                                         "[[peg]]\n"
+                                         "main = @not_abc* @abc*\n";
+
+TEST(test_re_neg_charclass_ir_order) {
+  ParseState* ps = parse_state_new();
+  bool ok = _parse(ps, NEG_CHARCLASS_NEST);
+  assert(ok);
+  // find the re containing RANGE_NEG (the [^abc] rule)
+  ReIr ir = _find_re_with_op(ps, "main", RE_IR_RANGE_NEG);
+  assert(ir != NULL);
+  // verify: RANGE_BEGIN, then APPEND_CH ops, then RANGE_NEG, then RANGE_END
+  // NEG must come AFTER all char appends so the negation applies to the full set
+  int32_t neg_idx = -1, last_append_idx = -1, begin_idx = -1;
+  for (size_t i = 0; i < darray_size(ir); i++) {
+    if (ir[i].kind == RE_IR_RANGE_BEGIN) {
+      begin_idx = (int32_t)i;
+    }
+    if (ir[i].kind == RE_IR_APPEND_CH) {
+      last_append_idx = (int32_t)i;
+    }
+    if (ir[i].kind == RE_IR_RANGE_NEG) {
+      neg_idx = (int32_t)i;
+    }
+  }
+  assert(begin_idx >= 0);
+  assert(last_append_idx >= 0);
+  assert(neg_idx >= 0);
+  assert(neg_idx > last_append_idx); // NEG must be after all APPEND_CH
+  parse_state_del(ps);
+}
+
+static const char DOT_NEST[] = "[[vpa]]\n"
+                               "main = {\n"
+                               "  /./ @any\n"
+                               "}\n"
+                               "[[peg]]\n"
+                               "main = @any*\n";
+
+TEST(test_re_dot_ir_order) {
+  ParseState* ps = parse_state_new();
+  bool ok = _parse(ps, DOT_NEST);
+  assert(ok);
+  // dot is RANGE_BEGIN, APPEND_CH('\n'), RANGE_NEG, RANGE_END
+  // NEG must come AFTER APPEND_CH so it negates {\n} → everything except \n
+  ReIr ir = _find_re_with_op(ps, "main", RE_IR_RANGE_NEG);
+  assert(ir != NULL);
+  int32_t neg_idx = -1, append_idx = -1;
+  for (size_t i = 0; i < darray_size(ir); i++) {
+    if (ir[i].kind == RE_IR_APPEND_CH) {
+      append_idx = (int32_t)i;
+    }
+    if (ir[i].kind == RE_IR_RANGE_NEG) {
+      neg_idx = (int32_t)i;
+    }
+  }
+  assert(append_idx >= 0);
+  assert(neg_idx >= 0);
+  assert(neg_idx > append_idx); // NEG must be after APPEND_CH
+  parse_state_del(ps);
+}
+
 TEST(test_bootstrap_structure) {
   FILE* f = fopen("specs/bootstrap.nest", "r");
   if (!f) {
@@ -683,6 +775,10 @@ int main(void) {
   RUN(test_define_fragment_tokens);
   RUN(test_nested_scopes_structure);
   RUN(test_multiple_tokens_structure);
+
+  // re_ir ordering
+  RUN(test_re_neg_charclass_ir_order);
+  RUN(test_re_dot_ir_order);
 
   RUN(test_bootstrap_structure);
 

@@ -75,5 +75,6 @@ void re_ir_exec(Re* re, ReIr ir, const char* source_file_name, ReFrags frags);
 Test should be comprehensive, covering:
 
 - all ops
+- negated char class (for example, `/[^abc]/` should only match `"xyz"`, not `"xyzabc"`)
 - all error types
 - error line / col

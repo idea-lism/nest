@@ -52,7 +52,7 @@ typedef struct {
   Symtab tokens;      // owned by ParseState
   Symtab scope_names; // owned by ParseState
   Symtab rule_names;  // owned by ParseState
-  int verbose;
+  int verbose_level;  // passed from from cli.md
 } PegAnalyzeInput;
 
 // --- Scoped unit types (produced by analysis) ---
@@ -170,8 +170,8 @@ typedef enum { MEMOIZE_NONE = 0, MEMOIZE_NAIVE = 1, MEMOIZE_SHARED = 2 } Memoize
 
 // --- Row sentinel values (see specs/peg_gen.md PegLink.lhs_row / rhs_row) ---
 
-#define PEG_ROW_NONE (-1)  // no link / no separator
-#define PEG_ROW_TERM (-2)  // term lhs (advance by 1) / term separator
+#define PEG_ROW_NONE (-1) // no link / no separator
+#define PEG_ROW_TERM (-2) // term lhs (advance by 1) / term separator
 
 // --- PEG codegen input (produced by peg_analyze, consumed by peg_gen) ---
 

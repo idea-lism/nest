@@ -1275,7 +1275,7 @@ PegGenInput peg_analyze(PegAnalyzeInput* input, int memoize_mode, const char* pr
       .rule_names = input->rule_names,
       .memoize_mode = memoize_mode,
       .prefix = prefix,
-      .verbose = input->verbose,
+      .verbose = input->verbose_level,
   };
 
   int32_t rule_size = (int32_t)darray_size(input->rules);
@@ -1286,7 +1286,7 @@ PegGenInput peg_analyze(PegAnalyzeInput* input, int memoize_mode, const char* pr
 
   RuleLookup lu = _build_rule_lookup(input);
 
-  if (input->verbose) {
+  if (input->verbose_level) {
     fprintf(stderr, "  [peg] gathering scope closures\n");
   }
 
@@ -1304,7 +1304,7 @@ PegGenInput peg_analyze(PegAnalyzeInput* input, int memoize_mode, const char* pr
   }
 
   for (int32_t c = 0; c < closure_size; c++) {
-    if (input->verbose) {
+    if (input->verbose_level) {
       fprintf(stderr, "  [peg] analyzing scope '%s'\n", closures[c].scope_name);
     }
     _analyze_rules(&closures[c]);

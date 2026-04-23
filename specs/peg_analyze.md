@@ -64,7 +64,7 @@ typedef struct {
   Symtab tokens;      // owned by ParseState
   Symtab scope_names; // owned by ParseState
   Symtab rule_names;  // owned by ParseState
-  int verbose;        // verbose level, see also cli.md
+  int verbose_level;  // passed from from cli.md
 } PegAnalyzeInput;
 ```
 

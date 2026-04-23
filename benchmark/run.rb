@@ -71,7 +71,7 @@ def build_packcc_compare(grammar, build_dir)
   runner_src = File.join(RUNNERS_DIR, "packcc_runner.c")
 
   build_ms = timed_command(
-    "#{CC} -O2 -Dmain=_packcc_original_main -DPACKCC_PREFIX=#{prefix} -c parser.c -o parser.o && " \
+    "#{CC} -O2 -Dmain=_packcc_original_main -Dpcc_create=#{prefix}_create -Dpcc_parse=#{prefix}_parse -Dpcc_destroy=#{prefix}_destroy -DPACKCC_PREFIX=#{prefix} -c parser.c -o parser.o && " \
     "#{CC} -O2 -DPACKCC_PREFIX=#{prefix} #{runner_src} parser.o -o runner",
     chdir: build_dir
   )

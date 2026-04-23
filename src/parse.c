@@ -380,11 +380,11 @@ static ReIr _parse_charclass_body(ParseState* ps, TokenChunk* chunk, int32_t* tp
     col = loc.col;
   }
   ir = re_ir_emit(ir, RE_IR_RANGE_BEGIN, 0, 0, line, col);
-  if (neg) {
-    ir = re_ir_emit(ir, RE_IR_RANGE_NEG, 0, 0, line, col);
-  }
   while (!_at_end(chunk, *tpos) && _is_charclass_char(_peek(chunk, *tpos)->term_id)) {
     ir = _parse_charclass_unit(ps, chunk, tpos, ir);
+  }
+  if (neg) {
+    ir = re_ir_emit(ir, RE_IR_RANGE_NEG, 0, 0, line, col);
   }
   if (icase) {
     ir = re_ir_emit(ir, RE_IR_RANGE_IC, 0, 0, line, col);
@@ -396,8 +396,8 @@ static ReIr _emit_shorthand(ReIr ir, int32_t tok_id, int32_t line, int32_t col) 
   ir = re_ir_emit(ir, RE_IR_RANGE_BEGIN, 0, 0, line, col);
   switch (tok_id) {
   case TOK_RE_DOT:
-    ir = re_ir_emit(ir, RE_IR_RANGE_NEG, 0, 0, line, col);
     ir = re_ir_emit(ir, RE_IR_APPEND_CH, '\n', '\n', line, col);
+    ir = re_ir_emit(ir, RE_IR_RANGE_NEG, 0, 0, line, col);
     break;
   case TOK_RE_SPACE_CLASS:
     ir = re_ir_emit(ir, RE_IR_APPEND_GROUP_S, 0, 0, line, col);

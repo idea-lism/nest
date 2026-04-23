@@ -70,14 +70,17 @@ module BenchmarkCommon
     ERB.new(File.read(path), trim_mode: "-").result_with_hash(vars)
   end
 
-  def sh *cmd, **opts
+  def sh *cmd, chdir: nil, env: nil, **_ignored
     print "system "
     p cmd
+    opts = {}
+    opts[:chdir] = chdir if chdir
     p opts
-    system *cmd, out: $stdout, err: $stderr, **opts or abort "sh failed"
+    args = env && !env.empty? ? [env, *cmd] : cmd
+    system *args, out: $stdout, err: $stderr, **opts or abort "sh failed"
   end
 
-  def timed_command(*cmd, chdir: nil, env: {})
+  def timed_command(*cmd, chdir: nil, env: nil)
     t0 = Process.clock_gettime(Process::CLOCK_MONOTONIC)
     sh(*cmd, chdir: chdir, env: env)
     t1 = Process.clock_gettime(Process::CLOCK_MONOTONIC)

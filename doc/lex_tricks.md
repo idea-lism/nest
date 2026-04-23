@@ -11,22 +11,24 @@ main = {
   *others
 }
 
-%effect .str_end_emit = .end | .str_char | @str
+%effect .str_try_emit = @string | .noop
+%effect .str_try_end = .end | .noop
 
 str = /['"]/ .str_start .begin {
-  /['"]/ .str_end_emit
+  /['"]/ .str_try_emit .str_try_end
   /\\[bfnrtv]/ .str_c_escape
   ...
+  /./ .str_char
 }
 
 [[peg]]
 main = [
-  @str
+  @string
   ...
 ]
 ```
 
-Then we design state and hook to skip PEG parsing for `str` scope completely, and output an `@str` token directly.
+Then we design state and hook to skip PEG parsing for `str` scope completely, and output an `@string` token directly.
 
 ```c
 typedef struct {
@@ -64,10 +66,25 @@ static void str_char(void* state, size_t size, const char* str) {
   s->str_ptr++;
 }
 
-static int str_end_emit(void* state, size_t size, const char* str) {
+static int str_try_emit(void* state, size_t size, const char* str) {
   LexerState* s = state;
-  str_table_add(str, s->str_buf, s->str_ptr);
-  return TOK_STR;
+  if (s->str_delim == *str) {
+    str_table_add(str, s->str_buf, s->str_ptr);
+    return TOK_STRING;
+  } else {
+    str_char(state, size, str);
+    return TOK_HOOK_NOOP;
+  }
+}
+
+static int str_try_end(void* state, size_t size, const char* str) {
+  LexerState* s = state;
+  if (s->str_delim == *str) {
+    return TOK_HOOK_END;
+  } else {
+    str_char(state, size, str);
+    return TOK_HOOK_NOOP;
+  }
 }
 ```
 

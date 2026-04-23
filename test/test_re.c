@@ -470,6 +470,41 @@ TEST(test_exec_action) {
   _unload(&lm);
 }
 
+static void _build_neg_range(Aut* a, Re* re, IrWriter* w) {
+  // [^abc] => action 1
+  ReRange* r = re_range_new();
+  re_range_add(r, 'a', 'a');
+  re_range_add(r, 'b', 'b');
+  re_range_add(r, 'c', 'c');
+  re_range_neg(r);
+  re_append_range(re, r, (DebugInfo){0, 0});
+  re_range_del(r);
+  re_action(re, 1);
+  aut_gen_dfa(a, w, false);
+}
+
+TEST(test_exec_neg_range) {
+  LoadedMatch lm = _load_match_re(_build_neg_range, "neg_range");
+  MatchResult r;
+  // 'x','y','z' should match (not in [abc])
+  r = lm.fn(0, 'x');
+  assert(r.action == 1);
+  r = lm.fn(0, 'y');
+  assert(r.action == 1);
+  r = lm.fn(0, 'z');
+  assert(r.action == 1);
+  r = lm.fn(0, '0');
+  assert(r.action == 1);
+  // 'a','b','c' should NOT match
+  r = lm.fn(0, 'a');
+  assert(r.action == -2);
+  r = lm.fn(0, 'b');
+  assert(r.action == -2);
+  r = lm.fn(0, 'c');
+  assert(r.action == -2);
+  _unload(&lm);
+}
+
 int main(void) {
   printf("test_re:\n");
   RUN(test_lifecycle);
@@ -498,6 +533,7 @@ int main(void) {
   RUN(test_exec_alt);
   RUN(test_exec_complex);
   RUN(test_exec_action);
+  RUN(test_exec_neg_range);
   printf("all ok\n");
   return 0;
 }
