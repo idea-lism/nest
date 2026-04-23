@@ -190,3 +190,9 @@ typedef struct {
 PegGenInput peg_analyze(PegAnalyzeInput* input, int memoize_mode, const char* prefix);
 void peg_analyze_free(PegGenInput* result);
 void peg_gen(PegGenInput* input, HeaderWriter* hw, IrWriter* w);
+
+// --- Slot/tag bits allocation (see specs/peg_alloc.md) ---
+// Depends only on coloring. Allocates slot/tag bits for a single closure:
+// on return, every ScopedRule has its allocation fields filled in, and
+// `closure->bits_bucket_size` / `closure->slots_size` are set.
+void peg_alloc_scope(ScopeClosure* closure, MemoizeMode mode);
