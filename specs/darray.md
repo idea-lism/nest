@@ -34,8 +34,12 @@ struct A {
 ### Methods
 
 ```c
+// memset to 0
 void* darray_new(uint32_t elem_size, size_t elem_count);
-void* darray_grow(void* a, size_t new_elem_count); // returns realloc-ed darray
+// returns realloc-ed darray, the newly added space after existing elements are memset to 0 too
+void* darray_grow(void* a, size_t new_elem_count);
+// grows but ensures capacity
+void* darray_grow2(void* a, size_t new_elem_count, size_t new_cap);
 // returns elem count (not bytesize)
 size_t darray_size(void* a);
 // free the heap, not the elem

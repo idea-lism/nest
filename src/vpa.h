@@ -55,7 +55,7 @@ typedef struct {
   char* name;       // (owned)
   VpaUnit leader;
   VpaUnits children;
-  bool is_macro;       // parse-time: macro rule, removed after inlining
+  bool is_macro; // parse-time: macro rule, removed after inlining
   bool has_parser;
   int32_t eof_action;  // action_id for VPA_EOF child, 0 = none
   int32_t source_line; // line in .nest file (for LLVM IR debug info), 0 = unknown

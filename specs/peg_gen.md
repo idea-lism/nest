@@ -186,6 +186,10 @@ typedef Node_{rule_name} {
   PegRef {child1};
   ...
 };
+
+size_t {prefix}_peg_size(PegRef) {
+  // returns token size of the PegRef
+}
 ```
 
 For repeated name fields, the ocurrences are auto-renamed to `field$1, field$2`.
@@ -252,14 +256,17 @@ Generic link iterating functions should be defined as:
 ```c
 // NOTE: for `term` lhs / naive mode that's much simpler & trivial,
 //       but the `call` lhs is more difficult so we only list what will happen for `call` case here
+// NOTE: sentinel token/column eliminates bounds checks (see token_tree.md#sentinel-token)
+//       - sentinel token has term_id=0, never matches any valid term
+//       - sentinel memoize column is zero-initialized, bits test fails, slot reads as 0
 
 bool {prefix}_has_elem(PegLink* l) {
-  if (l->col >= darray_size(l->tc->tokens)) {
-    return false;
+  if (l->lhs_row == -2) {
+    return l->tc->tokens[l->col].term_id == {lhs_term_id};
   }
   int32_t* $col = (int32_t*)l->tc->value + l->col_size_in_i32 * l->col;
-  uint64_t* $bits = (uint64_t*)$col;
-  return ($bits[l->lhs_bit_index] & l->lhs_bit_mask) && $col[l->lhs_row] >= 0;
+  // shared mode also checks bits; naive mode just checks slot
+  ...
 }
 
 void {prefix}_get_next(PegLink* l) {

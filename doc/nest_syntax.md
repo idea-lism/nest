@@ -28,22 +28,24 @@ Lines starting with `#` are comments.
 
 | Directive | Meaning |
 |-----------|---------|
-| `%ignore @tok ...` | Tokens kept for source reconstruction but excluded from AST |
+| `%ignore @tok ...` | Tokens kept for source reconstruction but excluded from PEG parsing |
 | `%define ID /regex/` | Define a named regex fragment (ID must start with uppercase) |
-| `%effect .hook = @tok \| .hook ...` | Define a compound effect |
+| `%effect .hook = @tok \| .hook ...` | Define a compound effect (sequence of actions) |
 
 ### Rules
 
 ```
-name = /regex/ @token_id scope?
-name = "literal" @token_id scope?
-name = FragName @token_id scope?
+name = /regex/ action* scope?
+name = "literal" action* scope?
+name = FragName action* scope?
+name = EOF action*
 ```
 
 - `name` — lowercase identifier (`[a-z_]\w*`)
-- `EOF` - special identifier, matches end of file
-- `@token_id` — token tag emitted on match
-- Scope `{ ... }` — nested lexer context (pushdown)
+- `EOF` — special identifier, matches end of file
+- `FragName` — reference to `%define`d fragment (starts with uppercase)
+- `action*` — zero or more actions (see below)
+- `scope?` — optional nested lexer context `{ ... }`
 
 ### Module rules
 
@@ -52,7 +54,8 @@ name = FragName @token_id scope?
 *module_name = @{ ... }     # literal scope (each line is a string literal token)
 ```
 
-Module names are prefixed with `*`.
+Module names are prefixed with `*`. Module rules are inlined into the scopes
+that reference them during post-processing.
 
 ### Actions
 
@@ -64,8 +67,9 @@ Each rule can have zero or more actions appended:
 | `.begin` | Push scope |
 | `.end` | Pop scope |
 | `.fail` | Signal parse failure |
-| `.unparse` | Unparse (put back) |
-| `.user_hook` | User-defined hook (`.` prefix, lowercase) |
+| `.unparse` | Unparse (put back matched input) |
+| `.noop` | No operation (placeholder) |
+| `.user_hook` | User-defined hook (`.` prefix, lowercase identifier) |
 
 ### Literal scope
 
@@ -76,6 +80,8 @@ Each rule can have zero or more actions appended:
   "%ignore"
   "%effect"
   "%define"
+  "="
+  "|"
 }
 ```
 
@@ -100,11 +106,11 @@ b/\x00\xff/       # binary mode
 | `\d` | Digit class `[0-9]` |
 | `\h` | Hex digit class `[0-9a-fA-F]` |
 | `\n` `\t` `\r` etc. | C escape sequences |
-| `\u{XXXX}` | Unicode codepoint (hex) |
+| `\{XXXX}` | Unicode codepoint (hex) |
 | `[abc]` | Character class |
-| `[^abc]` | Negated character class |
+| `[^abc]` | Negated character class (`^` immediately after `[`) |
 | `[a-z]` | Character range |
-| `#{FragName}` | Reference to `%define`d fragment, can't reference EOF |
+| `#{FragName}` | Reference to `%define`d fragment |
 
 ### Quantifiers
 
@@ -121,7 +127,7 @@ b/\x00\xff/       # binary mode
 (abc)?        # optional group
 ```
 
-## String literals
+## String Literals
 
 Delimited by `"` or `'`. Support the same escape sequences as regexes.
 
@@ -161,6 +167,8 @@ name = seq
 | `+<sep>` | One or more, interlaced with separator |
 | `*<sep>` | Zero or more, interlaced with separator |
 
+The separator in `+<sep>` / `*<sep>` can be a rule name, `@token_id`, or `"literal"`.
+
 ### Branches (ordered choice)
 
 ```
@@ -171,11 +179,26 @@ rule = [
 ]
 ```
 
-Each line is an alternative. Optional `:tag` labels the branch for AST construction.
+Each line is an alternative. Optional `:tag` labels the branch for AST node
+discrimination. Tags are auto-generated from rule names when omitted in
+branches with more than one alternative (see post-processing).
+
+Branches cannot be nested directly inside other branches — use a
+named rule as an intermediary.
 
 ### Example
 
 ```
+[[vpa]]
+%ignore @space
+main = {
+  /\s+/ @space
+  /[0-9]+/ @number
+  /[+*()]/ @op
+}
+
+[[peg]]
+main = expr
 expr = term+<"+">
 term = factor+<"*">
 factor = [

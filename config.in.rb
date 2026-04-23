@@ -111,7 +111,7 @@ exe "llir_parse_gen",
   deps: %w[ustr]
 
 gen_str_header "build/nest_syntax.inc",
-  from: "specs/nest_syntax.md"
+  from: "doc/nest_syntax.md"
 
 gen_str_header "build/nest_reference.inc",
   from: "specs/bootstrap.nest"

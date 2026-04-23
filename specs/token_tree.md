@@ -71,9 +71,23 @@ TokenChunk* tt_pop(TokenTree* tree, int32_t cp_end);
 int64_t tt_current_size(TokenTree* tree);
 // get current chunk
 TokenChunk* tt_current(TokenTree* tree);
-// alloc sizeof_col * col_token_size to value
+// alloc sizeof_col * (token_count + 1) to value, +1 for sentinel column
 // sizeof_col must be multiple of 8, returned address must be 64-bit aligned
 void* tt_alloc_memoize_table(TokenChunk* chunk, int64_t sizeof_col);
 ```
 
 With `tc = tt_current(tree)`, we can check `tc->scope_id`, `tc->tokens[col]`
+
+### Sentinel token
+
+Since all valid token_id and scope_id are non-zero (see [parse.md](parse.md)), a zero-initialized Token acts as a natural sentinel.
+
+**tt_add**: not use `darray_push` directly, instead call `darray_grow` with `size+2` then set the ptr value, so there's always at least a sentinel token with id=0 at the end.
+
+**tt_alloc_memoize_table**: allocates `sizeof_col * (token_count + 1)` bytes. Naturally the end slot has `-1`
+
+This eliminates bounds checks in:
+- **PEG IR term matching** (`_emit_term`): reading `tokens[col].term_id` at end-of-stream returns 0, which never equals any valid term_id → natural mismatch, branches to fail. No explicit `col < token_size` check needed.
+- **Generated `has_elem`**: No explicit `col >= darray_size(tokens)` check needed.
+- **Generated `peg_size`**: sentinel column slot reads as 0, return 0 (no match). No explicit bounds check needed.
+- **Generated loader cursor advance**: sentinel column naturally stops advancement.

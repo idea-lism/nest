@@ -352,6 +352,7 @@ Parser should produce what vpa_gen / peg_gen requires.
 - user defined needs hook_id, so we have symtab `ParseState.hooks` (num start from 1) for hook numbering
   - the first enties are fixed for builtin hooks: .begin = 1, .end = 2, .fail = 3, .unparse = 4, .noop = 5
   - user-defined hooks number after primitive hooks
+- all token_id and scope_id are non-zero, so 0 can serve as a sentinel (see [token_tree](token_tree.md#sentinel-token))
 - unified action_unit_id (see also `action` in [bootstrap syntax](bootstrap.nest)):
   - action_unit_id > 0: maps to token_id
   - action_unit_id < 0: maps to -hook_id

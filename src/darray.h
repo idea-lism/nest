@@ -5,6 +5,8 @@
 
 void* darray_new_(uint32_t elem_size, size_t elem_count);
 void* darray_grow_(void* a, size_t new_elem_count);
+// grows but ensures capacity
+void* darray_grow2_(void* a, size_t new_elem_count, size_t new_cap);
 // returns elem count (not bytesize)
 size_t darray_size(void* a);
 // free the heap, not the elem
@@ -19,12 +21,15 @@ void* darray_insert_(void* a, size_t pos, const void* elem);
 
 void* darray_new_traced(uint32_t elem_size, size_t elem_count, const char* caller, int line);
 void* darray_grow_traced(void* a, size_t new_elem_count, const char* caller, int line);
+void* darray_grow2_traced(void* a, size_t new_elem_count, size_t new_cap, const char* caller, int line);
 void darray_del_traced(void* a, const char* caller, int line);
 void* darray_concat_traced(void* a, void* b, const char* caller, int line);
 void* darray_insert_traced(void* a, size_t pos, const void* elem, const char* caller, int line);
 
 #define darray_new(elem_size, elem_count) darray_new_traced(elem_size, elem_count, __FUNCTION__, __LINE__)
 #define darray_grow(arr, new_elem_count) darray_grow_traced(arr, new_elem_count, __FUNCTION__, __LINE__)
+#define darray_grow2(arr, new_elem_count, new_cap)                                                                     \
+  darray_grow2_traced(arr, new_elem_count, new_cap, __FUNCTION__, __LINE__)
 #define darray_del(arr) darray_del_traced(arr, __FUNCTION__, __LINE__)
 #define darray_concat(a, b) darray_concat_traced(a, b, __FUNCTION__, __LINE__)
 #define darray_insert(a, pos, elem) darray_insert_traced(a, pos, elem, __FUNCTION__, __LINE__)
@@ -33,6 +38,7 @@ void* darray_insert_traced(void* a, size_t pos, const void* elem, const char* ca
 
 #define darray_new darray_new_
 #define darray_grow darray_grow_
+#define darray_grow2 darray_grow2_
 #define darray_del darray_del_
 #define darray_concat darray_concat_
 #define darray_insert darray_insert_

@@ -4,7 +4,7 @@ Command line tool that generates
   - `nest l` simple lex
   - `nest c` generate parser by complete syntax
   - `nest h` show nest syntax help
-    - lists `specs/nest_syntax.md`
+    - lists `doc/nest_syntax.md`
   - `nest r` show nest grammar reference
     - lists `specs/bootstrap.nest`
 - common options

@@ -955,7 +955,7 @@ static NodeField _build_term_node_field(PegAnalyzeInput* input, ScopeClosure* cl
       .is_link = is_link,
       .is_scope = scope,
       .ref_row = scope ? _scope_entry_row(input, all_closures, n_closures, term_id) : 0,
-      .rhs_row = -1,
+      .rhs_row = PEG_ROW_NONE,
       .advance = (is_link || in_branch) ? NODE_ADVANCE_NONE : NODE_ADVANCE_ONE,
       .advance_slot_row = 0,
       .wrapper_name = NULL,
@@ -986,7 +986,7 @@ static NodeField _build_call_node_field(PegAnalyzeInput* input, ScopeClosure* cl
       .is_link = is_link,
       .is_scope = false,
       .ref_row = 0,
-      .rhs_row = -1,
+      .rhs_row = PEG_ROW_NONE,
       .advance = NODE_ADVANCE_NONE,
       .advance_slot_row = 0,
       .wrapper_name = NULL,
@@ -1009,7 +1009,7 @@ static NodeField _build_call_node_field(PegAnalyzeInput* input, ScopeClosure* cl
         nf.rhs_row = _slot_row(cl, rhs_sr);
       }
     } else if (u && u->interlace_rhs_kind == PEG_TERM) {
-      nf.rhs_row = -2; // sentinel: term separator, rhs_size = 1
+      nf.rhs_row = PEG_ROW_TERM;
     }
   } else {
     ScopedRule* callee_sr =
@@ -1135,12 +1135,6 @@ static void _build_node_fields(PegAnalyzeInput* input, RuleLookup* lu, ScopeClos
     _field_dedup_free(&fd);
   }
 }
-
-// ============================================================
-// Link info collection for iteration helpers
-// ============================================================
-
-// (removed _build_link_infos — link dispatch info now embedded in PegLink at load time)
 
 // ============================================================
 // Cleanup

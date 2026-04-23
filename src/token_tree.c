@@ -69,7 +69,10 @@ void tt_mark_newline(TokenTree* tree, int32_t cp_offset) {
 }
 
 void tt_add(TokenTree* tree, int32_t tok_id, int32_t cp_start, int32_t cp_size, int32_t chunk_id) {
-  darray_push(tree->current->tokens, ((Token){tok_id, cp_start, cp_size, chunk_id}));
+  size_t n = darray_size(tree->current->tokens);
+  // logical size n+1, capacity n+2 so sentinel [n+1] is allocated and zeroed (term_id=0)
+  tree->current->tokens = darray_grow2(tree->current->tokens, n + 1, n + 2);
+  tree->current->tokens[n] = (Token){tok_id, cp_start, cp_size, chunk_id};
 }
 
 TokenChunk* tt_push(TokenTree* tree, int32_t scope_id) {
@@ -109,7 +112,8 @@ TokenChunk* tt_current(TokenTree* tree) { return tree->current; }
 void* tt_alloc_memoize_table(TokenChunk* chunk, int64_t sizeof_col) {
   // sizeof_col must be multiple of 8, returned address must be 64-bit aligned
   assert(sizeof_col % 8 == 0);
-  size_t bytesize = darray_size(chunk->tokens) * (size_t)sizeof_col;
+  // +1 for sentinel column
+  size_t bytesize = (darray_size(chunk->tokens) + 1) * (size_t)sizeof_col;
   void* v = XMALLOC(bytesize);
   assert(((uintptr_t)v & 7) == 0); // XMALLOC guarantees 8-byte alignment
   memset(v, -1, bytesize);

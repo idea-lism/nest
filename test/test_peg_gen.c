@@ -522,7 +522,8 @@ TEST(test_iteration_helpers) {
   assert(strstr(g.hdr_buf, "json_get_next") != NULL);
   assert(strstr(g.hdr_buf, "json_get_lhs") != NULL);
   assert(strstr(g.hdr_buf, "json_get_rhs") != NULL);
-  assert(strstr(g.hdr_buf, "darray_size(l->tc->tokens)") != NULL);
+  // sentinel eliminates bounds checks — no darray_size in generated code
+  assert(strstr(g.hdr_buf, "darray_size(l->tc->tokens)") == NULL);
 
   _free_gen(&g);
   _free_json_fixture(&input, &cl);

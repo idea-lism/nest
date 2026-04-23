@@ -93,11 +93,7 @@ static void _emit_term(PegIrCtx* ctx, ScopedUnit* unit, IrLabel fail_label) {
   IrWriter* w = ctx->ir_writer;
   IrVal col_val = irwriter_load(w, "i64", ctx->col);
 
-  IrVal in_bounds = irwriter_icmp(w, "slt", "i64", col_val, ctx->token_size);
-  IrLabel bounds_ok = irwriter_label(w);
-  irwriter_br_cond(w, in_bounds, bounds_ok, fail_label);
-  irwriter_bb_at(w, bounds_ok);
-
+  // sentinel token (term_id=0) at end-of-stream guarantees natural mismatch
   // tokens[col_val].term_id (field 0)
   irwriter_rawf(w, "  %%r%d = getelementptr %%Token, ptr %%r%d, i64 %%r%d, i32 0\n", irwriter_next_reg(w),
                 (int)ctx->tokens, (int)col_val);

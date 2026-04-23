@@ -26,24 +26,31 @@ void* darray_new_(uint32_t elem_size, size_t elem_count) {
   return data;
 }
 
-void* darray_grow_(void* a, size_t new_elem_count) {
+void* darray_grow_(void* a, size_t new_elem_count) { return darray_grow2_(a, new_elem_count, new_elem_count); }
+
+void* darray_grow2_(void* a, size_t new_elem_count, size_t new_cap) {
   if (!a) {
     return NULL;
   }
   DarrayHeader* h = _header(a);
+  size_t old_elem_count = h->elem_count;
   h->elem_count = new_elem_count;
-  uint32_t needed = (uint32_t)(new_elem_count * h->elem_size);
+  size_t cap = new_cap > new_elem_count ? new_cap : new_elem_count;
+  uint32_t needed = (uint32_t)(cap * h->elem_size);
   if (needed <= h->byte_cap) {
+    if (cap > old_elem_count) {
+      memset((char*)a + old_elem_count * h->elem_size, 0, (cap - old_elem_count) * h->elem_size);
+    }
     return a;
   }
-  uint32_t new_cap = h->byte_cap;
-  while (new_cap < needed) {
-    new_cap *= 2;
+  uint32_t new_byte_cap = h->byte_cap;
+  while (new_byte_cap < needed) {
+    new_byte_cap *= 2;
   }
   uint32_t old_cap = h->byte_cap;
-  h = XREALLOC(h, sizeof(DarrayHeader) + new_cap);
-  h->byte_cap = new_cap;
-  memset((char*)(h + 1) + old_cap, 0, new_cap - old_cap);
+  h = XREALLOC(h, sizeof(DarrayHeader) + new_byte_cap);
+  h->byte_cap = new_byte_cap;
+  memset((char*)(h + 1) + old_cap, 0, new_byte_cap - old_cap);
   return h + 1;
 }
 
@@ -109,23 +116,32 @@ void* darray_new_traced(uint32_t elem_size, size_t elem_count, const char* calle
 }
 
 void* darray_grow_traced(void* a, size_t new_elem_count, const char* caller, int line) {
+  return darray_grow2_traced(a, new_elem_count, new_elem_count, caller, line);
+}
+
+void* darray_grow2_traced(void* a, size_t new_elem_count, size_t new_cap, const char* caller, int line) {
   if (!a) {
     return NULL;
   }
   DarrayHeader* h = _header(a);
+  size_t old_elem_count = h->elem_count;
   h->elem_count = new_elem_count;
-  uint32_t needed = (uint32_t)(new_elem_count * h->elem_size);
+  size_t cap = new_cap > new_elem_count ? new_cap : new_elem_count;
+  uint32_t needed = (uint32_t)(cap * h->elem_size);
   if (needed <= h->byte_cap) {
+    if (cap > old_elem_count) {
+      memset((char*)a + old_elem_count * h->elem_size, 0, (cap - old_elem_count) * h->elem_size);
+    }
     return a;
   }
-  uint32_t new_cap = h->byte_cap;
-  while (new_cap < needed) {
-    new_cap *= 2;
+  uint32_t new_byte_cap = h->byte_cap;
+  while (new_byte_cap < needed) {
+    new_byte_cap *= 2;
   }
   uint32_t old_cap = h->byte_cap;
-  h = xrealloc_traced(h, sizeof(DarrayHeader) + new_cap, caller, line);
-  h->byte_cap = new_cap;
-  memset((char*)(h + 1) + old_cap, 0, new_cap - old_cap);
+  h = xrealloc_traced(h, sizeof(DarrayHeader) + new_byte_cap, caller, line);
+  h->byte_cap = new_byte_cap;
+  memset((char*)(h + 1) + old_cap, 0, new_byte_cap - old_cap);
   return h + 1;
 }
 

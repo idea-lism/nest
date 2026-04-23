@@ -26,7 +26,6 @@ typedef struct {
   int32_t tag_bits_n;    // number of tag_bits allocas (max across all rules in scope)
   bool has_tags;         // whether current rule has tag bits (controls stack push/pop around calls)
   IrVal parsed_tokens;
-  IrVal token_size;
 
   // call site tracking for indirectbr
   CallSite* current_rule_call_sites; // not owned, points to current rule's call_sites darray

@@ -129,6 +129,8 @@ darray_push(arr, 42);
 darray_push(arr, 99);
 size_t n = darray_size(arr);   // 2
 arr = darray_concat(arr, other);
+// grow with extra capacity (logical size 10, capacity 16)
+arr = darray_grow2(arr, 10, 16);
 darray_del(arr);
 ```
 

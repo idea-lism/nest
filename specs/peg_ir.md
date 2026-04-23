@@ -119,7 +119,7 @@ For native call stack: when alloca is dynamic (not single-time funciton-top), ad
 
 `gen(unit, fail_label)` means `peg_ir_emit_parse(ctx, unit, fail_label)`.
 
-Term increments `col` by 1.
+Term increments `col` by 1. Term reads `tokens[col].term_id` directly — the sentinel token (term_id=0) at end-of-stream guarantees a natural mismatch without explicit bounds checking (see [token_tree](token_tree.md#sentinel-token)).
 
 Call & term are trivial so we don't specify here.
 
