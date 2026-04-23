@@ -88,13 +88,8 @@ Internal benchmarks only. Deterministic (seeded PRNG). Each grammar Ã— 3 sizes Ã
 Comparison benchmarks must not use generated inputs. They use grammar/input files from https://github.com/arithy/packcc/tree/main/benchmark verbatim.
 
 ### Sizes
-Input size array: `[1k, 10k, 1m]`
 
-| Label | Target | Purpose |
-|-------|--------|---------|
-| `xs`  | 1 KB   | Baseline, startup cost |
-| `sm`  | 10 KB  | Small file |
-| `lg`  | 1 MB   | Throughput stress |
+Input size array: `[1k, 10k, 1m]`, use these names as labels too.
 
 ### Variants per grammar
 

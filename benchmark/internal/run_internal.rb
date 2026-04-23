@@ -11,7 +11,7 @@ include BenchmarkCommon
 CC = "xcrun clang"
 MEMOIZE_MODES = %w[none naive shared].freeze
 SIZE_LABELS = %w[1k 10k 1m].freeze
-REPORT_METRICS = ["MB/s", "RSS MB", "Tokens", "Chunks"].freeze
+REPORT_METRICS = ["MB/s", "RSS MB", "Memo MB", "Tokens", "Chunks"].freeze
 OPT_LEVELS = {
   "calc" => %w[-O0 -O2],
   "json" => %w[-O2],
@@ -79,13 +79,14 @@ def run_internal
         inputs.each do |input|
           begin
             iters = adaptive_iterations(runner_bin, input[:path])
-            out, rss_kb, = run_with_rss([runner_bin, input[:path], iters.to_s])
+            out, rss_kb, err = run_with_rss([runner_bin, input[:path], iters.to_s])
             csv_line = out.strip.lines.last&.strip || ""
             fields = csv_line.split(",")
             parse_us = fields[0].to_f
             token_count = fields[2].to_i
             chunk_count = fields[3].to_i
             throughput = input[:size_bytes] / (parse_us / 1e6) / 1e6
+            memoize_bytes = parse_trace_total_malloc(err)
 
             row = {
               "grammar"       => grammar,
@@ -96,6 +97,7 @@ def run_internal
               "parse_us"      => parse_us.round(1),
               "throughput_mbs" => throughput.round(2),
               "rss_kb"        => rss_kb ? rss_kb.round(1) : "",
+              "memoize_bytes" => memoize_bytes || "",
               "token_count"   => token_count,
               "chunk_count"   => chunk_count
             }
@@ -147,12 +149,19 @@ def fmt_rss_mb(v)
   format("%.1f", v.to_f / 1024.0)
 end
 
+def fmt_bytes_mb(v)
+  return "-" if v.nil? || v == ""
+
+  format("%.1f", v.to_f / 1024.0 / 1024.0)
+end
+
 def metric_cells(row)
-  return ["-", "-", "-", "-"] unless row
+  return ["-", "-", "-", "-", "-"] unless row
 
   [
     fmt_metric(row["throughput_mbs"]),
     fmt_rss_mb(row["rss_kb"]),
+    fmt_bytes_mb(row["memoize_bytes"]),
     row["token_count"].to_i.to_s,
     row["chunk_count"].to_i.to_s
   ]

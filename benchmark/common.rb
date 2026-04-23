@@ -101,6 +101,13 @@ module BenchmarkCommon
     bytes.to_i / 1024.0
   end
 
+  def parse_trace_total_malloc(stderr)
+    line = stderr.lines.find { |it| it.start_with?("TRACE_TOTAL_MALLOC=") }
+    return nil unless line
+
+    line[/TRACE_TOTAL_MALLOC=([0-9]+)/, 1]&.to_i
+  end
+
   def run_with_rss(cmd, chdir: nil, env: {})
     opts = {}
     opts[:chdir] = chdir if chdir

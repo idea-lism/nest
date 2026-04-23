@@ -3,8 +3,22 @@
 #include "ustr.h"
 #include "xmalloc.h"
 #include <assert.h>
+#include <stdbool.h>
 #include <stdint.h>
+#include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
+
+// #define TRACE_TOTAL_MALLOC
+#ifdef TRACE_TOTAL_MALLOC
+static int64_t _trace_total_malloc = 0;
+static void _print_trace_total_malloc(void) {
+  fprintf(stderr, "TRACE_TOTAL_MALLOC=%lld\n", (long long)_trace_total_malloc);
+}
+__attribute__((constructor)) static void _register_trace_total_malloc(void) {
+  atexit(_print_trace_total_malloc);
+}
+#endif
 
 TokenTree* tt_tree_new(const char* ustr) {
   TokenTree* tree = XMALLOC(sizeof(TokenTree));
@@ -114,6 +128,9 @@ void* tt_alloc_memoize_table(TokenChunk* chunk, int64_t sizeof_col) {
   assert(sizeof_col % 8 == 0);
   // +1 for sentinel column
   size_t bytesize = (darray_size(chunk->tokens) + 1) * (size_t)sizeof_col;
+#ifdef TRACE_TOTAL_MALLOC
+  _trace_total_malloc += (int64_t)bytesize;
+#endif
   void* v = XMALLOC(bytesize);
   assert(((uintptr_t)v & 7) == 0); // XMALLOC guarantees 8-byte alignment
   memset(v, -1, bytesize);

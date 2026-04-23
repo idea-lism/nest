@@ -91,3 +91,16 @@ This eliminates bounds checks in:
 - **Generated `has_elem`**: No explicit `col >= darray_size(tokens)` check needed.
 - **Generated `peg_size`**: sentinel column slot reads as 0, return 0 (no match). No explicit bounds check needed.
 - **Generated loader cursor advance**: sentinel column naturally stops advancement.
+
+### Allocation tracing (`TRACE_TOTAL_MALLOC`)
+
+For benchmarking memoize table memory, `token_tree.c` can opt into tracking the total bytes allocated by `tt_alloc_memoize_table` via the macro `TRACE_TOTAL_MALLOC`.
+
+When `TRACE_TOTAL_MALLOC` is defined (manually, in `src/token_tree.c`):
+- A file-local `int64_t` counter accumulates `bytesize` on each `tt_alloc_memoize_table` call.
+- An `atexit` handler prints the final value to stderr in the form:
+  ```
+  TRACE_TOTAL_MALLOC=<bytes>
+  ```
+
+When not defined, nothing is compiled in — zero runtime overhead.
