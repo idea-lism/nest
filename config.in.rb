@@ -65,6 +65,13 @@ exe "test_peg_analyze",
   ext_libs: kissat,
   order_deps: %w[build/nest_rt.inc build/nest_rt_impl.inc]
 
+exe "test_peg_alloc",
+  srcs: base_lean + %w[test/test_peg_alloc.c test/compat.c],
+  deps: %w[ustr],
+  extra_objs: llir_lex,
+  ext_libs: kissat,
+  order_deps: %w[build/nest_rt.inc build/nest_rt_impl.inc]
+
 exe "test_peg_gen",
   srcs: base_lean + %w[test/test_peg_gen.c test/compat.c],
   deps: %w[ustr],

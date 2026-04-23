@@ -26,6 +26,7 @@ src/
   post_process.c: impls post_process.h
   peg.h: PEG types shared across analyze/gen/ir (PegUnit, PegRule, PegAnalysis). follows specs/peg_analyze.md, specs/peg_gen.md
   peg_analyze.c: PEG grammar analysis — FIRST/FOLLOW sets, conflict detection, memoization planning. follows specs/peg_analyze.md
+  peg_alloc.c: slot/tag bits allocation for a single ScopeClosure (depends only on coloring). follows specs/peg_alloc.md
   peg_gen.c: PEG code generation — emits C header with parser tables and structure definitions. follows specs/peg_gen.md
   peg_ir.c: PEG IR emission — generates LLVM IR for PEG parsing functions. follows specs/peg_ir.md
   peg_ir.h: PEG IR context (PegIrCtx) shared state for IR emission. follows specs/peg_ir.md
@@ -56,7 +57,7 @@ test/
   test_aut.c: automata NFA→DFA and LLVM IR generation tests
   test_irwriter.c: IR text emitter tests
   test_parse.c, test_parse_gen.c: parser and lexer generator tests
-  test_peg_analyze.c, test_peg_gen.c, test_peg_ir.c: PEG subsystem tests
+  test_peg_analyze.c, test_peg_gen.c, test_peg_ir.c, test_peg_alloc.c: PEG subsystem tests
   test_post_process.c: post-processing pass tests
   test_vpa.c: VPA lexer tests
   test_coloring.c: graph coloring tests

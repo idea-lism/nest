@@ -152,11 +152,9 @@ Per `SegmentAlloc`, compute buckets:
   - `tag_bit_count <= 64 - slot_bit_count` → 0 (packs into slot-bucket gap)
   - else → `ceil(tag_bit_count / 64)` dedicated tag buckets.
 
-Segments are laid out contiguously:
+Slot buckets of different segments are **greedy-bin-packed** into shared `uint64_t` buckets (place each segment into the first bucket with enough remaining bits; open a new bucket only when none fits). `rule_bit_mask` and `segment_mask` are shifted into the segment's bit-range within its shared bucket so that `bits[segment_index] & segment_mask` still isolates just this segment's slot bits.
 
-```
-bits[] = [ seg0: slot_bucket, tag_buckets... | seg1: slot_bucket, tag_buckets... | ... ]
-```
+Dedicated tag buckets (big-tag segments) are appended after the packed slot buckets and are not shared.
 
 Fill physical indices:
 
@@ -170,20 +168,16 @@ struct ScopedRule {
 ```
 
 Tag bit placement:
-- **Packed** (fits in slot bucket gap): `tag_bit_index = segment_index`, `tag_bit_offset = slot_bit_count`.
-- **Dedicated** (own buckets): `tag_bit_index = segment_index + 1`, `tag_bit_offset = 0`.
+- **Packed** (fits in slot bucket gap): `tag_bit_index = segment_index`, `tag_bit_offset = <segment's bit offset in shared bucket> + slot_bit_count`.
+- **Dedicated** (own buckets): `tag_bit_index` points past all packed slot buckets, `tag_bit_offset = 0`.
 
 #### Packing requirement
 
-Slot bits and tag bits **must** share buckets whenever they fit: when `tag_bit_count <= 64 - slot_bit_count`, tag bits live in the same `uint64_t` as the slot bits (packed placement above). Dedicated tag buckets are only used when tags genuinely overflow the slot-bucket gap.
+Slot bits and tag bits **must** share buckets whenever they fit: within a segment, when `tag_bit_count <= 64 - slot_bit_count`, tag bits live in the same `uint64_t` as the slot bits. Across segments, slot buckets are greedy-bin-packed as described above. Dedicated tag buckets are only used when tags genuinely overflow the slot-bucket gap.
 
 The same packing discipline applies to naive-mode tag bit allocation: small rules greedy-knapsack into shared buckets; a rule only consumes a new bucket when no existing bucket has room.
 
-Across a closure, the resulting `bits[]` must not contain large unallocated gaps. Concretely, for every bucket `b` in `bits[0 .. bits_bucket_size)`, the number of **used** bits (slot bits + tag bits allocated into that bucket) satisfies one of:
-- the bucket belongs to a dedicated tag region of a single rule/segment (fully used except for the last bucket of a big rule, whose tail holds `tag_bit_count mod 64` bits); or
-- the bucket is a slot bucket where no further rule/segment could have been packed in without violating the 64-bit constraint.
-
-In particular, it is a bug if a bucket has `< 64` used bits **and** another bucket with free bits in the same closure could have absorbed them under the greedy rule above.
+Across a closure, the resulting `bits[]` must not contain large unallocated gaps. Concretely, for every pair of buckets `(i, j)` in `bits[0 .. bits_bucket_size)`, it is a bug if `used(i) + used(j) <= 64` (both could have been merged) — except when one of them is a dedicated tag bucket of a big rule (dedicated regions are never merged with slot buckets, by design).
 
 Final layout:
 

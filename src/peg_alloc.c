@@ -433,7 +433,8 @@ static void _alloc_slot_bits(ScopeClosure* cl) {
   coloring_result_del(cr);
 }
 
-// Physical layout pass: assign segment_index, slot_index, tag_bit_index, tag_bit_offset
+// Physical layout pass: pack segments into shared buckets (slot bits +
+// packed tag bits), then append dedicated tag buckets for big-tag segments.
 static void _finalize_layout(ScopeClosure* cl, int32_t* seg_max_tags) {
   int32_t rule_size = (int32_t)darray_size(cl->scoped_rules);
   int32_t segment_size = (int32_t)cl->slots_size;
@@ -447,54 +448,122 @@ static void _finalize_layout(ScopeClosure* cl, int32_t* seg_max_tags) {
     }
   }
 
-  // Layout each segment contiguously: slot_bucket + optional tag_buckets
-  int32_t total_buckets = 0;
-  int32_t* seg_phys_index = XCALLOC((size_t)segment_size, sizeof(int32_t));
-  int32_t* seg_tag_index = XCALLOC((size_t)segment_size, sizeof(int32_t));
-  int32_t* seg_tag_offset = XCALLOC((size_t)segment_size, sizeof(int32_t));
-
-  for (int32_t seg = 0; seg < segment_size; seg++) {
-    seg_phys_index[seg] = total_buckets;
-    total_buckets++; // slot bucket
-
-    int32_t max_tags = seg_max_tags[seg];
-    int32_t slot_bits = seg_slot_bits[seg];
-    if (max_tags == 0) {
-      seg_tag_index[seg] = seg_phys_index[seg];
-      seg_tag_offset[seg] = 0;
-    } else if (max_tags <= 64 - slot_bits) {
-      // Packed: tag bits fit in slot bucket gap
-      seg_tag_index[seg] = seg_phys_index[seg];
-      seg_tag_offset[seg] = slot_bits;
+  // Per-segment: in-bucket footprint (slot bits + packed tag bits) and whether
+  // tag bits are packed or require dedicated buckets.
+  int32_t* seg_footprint = XCALLOC((size_t)segment_size, sizeof(int32_t));
+  bool* seg_tag_packed = XCALLOC((size_t)segment_size, sizeof(bool));
+  for (int32_t s = 0; s < segment_size; s++) {
+    int32_t slot_bits = seg_slot_bits[s];
+    int32_t tag_bits = seg_max_tags[s];
+    if (tag_bits > 0 && tag_bits <= 64 - slot_bits) {
+      seg_footprint[s] = slot_bits + tag_bits;
+      seg_tag_packed[s] = true;
     } else {
-      // Dedicated: tag bits need own buckets
-      seg_tag_index[seg] = total_buckets;
-      seg_tag_offset[seg] = 0;
-      int32_t needed = (max_tags + 63) / 64;
-      total_buckets += needed;
+      seg_footprint[s] = slot_bits;
+      seg_tag_packed[s] = false;
     }
   }
 
-  // Fill physical indices into each ScopedRule
+  // Greedy bin-packing of segment footprints into shared buckets.
+  // Process segments in descending footprint order (stable: break ties by
+  // segment id ascending).
+  int32_t* order = XCALLOC((size_t)segment_size, sizeof(int32_t));
+  for (int32_t s = 0; s < segment_size; s++) {
+    order[s] = s;
+  }
+  for (int32_t i = 1; i < segment_size; i++) {
+    for (int32_t j = i; j > 0; j--) {
+      if (seg_footprint[order[j]] > seg_footprint[order[j - 1]]) {
+        int32_t t = order[j];
+        order[j] = order[j - 1];
+        order[j - 1] = t;
+      } else {
+        break;
+      }
+    }
+  }
+
+  int32_t* seg_phys_index = XCALLOC((size_t)segment_size, sizeof(int32_t));
+  int32_t* seg_bit_offset = XCALLOC((size_t)segment_size, sizeof(int32_t));
+  int32_t* bucket_used = NULL;
+  int32_t bucket_size = 0;
+
+  for (int32_t k = 0; k < segment_size; k++) {
+    int32_t s = order[k];
+    int32_t foot = seg_footprint[s];
+    if (foot == 0) {
+      // Empty segment (no slot bits, no tags). Give it an arbitrary slot bucket
+      // that has room (including creating one if necessary). Shouldn't happen
+      // for valid closures but keep layout well-defined.
+      foot = 1;
+    }
+    int32_t best = -1;
+    for (int32_t b = 0; b < bucket_size; b++) {
+      if (64 - bucket_used[b] >= foot) {
+        best = b;
+        break;
+      }
+    }
+    if (best < 0) {
+      bucket_used = XREALLOC(bucket_used, (size_t)(bucket_size + 1) * sizeof(int32_t));
+      bucket_used[bucket_size] = 0;
+      best = bucket_size;
+      bucket_size++;
+    }
+    seg_phys_index[s] = best;
+    seg_bit_offset[s] = bucket_used[best];
+    bucket_used[best] += foot;
+  }
+
+  // Dedicated tag buckets for segments whose tag bits don't pack.
+  int32_t* seg_tag_index = XCALLOC((size_t)segment_size, sizeof(int32_t));
+  int32_t* seg_tag_offset = XCALLOC((size_t)segment_size, sizeof(int32_t));
+  int32_t total_buckets = bucket_size;
+  for (int32_t s = 0; s < segment_size; s++) {
+    int32_t tag_bits = seg_max_tags[s];
+    if (tag_bits == 0) {
+      seg_tag_index[s] = seg_phys_index[s];
+      seg_tag_offset[s] = 0;
+    } else if (seg_tag_packed[s]) {
+      seg_tag_index[s] = seg_phys_index[s];
+      seg_tag_offset[s] = seg_bit_offset[s] + seg_slot_bits[s];
+    } else {
+      seg_tag_index[s] = total_buckets;
+      seg_tag_offset[s] = 0;
+      total_buckets += (tag_bits + 63) / 64;
+    }
+  }
+
+  // Shift segment_mask and rule_bit_mask into each segment's bit-range within
+  // its shared bucket. Before this pass the masks were based at bit 0.
   for (int32_t i = 0; i < rule_size; i++) {
     ScopedRule* sr = &cl->scoped_rules[i];
     int32_t seg = sr->segment_color;
-    if (seg >= 0 && seg < segment_size) {
-      sr->segment_index = (uint64_t)seg_phys_index[seg];
-      sr->slot_index = (uint64_t)seg; // slot index = logical segment
-      if (sr->tag_bit_count > 0) {
-        sr->tag_bit_index = seg_tag_index[seg];
-        sr->tag_bit_offset = seg_tag_offset[seg];
-      }
+    if (seg < 0 || seg >= segment_size) {
+      continue;
+    }
+    int32_t shift = seg_bit_offset[seg];
+    sr->segment_mask = sr->segment_mask << shift;
+    sr->rule_bit_mask = sr->rule_bit_mask << shift;
+    sr->segment_index = (uint64_t)seg_phys_index[seg];
+    sr->slot_index = (uint64_t)seg; // slot index = logical segment id
+    if (sr->tag_bit_count > 0) {
+      sr->tag_bit_index = seg_tag_index[seg];
+      sr->tag_bit_offset = seg_tag_offset[seg];
     }
   }
 
   cl->bits_bucket_size = total_buckets;
 
   XFREE(seg_slot_bits);
+  XFREE(seg_footprint);
+  XFREE(seg_tag_packed);
+  XFREE(order);
   XFREE(seg_phys_index);
+  XFREE(seg_bit_offset);
   XFREE(seg_tag_index);
   XFREE(seg_tag_offset);
+  XFREE(bucket_used);
 }
 
 static void _alloc_shared_tag_bits(ScopeClosure* cl) {
