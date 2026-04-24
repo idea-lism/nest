@@ -3,7 +3,7 @@
 # https://kotlinlang.org/grammar/
 
 [[vpa]]
-%ignore @space @comment
+%ignore @space @comment @nl
 
 # Keywords (order matters for VPA: longer matches first by the DFA)
 *keywords = @{
@@ -275,7 +275,6 @@ str_interp = /\$[{]/ .begin @str_expr_open {
   /[}]/ @str_expr_close .end
   /,/ @comma
   /:/ @colon
-  /;/ @semi
   /\./ @dot
   /\?/ @quest
   /!/ @excl
@@ -350,7 +349,6 @@ ml_str_interp = /\$[{]/ .begin @str_expr_open {
   /[}]/ @str_expr_close .end
   /,/ @comma
   /:/ @colon
-  /;/ @semi
   /\./ @dot
   /\?/ @quest
   /!/ @excl
@@ -383,10 +381,7 @@ file_part = [
   declaration
 ]
 
-semi = [
-  @semi
-  @nl
-]
+semi = @semi
 
 # Package & import
 package_header = "package" identifier semi?
@@ -552,7 +547,8 @@ type_param_modifier = [
 ]
 
 # Statements
-statements = statement*
+statements = terminated_stmt*
+terminated_stmt = statement semi*
 statement = [
   declaration
   assignment
