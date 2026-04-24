@@ -1,0 +1,9 @@
+------
+@ident "hello"
+@ident "world"
+------
+main
+  checked
+    @ident
+  checked
+    @ident

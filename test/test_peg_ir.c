@@ -14,7 +14,7 @@
   do {                                                                                                                 \
     printf("  %s...", #name);                                                                                          \
     name();                                                                                                            \
-    printf(" OK\n");                                                                                                   \
+    printf(" ok\n");                                                                                                   \
   } while (0)
 
 // Set up an IrWriter writing to an in-memory buffer, with a function shell
@@ -452,6 +452,127 @@ static int _run_cmd(const char* cmd_str) {
   return exit_code;
 }
 
+TEST(test_emit_and_predicate) {
+  TestCtx t = _setup("test_fn");
+  ScopedUnit inner = {.kind = SCOPED_UNIT_TERM, .tag_bit_local_offset = -1, .as = {.term_id = 5}};
+  ScopedUnit* inner_heap = malloc(sizeof(ScopedUnit));
+  *inner_heap = inner;
+
+  ScopedUnit and_unit = {.kind = SCOPED_UNIT_AND, .tag_bit_local_offset = -1};
+  and_unit.as.base = inner_heap;
+
+  IrLabel fail = irwriter_label(t.w);
+  peg_ir_emit_parse(&t.ctx, &and_unit, fail);
+  irwriter_br(t.w, fail);
+  irwriter_bb_at(t.w, fail);
+  irwriter_ret(t.w, "{i64, i64}", irwriter_imm(t.w, "undef"));
+
+  char* out = _finish(&t);
+  // and-predicate should reference term_id 5
+  assert(strstr(out, "5"));
+  // should save and restore (save/restore calls)
+  assert(strstr(out, "@save("));
+  assert(strstr(out, "@restore("));
+  free(inner_heap);
+  free(out);
+}
+
+TEST(test_emit_not_predicate) {
+  TestCtx t = _setup("test_fn");
+  ScopedUnit inner = {.kind = SCOPED_UNIT_TERM, .tag_bit_local_offset = -1, .as = {.term_id = 3}};
+  ScopedUnit* inner_heap = malloc(sizeof(ScopedUnit));
+  *inner_heap = inner;
+
+  ScopedUnit not_unit = {.kind = SCOPED_UNIT_NOT, .tag_bit_local_offset = -1};
+  not_unit.as.base = inner_heap;
+
+  IrLabel fail = irwriter_label(t.w);
+  peg_ir_emit_parse(&t.ctx, &not_unit, fail);
+  irwriter_br(t.w, fail);
+  irwriter_bb_at(t.w, fail);
+  irwriter_ret(t.w, "{i64, i64}", irwriter_imm(t.w, "undef"));
+
+  char* out = _finish(&t);
+  // not-predicate should reference term_id 3
+  assert(strstr(out, "3"));
+  // should save and restore
+  assert(strstr(out, "@save("));
+  assert(strstr(out, "@restore("));
+  free(inner_heap);
+  free(out);
+}
+
+TEST(test_emit_and_call) {
+  // and-predicate wrapping a SCOPED_UNIT_CALL
+  TestCtx t = _setup("test_fn");
+
+  // setup call_sites for the callee so emit_ret can work
+  CallSite* cs = darray_new(sizeof(CallSite), 0);
+  CallSite entry_cs = {.caller_id = -1, .site = 0};
+  darray_push(cs, entry_cs);
+
+  ScopedUnit inner = {.kind = SCOPED_UNIT_CALL, .tag_bit_local_offset = -1};
+  inner.as.callee = "test_callee";
+  ScopedUnit* inner_heap = malloc(sizeof(ScopedUnit));
+  *inner_heap = inner;
+
+  ScopedUnit and_unit = {.kind = SCOPED_UNIT_AND, .tag_bit_local_offset = -1};
+  and_unit.as.base = inner_heap;
+
+  // We need call_sites on the current rule for emit_call
+  t.ctx.current_rule_call_sites = cs;
+
+  IrLabel fail = irwriter_label(t.w);
+  peg_ir_emit_parse(&t.ctx, &and_unit, fail);
+  irwriter_br(t.w, fail);
+  irwriter_bb_at(t.w, fail);
+  irwriter_ret(t.w, "{i64, i64}", irwriter_imm(t.w, "undef"));
+
+  char* out = _finish(&t);
+  // and-predicate should have save/restore
+  assert(strstr(out, "@save("));
+  assert(strstr(out, "@restore("));
+  // should reference the callee label
+  assert(strstr(out, "test_callee"));
+  free(inner_heap);
+  darray_del(cs);
+  free(out);
+}
+
+TEST(test_emit_not_branches) {
+  // not-predicate wrapping SCOPED_UNIT_BRANCHES
+  TestCtx t = _setup("test_fn");
+  ScopedUnit alt1 = {.kind = SCOPED_UNIT_TERM, .tag_bit_local_offset = -1, .as = {.term_id = 1}};
+  ScopedUnit alt2 = {.kind = SCOPED_UNIT_TERM, .tag_bit_local_offset = -1, .as = {.term_id = 2}};
+  ScopedUnit* ch = darray_new(sizeof(ScopedUnit), 0);
+  darray_push(ch, alt1);
+  darray_push(ch, alt2);
+
+  ScopedUnit br = {.kind = SCOPED_UNIT_BRANCHES, .tag_bit_local_offset = -1};
+  br.as.children = ch;
+  ScopedUnit* br_heap = malloc(sizeof(ScopedUnit));
+  *br_heap = br;
+
+  ScopedUnit not_unit = {.kind = SCOPED_UNIT_NOT, .tag_bit_local_offset = -1};
+  not_unit.as.base = br_heap;
+
+  IrLabel fail = irwriter_label(t.w);
+  peg_ir_emit_parse(&t.ctx, &not_unit, fail);
+  irwriter_br(t.w, fail);
+  irwriter_bb_at(t.w, fail);
+  irwriter_ret(t.w, "{i64, i64}", irwriter_imm(t.w, "undef"));
+
+  char* out = _finish(&t);
+  assert(strstr(out, "@save("));
+  assert(strstr(out, "@restore("));
+  // branches inside not: should reference both term_ids
+  assert(strstr(out, "1"));
+  assert(strstr(out, "2"));
+  darray_del(ch);
+  free(br_heap);
+  free(out);
+}
+
 TEST(test_compile_helpers_ir) {
   char* buf = NULL;
   size_t len = 0;
@@ -500,6 +621,10 @@ int main(void) {
   RUN(test_emit_plus_interlace);
   RUN(test_emit_star_nullable);
   RUN(test_tag_bit_set);
+  RUN(test_emit_and_predicate);
+  RUN(test_emit_not_predicate);
+  RUN(test_emit_and_call);
+  RUN(test_emit_not_branches);
   RUN(test_compile_helpers_ir);
   printf("test_peg_ir: OK\n");
   return 0;

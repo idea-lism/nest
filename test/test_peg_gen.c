@@ -16,7 +16,7 @@
   do {                                                                                                                 \
     printf("  %s...", #name);                                                                                          \
     name();                                                                                                            \
-    printf(" OK\n");                                                                                                   \
+    printf(" ok\n");                                                                                                   \
   } while (0)
 
 // Find matching '}' accounting for nesting.

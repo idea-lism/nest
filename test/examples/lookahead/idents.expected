@@ -1,0 +1,9 @@
+------
+@ident "hello"
+@ident "world"
+------
+main
+  item
+    @ident
+  item
+    @ident

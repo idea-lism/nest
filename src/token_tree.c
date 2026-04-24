@@ -15,9 +15,7 @@ static int64_t _trace_total_malloc = 0;
 static void _print_trace_total_malloc(void) {
   fprintf(stderr, "TRACE_TOTAL_MALLOC=%lld\n", (long long)_trace_total_malloc);
 }
-__attribute__((constructor)) static void _register_trace_total_malloc(void) {
-  atexit(_print_trace_total_malloc);
-}
+__attribute__((constructor)) static void _register_trace_total_malloc(void) { atexit(_print_trace_total_malloc); }
 #endif
 
 TokenTree* tt_tree_new(const char* ustr) {

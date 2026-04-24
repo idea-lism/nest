@@ -44,6 +44,8 @@ static void _emit_branches(PegIrCtx* ctx, ScopedUnit* unit, IrLabel fail_label);
 static void _emit_maybe(PegIrCtx* ctx, ScopedUnit* unit, IrLabel fail_label);
 static void _emit_star(PegIrCtx* ctx, ScopedUnit* unit, IrLabel fail_label);
 static void _emit_plus(PegIrCtx* ctx, ScopedUnit* unit, IrLabel fail_label);
+static void _emit_and(PegIrCtx* ctx, ScopedUnit* unit, IrLabel fail_label);
+static void _emit_not(PegIrCtx* ctx, ScopedUnit* unit, IrLabel fail_label);
 
 // --- Core dispatch ---
 
@@ -69,6 +71,12 @@ void peg_ir_emit_parse(PegIrCtx* ctx, ScopedUnit* unit, IrLabel fail_label) {
     break;
   case SCOPED_UNIT_PLUS:
     _emit_plus(ctx, unit, fail_label);
+    break;
+  case SCOPED_UNIT_AND:
+    _emit_and(ctx, unit, fail_label);
+    break;
+  case SCOPED_UNIT_NOT:
+    _emit_not(ctx, unit, fail_label);
     break;
   }
 
@@ -406,6 +414,52 @@ static void _emit_plus(PegIrCtx* ctx, ScopedUnit* unit, IrLabel fail_label) {
 
     irwriter_bb_at(w, end_bb);
   }
+}
+
+// --- And-predicate (&) ---
+// Succeeds iff e matches. Consumes nothing — col is always restored.
+
+static void _emit_and(PegIrCtx* ctx, ScopedUnit* unit, IrLabel fail_label) {
+  IrWriter* w = ctx->ir_writer;
+
+  IrLabel and_fail = irwriter_label(w);
+  IrLabel done_bb = irwriter_label(w);
+
+  _emit_call_save(ctx);
+  peg_ir_emit_parse(ctx, unit->as.base, and_fail);
+  _emit_call_restore(ctx);
+  _emit_discard(ctx);
+  irwriter_br(w, done_bb);
+
+  irwriter_bb_at(w, and_fail);
+  _emit_call_restore(ctx);
+  _emit_discard(ctx);
+  irwriter_br(w, fail_label);
+
+  irwriter_bb_at(w, done_bb);
+}
+
+// --- Not-predicate (!) ---
+// Succeeds iff e fails. Consumes nothing — col is always restored.
+
+static void _emit_not(PegIrCtx* ctx, ScopedUnit* unit, IrLabel fail_label) {
+  IrWriter* w = ctx->ir_writer;
+
+  IrLabel not_succ = irwriter_label(w);
+  IrLabel done_bb = irwriter_label(w);
+
+  _emit_call_save(ctx);
+  peg_ir_emit_parse(ctx, unit->as.base, not_succ);
+  _emit_call_restore(ctx);
+  _emit_discard(ctx);
+  irwriter_br(w, fail_label);
+
+  irwriter_bb_at(w, not_succ);
+  _emit_call_restore(ctx);
+  _emit_discard(ctx);
+  irwriter_br(w, done_bb);
+
+  irwriter_bb_at(w, done_bb);
 }
 
 // --- Return epilogue ---

@@ -145,6 +145,19 @@ static ScopedUnit _breakdown_single(GatherCtx* gctx, PegUnit* unit) {
 static ScopedUnit _breakdown(GatherCtx* gctx, PegUnit* unit, const char* parent_rule_name) {
   ScopedUnit su = {.tag_bit_local_offset = -1};
 
+  // Handle lookahead predicates: & and ! create SCOPED_UNIT_AND / SCOPED_UNIT_NOT
+  // Lookaheads are inline-only, no child memoize rules generated.
+  if (unit->lookahead) {
+    PegUnit inner_copy = *unit;
+    inner_copy.lookahead = 0;
+    ScopedUnit inner = _breakdown(gctx, &inner_copy, parent_rule_name);
+    ScopedUnit* inner_heap = XMALLOC(sizeof(ScopedUnit));
+    *inner_heap = inner;
+    su.kind = (unit->lookahead == '&') ? SCOPED_UNIT_AND : SCOPED_UNIT_NOT;
+    su.as.base = inner_heap;
+    return su;
+  }
+
   if (unit->multiplier) {
     gctx->multiplier_num++;
     int32_t child_id = symtab_intern_f(&gctx->closure->scoped_rule_names, "%s$%s$%d", gctx->closure->scope_name,
@@ -266,6 +279,8 @@ static void _resolve_unit_names(ScopeClosure* cl, ScopedUnit* su) {
     }
     break;
   case SCOPED_UNIT_MAYBE:
+  case SCOPED_UNIT_AND:
+  case SCOPED_UNIT_NOT:
     _resolve_unit_names(cl, su->as.base);
     break;
   case SCOPED_UNIT_STAR:
@@ -348,6 +363,62 @@ static void _alloc_tags(RuleLookup* lu, ScopeClosure* cl) {
       continue;
     }
     _alloc_tags_unit(&sr->body, &sr->tags, &orig->body);
+  }
+}
+
+// Force tag_bit_local_offset = -1 on all units inside a lookahead subtree.
+static void _force_no_tags(ScopedUnit* su) {
+  su->tag_bit_local_offset = -1;
+  switch (su->kind) {
+  case SCOPED_UNIT_SEQ:
+  case SCOPED_UNIT_BRANCHES:
+    for (size_t i = 0; i < darray_size(su->as.children); i++) {
+      _force_no_tags(&su->as.children[i]);
+    }
+    break;
+  case SCOPED_UNIT_MAYBE:
+  case SCOPED_UNIT_AND:
+  case SCOPED_UNIT_NOT:
+    _force_no_tags(su->as.base);
+    break;
+  case SCOPED_UNIT_STAR:
+  case SCOPED_UNIT_PLUS:
+    _force_no_tags(su->as.interlace.lhs);
+    if (su->as.interlace.rhs) {
+      _force_no_tags(su->as.interlace.rhs);
+    }
+    break;
+  default:
+    break;
+  }
+}
+
+// Walk the tree and force -1 tags on lookahead inner subtrees.
+static void _strip_lookahead_tags(ScopedUnit* su) {
+  switch (su->kind) {
+  case SCOPED_UNIT_AND:
+  case SCOPED_UNIT_NOT:
+    su->tag_bit_local_offset = -1;
+    _force_no_tags(su->as.base);
+    break;
+  case SCOPED_UNIT_SEQ:
+  case SCOPED_UNIT_BRANCHES:
+    for (size_t i = 0; i < darray_size(su->as.children); i++) {
+      _strip_lookahead_tags(&su->as.children[i]);
+    }
+    break;
+  case SCOPED_UNIT_MAYBE:
+    _strip_lookahead_tags(su->as.base);
+    break;
+  case SCOPED_UNIT_STAR:
+  case SCOPED_UNIT_PLUS:
+    _strip_lookahead_tags(su->as.interlace.lhs);
+    if (su->as.interlace.rhs) {
+      _strip_lookahead_tags(su->as.interlace.rhs);
+    }
+    break;
+  default:
+    break;
   }
 }
 
@@ -509,6 +580,10 @@ static void _build_child_fields(PegAnalyzeInput* input, ScopeClosure* cl, ScopeC
                                 int32_t branch_index) {
   for (int32_t i = 0; i < child_size; i++) {
     PegUnit* u = &children[i];
+    // Lookahead predicates consume no input and produce no node fields
+    if (u->lookahead) {
+      continue;
+    }
     bool is_link = (u->multiplier == '*' || u->multiplier == '+');
     if (u->kind == PEG_TERM) {
       darray_push(*out, _build_term_node_field(input, cl, all_closures, n_closures, fd, u->id, is_link, false,
@@ -632,6 +707,8 @@ static void _free_scoped_unit(ScopedUnit* su) {
     }
     break;
   case SCOPED_UNIT_MAYBE:
+  case SCOPED_UNIT_AND:
+  case SCOPED_UNIT_NOT:
     if (su->as.base) {
       _free_scoped_unit(su->as.base);
       XFREE(su->as.base);
@@ -704,6 +781,8 @@ static void _walk_call_sites(ScopeClosure* cl, int32_t caller_id, int32_t* site_
     }
     break;
   case SCOPED_UNIT_MAYBE:
+  case SCOPED_UNIT_AND:
+  case SCOPED_UNIT_NOT:
     _walk_call_sites(cl, caller_id, site_counter, su->as.base);
     break;
   case SCOPED_UNIT_STAR:
@@ -781,6 +860,13 @@ PegGenInput peg_analyze(PegAnalyzeInput* input, int memoize_mode, const char* pr
 
   for (int32_t c = 0; c < closure_size; c++) {
     _alloc_tags(&lu, &closures[c]);
+  }
+
+  // Force tag_bit_local_offset = -1 inside lookahead subtrees
+  for (int32_t c = 0; c < closure_size; c++) {
+    for (size_t i = 0; i < darray_size(closures[c].scoped_rules); i++) {
+      _strip_lookahead_tags(&closures[c].scoped_rules[i].body);
+    }
   }
 
   if (input->verbose_level > 1) {

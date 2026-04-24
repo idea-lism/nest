@@ -197,6 +197,13 @@ static void _compute_nullable(ScopeClosure* cl, ScopedRule* sr, ScopedUnit* unit
     sr->max_size = UINT32_MAX;
     break;
   }
+  case SCOPED_UNIT_AND:
+  case SCOPED_UNIT_NOT:
+    // Lookaheads consume nothing
+    sr->nullable = true;
+    sr->min_size = 0;
+    sr->max_size = 0;
+    break;
   }
 }
 
@@ -227,6 +234,8 @@ static bool _is_unit_nullable(ScopeClosure* cl, ScopedUnit* unit) {
     return false;
   case SCOPED_UNIT_MAYBE:
   case SCOPED_UNIT_STAR:
+  case SCOPED_UNIT_AND:
+  case SCOPED_UNIT_NOT:
     return true;
   case SCOPED_UNIT_PLUS:
     return _is_unit_nullable(cl, unit->as.interlace.lhs);
@@ -276,6 +285,10 @@ static void _compute_set(ScopeClosure* cl, ScopedUnit* unit, Bitset* set, _SetDi
   case SCOPED_UNIT_PLUS:
     _compute_set(cl, unit->as.interlace.lhs, set, dir);
     break;
+  case SCOPED_UNIT_AND:
+  case SCOPED_UNIT_NOT:
+    // Lookaheads consume nothing; contribute nothing to first/last sets
+    break;
   }
 }
 
@@ -289,6 +302,8 @@ static void _stamp_unit_nullable(ScopeClosure* cl, ScopedUnit* unit) {
     }
     break;
   case SCOPED_UNIT_MAYBE:
+  case SCOPED_UNIT_AND:
+  case SCOPED_UNIT_NOT:
     _stamp_unit_nullable(cl, unit->as.base);
     break;
   case SCOPED_UNIT_STAR:

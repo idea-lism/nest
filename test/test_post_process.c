@@ -571,6 +571,98 @@ TEST(test_inline_macros_literals) {
   parse_state_del(ps);
 }
 
+// Recursive macro dependency: *a references *b, *b references *a → error
+TEST(test_inline_macros_recursive_error) {
+  ParseState* ps = parse_state_new();
+  _init_symtabs(ps);
+  ps->vpa_scopes = darray_new(sizeof(VpaScope), 0);
+
+  // main = { *a }
+  VpaScope main_s = _make_scope("main", 0, false);
+  VpaUnit a_ref = _make_macro_ref("a");
+  darray_push(main_s.children, a_ref);
+  darray_push(ps->vpa_scopes, main_s);
+
+  // *a = { /x/ @tok_x *b }
+  VpaScope a_macro = _make_scope("a", 100, true);
+  VpaUnit ax = _make_re_unit('x', "tok_x", &ps->tokens);
+  darray_push(a_macro.children, ax);
+  VpaUnit b_ref = _make_macro_ref("b");
+  darray_push(a_macro.children, b_ref);
+  darray_push(ps->vpa_scopes, a_macro);
+
+  // *b = { /y/ @tok_y *a }  (cycle: b → a → b)
+  VpaScope b_macro = _make_scope("b", 101, true);
+  VpaUnit by = _make_re_unit('y', "tok_y", &ps->tokens);
+  darray_push(b_macro.children, by);
+  VpaUnit a_ref2 = _make_macro_ref("a");
+  darray_push(b_macro.children, a_ref2);
+  darray_push(ps->vpa_scopes, b_macro);
+
+  bool ok = pp_inline_macros(ps);
+  assert(!ok);
+  assert(parse_has_error(ps));
+  assert(strstr(parse_get_error(ps), "recursive") != NULL);
+
+  parse_state_del(ps);
+}
+
+// Cascaded expanding: *inner = { /y/ @tok_y }, *outer = { /x/ @tok_x *inner }
+// Definitions in reverse order (outer first, inner second) to exercise topo-sort.
+// main = { /z/ @tok_z *outer }
+// After inlining: main should have tok_z, tok_x, tok_y
+TEST(test_inline_macros_cascaded) {
+  ParseState* ps = parse_state_new();
+  _init_symtabs(ps);
+  ps->vpa_scopes = darray_new(sizeof(VpaScope), 0);
+
+  // main = { /z/ @tok_z *outer }
+  VpaScope main_s = _make_scope("main", 0, false);
+  VpaUnit mz = _make_re_unit('z', "tok_z", &ps->tokens);
+  darray_push(main_s.children, mz);
+  VpaUnit outer_ref = _make_macro_ref("outer");
+  darray_push(main_s.children, outer_ref);
+  darray_push(ps->vpa_scopes, main_s);
+
+  // *outer = { /x/ @tok_x *inner }  (defined BEFORE inner to test ordering)
+  VpaScope outer_macro = _make_scope("outer", 100, true);
+  VpaUnit ox = _make_re_unit('x', "tok_x", &ps->tokens);
+  darray_push(outer_macro.children, ox);
+  VpaUnit inner_ref = _make_macro_ref("inner");
+  darray_push(outer_macro.children, inner_ref);
+  darray_push(ps->vpa_scopes, outer_macro);
+
+  // *inner = { /y/ @tok_y }
+  VpaScope inner_macro = _make_scope("inner", 101, true);
+  VpaUnit iy = _make_re_unit('y', "tok_y", &ps->tokens);
+  darray_push(inner_macro.children, iy);
+  darray_push(ps->vpa_scopes, inner_macro);
+
+  bool ok = pp_inline_macros(ps);
+  assert(ok);
+
+  // main should now have: tok_z, tok_x, tok_y (all fully expanded)
+  VpaScope* mr = &ps->vpa_scopes[0];
+  int32_t found = 0;
+  bool found_z = false, found_x = false, found_y = false;
+  for (size_t j = 0; j < darray_size(mr->children); j++) {
+    VpaUnit* u = &mr->children[j];
+    assert(u->kind != VPA_MACRO_REF); // no unresolved macro refs
+    const char* tok = _unit_tok_name(u, &ps->tokens);
+    if (u->kind == VPA_RE && tok) {
+      if (strcmp(tok, "tok_z") == 0) { found_z = true; found++; }
+      if (strcmp(tok, "tok_x") == 0) { found_x = true; found++; }
+      if (strcmp(tok, "tok_y") == 0) { found_y = true; found++; }
+    }
+  }
+  assert(found_z);
+  assert(found_x);
+  assert(found_y);
+  assert(found == 3);
+
+  parse_state_del(ps);
+}
+
 // ============================================================================
 // pp_validate_vpa_scopes
 // ============================================================================
@@ -962,12 +1054,127 @@ TEST(test_match_scopes_expand_non_parser_scope) {
   parse_state_del(ps);
 }
 
+// Emit set must not expand a scope that has a mapping PEG parser.
+// VPA: main = { @b parser_scope no_parser_scope }
+// parser_scope has a PEG rule  → emit_set keeps it as scope_id
+// no_parser_scope has no PEG rule, emits @c → emit_set expands to @c
+// PEG: main = @b parser_scope @c
+TEST(test_match_scopes_no_expand_parser_scope) {
+  ParseState* ps = parse_state_new();
+  _init_symtabs(ps);
+  symtab_intern(&ps->scope_names, "main");           // 0
+  symtab_intern(&ps->scope_names, "parser_scope");   // 1
+  symtab_intern(&ps->scope_names, "no_parser_scope"); // 2
+  ps->vpa_scopes = darray_new(sizeof(VpaScope), 0);
+  ps->peg_rules = darray_new(sizeof(PegRule), 0);
+  ps->effect_decls = darray_new(sizeof(EffectDecl), 0);
+  symtab_init(&ps->ignores.names, 0);
+
+  // VPA: parser_scope = /x/ .begin @tok_x { /y/ @tok_y .end }
+  VpaUnit ps_leader = _make_re_unit_hook('x', HOOK_ID_BEGIN);
+  VpaScope ps_vr = _make_scoped("parser_scope", 1, ps_leader);
+  VpaUnit ps_y = _make_re_unit('y', "tok_y", &ps->tokens);
+  darray_push(ps_vr.children, ps_y);
+  VpaUnit ps_end = _make_re_unit_hook(')', HOOK_ID_END);
+  darray_push(ps_vr.children, ps_end);
+  darray_push(ps->vpa_scopes, ps_vr);
+
+  // VPA: no_parser_scope = { @c }  (no PEG parser → should be expanded)
+  VpaScope np_vr = _make_scope("no_parser_scope", 2, false);
+  VpaUnit np_c = _make_re_unit('c', "c", &ps->tokens);
+  darray_push(np_vr.children, np_c);
+  darray_push(ps->vpa_scopes, np_vr);
+
+  // VPA: main = { @b parser_scope no_parser_scope }
+  VpaScope main_vr = _make_scope("main", 0, false);
+  VpaUnit main_b = _make_re_unit('b', "b", &ps->tokens);
+  darray_push(main_vr.children, main_b);
+  VpaUnit main_ps_ref = _make_call_unit(1);
+  darray_push(main_vr.children, main_ps_ref);
+  VpaUnit main_np_ref = _make_call_unit(2);
+  darray_push(main_vr.children, main_np_ref);
+  darray_push(ps->vpa_scopes, main_vr);
+
+  // PEG: parser_scope = @tok_y  (this makes parser_scope a PEG scope)
+  PegRule ps_pr = {
+      .global_id = symtab_intern(&ps->rule_names, "parser_scope"), .scope_id = -1, .body = {.kind = PEG_SEQ}};
+  ps_pr.body.children = darray_new(sizeof(PegUnit), 0);
+  PegUnit ps_tok = {.kind = PEG_TERM, .id = symtab_intern(&ps->tokens, "tok_y")};
+  darray_push(ps_pr.body.children, ps_tok);
+  darray_push(ps->peg_rules, ps_pr);
+
+  // PEG: main = @b parser_scope @c
+  // emit_set = {@b, parser_scope, @c} (parser_scope NOT expanded, no_parser_scope expanded)
+  PegRule main_pr = {.global_id = symtab_intern(&ps->rule_names, "main"), .scope_id = -1, .body = {.kind = PEG_SEQ}};
+  main_pr.body.children = darray_new(sizeof(PegUnit), 0);
+  PegUnit main_tok_b = {.kind = PEG_TERM, .id = symtab_intern(&ps->tokens, "b")};
+  darray_push(main_pr.body.children, main_tok_b);
+  PegUnit main_call_ps = {.kind = PEG_CALL, .id = symtab_intern(&ps->rule_names, "parser_scope")};
+  darray_push(main_pr.body.children, main_call_ps);
+  PegUnit main_tok_c = {.kind = PEG_TERM, .id = symtab_intern(&ps->tokens, "c")};
+  darray_push(main_pr.body.children, main_tok_c);
+  darray_push(ps->peg_rules, main_pr);
+
+  bool ok = pp_match_scopes(ps);
+  assert(ok);
+
+  parse_state_del(ps);
+}
+
+// Recursive non-parser scope must not cause infinite recursion in emit_set expansion.
+// VPA: main = { @b rec }  where rec = { @c rec }  (rec has no PEG parser)
+// emit_set for main should expand rec → {@c} without looping.
+// PEG: main = @b @c
+TEST(test_match_scopes_expand_recursive_no_loop) {
+  ParseState* ps = parse_state_new();
+  _init_symtabs(ps);
+  symtab_intern(&ps->scope_names, "main"); // 0
+  symtab_intern(&ps->scope_names, "rec");  // 1
+  ps->vpa_scopes = darray_new(sizeof(VpaScope), 0);
+  ps->peg_rules = darray_new(sizeof(PegRule), 0);
+  ps->effect_decls = darray_new(sizeof(EffectDecl), 0);
+  symtab_init(&ps->ignores.names, 0);
+
+  // VPA: rec = { @c rec }  (no peg parser, self-referential)
+  VpaScope rec_vr = _make_scope("rec", 1, false);
+  VpaUnit rec_c = _make_re_unit('c', "c", &ps->tokens);
+  darray_push(rec_vr.children, rec_c);
+  VpaUnit rec_self = _make_call_unit(1); // rec calls itself
+  darray_push(rec_vr.children, rec_self);
+  darray_push(ps->vpa_scopes, rec_vr);
+
+  // VPA: main = { @b rec }
+  VpaScope main_vr = _make_scope("main", 0, false);
+  VpaUnit main_b = _make_re_unit('b', "b", &ps->tokens);
+  darray_push(main_vr.children, main_b);
+  VpaUnit main_rec_ref = _make_call_unit(1);
+  darray_push(main_vr.children, main_rec_ref);
+  darray_push(ps->vpa_scopes, main_vr);
+
+  // PEG: main = @b @c  (emit_set after expanding rec = {@b, @c})
+  PegRule main_pr = {.global_id = symtab_intern(&ps->rule_names, "main"), .scope_id = -1, .body = {.kind = PEG_SEQ}};
+  main_pr.body.children = darray_new(sizeof(PegUnit), 0);
+  PegUnit main_tok_b = {.kind = PEG_TERM, .id = symtab_intern(&ps->tokens, "b")};
+  darray_push(main_pr.body.children, main_tok_b);
+  PegUnit main_tok_c = {.kind = PEG_TERM, .id = symtab_intern(&ps->tokens, "c")};
+  darray_push(main_pr.body.children, main_tok_c);
+  darray_push(ps->peg_rules, main_pr);
+
+  // This must complete without stack overflow
+  bool ok = pp_match_scopes(ps);
+  assert(ok);
+
+  parse_state_del(ps);
+}
+
 int main(void) {
   printf("test_post_process:\n");
 
   RUN(test_inline_macros);
   RUN(test_inline_macros_missing);
   RUN(test_inline_macros_literals);
+  RUN(test_inline_macros_recursive_error);
+  RUN(test_inline_macros_cascaded);
   RUN(test_auto_tag_branches);
   RUN(test_auto_tag_many_tags);
   RUN(test_auto_tag_rule_name_too_long);
@@ -992,6 +1199,8 @@ int main(void) {
   RUN(test_match_scopes_scope_ref_in_sets);
   RUN(test_match_scopes_scope_ref_mismatch);
   RUN(test_match_scopes_expand_non_parser_scope);
+  RUN(test_match_scopes_no_expand_parser_scope);
+  RUN(test_match_scopes_expand_recursive_no_loop);
 
   printf("all ok\n");
   return 0;

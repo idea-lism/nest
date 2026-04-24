@@ -248,6 +248,10 @@ static void _gen_print_children(FILE* f, const char* prefix, PegUnit* children, 
                                 Symtab* scope_names, Symtab* rule_names, ExDedup* fd) {
   for (int32_t i = 0; i < size; i++) {
     PegUnit* u = &children[i];
+    // Lookahead predicates consume no input and produce no node fields
+    if (u->lookahead) {
+      continue;
+    }
     bool is_link = (u->multiplier == '*' || u->multiplier == '+');
     bool is_opt = (u->multiplier == '?');
 

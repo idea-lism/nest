@@ -1,8 +1,8 @@
 // specs/symtab.md
 #pragma once
 
-#include <stdint.h>
 #include <stddef.h>
+#include <stdint.h>
 
 typedef struct {
   char* buf;         // darray of char — all strings concatenated, '\0'-separated

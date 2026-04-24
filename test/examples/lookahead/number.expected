@@ -1,0 +1,6 @@
+------
+@number "42"
+------
+main
+  item
+    @number

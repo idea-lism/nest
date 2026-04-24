@@ -37,6 +37,7 @@ typedef enum {
   ACTION_SET_RE_MODE_BEGIN, // .set_re_mode .begin
   ACTION_SET_CC_KIND_BEGIN, // .set_cc_kind .begin
   ACTION_SET_QUOTE_BEGIN,   // .set_quote .begin
+  ACTION_END_NL,            // .end @nl
 
   ACTION_COUNT
 } ActionId;
@@ -56,6 +57,8 @@ typedef enum {
   LIT_STAR,
   LIT_LPAREN,
   LIT_RPAREN,
+  LIT_AND,
+  LIT_NOT,
 
   LIT_COUNT
 } LitId;

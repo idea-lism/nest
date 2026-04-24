@@ -103,10 +103,11 @@ branches = "[" .begin {
   *noise
 }
 
+# to make it simpler, tag_id must appear on the same line after colon, or it may eat the rest of the branches
 peg_tag = /:/ .begin {
   ID @tag_id
+  /\n/ .end @nl
   *noise
-  /./ .unparse .end
 }
 
 *re_ops = @{

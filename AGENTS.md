@@ -66,7 +66,7 @@ test/
   test_ustr.c, test_bitset.c: utility tests
   bench_ustr.c: UTF-8 string benchmarks
   compat.c: platform compatibility helpers for tests
-test/examples/: example `.nest` files (calc, clike, interp, json, minilang, words). follows specs/example_test.md
+test/examples/: example `.nest` files (calc, clike, interp, json, lookahead, lookahead2, minilang, words). follows specs/example_test.md
 scripts/
   test: run all tests (accepts `debug` or `release` arg)
   bench: run benchmarks
@@ -77,6 +77,7 @@ scripts/
 config.rb: platform-related config, generates build.ninja
 config.in.rb: defined sources, targets, dependencies
 specs/: design docs; read the relevant one before editing a subsystem
+doc/: user-facing documentation (nest_syntax.md, lex_tricks.md)
 
 ### Common Tasks
 

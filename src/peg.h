@@ -33,6 +33,8 @@ struct PegUnit {
   PegUnitKind interlace_rhs_kind; // 0 | PEG_CALL | PEG_TERM
   int32_t interlace_rhs_id;
 
+  char lookahead; // '&', '!', or 0 — prefix predicate (see bootstrap.nest peg_unit)
+
   char* tag;         // (owned, may be NULL)
   PegUnits children; // darray
 };
@@ -65,6 +67,8 @@ typedef enum {
   SCOPED_UNIT_MAYBE,
   SCOPED_UNIT_STAR,
   SCOPED_UNIT_PLUS,
+  SCOPED_UNIT_AND, // &e — and-predicate (lookahead)
+  SCOPED_UNIT_NOT, // !e — not-predicate (lookahead)
 } ScopedUnitKind;
 
 typedef struct ScopedUnit ScopedUnit;
@@ -82,7 +86,7 @@ struct ScopedUnit {
     const char* callee;        // scoped_rule_name from symtab, not owned
     int32_t term_id;           // token id | scope id
     ScopedUnits children;      // for branches & seq
-    ScopedUnit* base;          // maybe
+    ScopedUnit* base;          // maybe, and-predicate, not-predicate
     ScopedInterlace interlace; // for star & plus
   } as;
 

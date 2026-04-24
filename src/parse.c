@@ -210,6 +210,12 @@ static void _lex_scope(LexCtx* ctx, ScopeId scope_id) {
     if (last_action == ACTION_END) {
       scope_ended = true;
       break;
+    } else if (last_action == ACTION_END_NL) {
+      // .end @nl: end scope, emit @nl in parent
+      scope_ended = true;
+      // unparse so parent re-lexes the newline as @nl
+      ustr_iter_init(&ctx->it, ctx->ps->src, tok_start);
+      break;
     } else if (last_action == ACTION_UNPARSE_END) {
       scope_ended = true;
       ustr_iter_init(&ctx->it, ctx->ps->src, tok_start);
@@ -1073,7 +1079,8 @@ static bool _validate_all_re_ir(ParseState* ps) {
 static bool _parse_seq(ParseState* ps, TokenChunk* chunk, int32_t* tpos, PegUnit* seq);
 
 static bool _is_peg_unit(int32_t id) {
-  return id == TOK_PEG_ID || id == TOK_PEG_TOK_ID || id == SCOPE_PEG_STR || id == SCOPE_BRANCHES;
+  return id == TOK_PEG_ID || id == TOK_PEG_TOK_ID || id == SCOPE_PEG_STR || id == SCOPE_BRANCHES || id == LIT_AND ||
+         id == LIT_NOT;
 }
 
 // interlace_rhs = [ @peg_id | @peg_tok_id | peg_str ]
@@ -1158,16 +1165,71 @@ static bool _parse_branches(ParseState* ps, TokenChunk* chunk, PegUnit* u) {
   if (u->children && darray_size(u->children) == 1) {
     PegUnit child = u->children[0];
     darray_del(u->children);
+    char la = u->lookahead; // preserve lookahead across inline
     *u = child;
+    if (la) {
+      u->lookahead = la;
+    }
   }
   return true;
 }
 
-// peg_unit = [ @peg_id multiplier? | @peg_tok_id multiplier? | peg_str multiplier? | branches ]
+// peg_lookahead_unit = [ @peg_id | @peg_tok_id | peg_str | branches ]
+static bool _parse_lookahead_unit(ParseState* ps, TokenChunk* chunk, int32_t* tpos, PegUnit* u) {
+  Token* t = _peek(chunk, *tpos);
+  if (!t) {
+    _error_at(ps, t, "expected lookahead expression after & or !");
+    return false;
+  }
+  if (t->term_id == TOK_PEG_ID) {
+    _next(chunk, tpos);
+    char* name = _tok_str(ps, t);
+    int32_t scope_id = symtab_find(&ps->scope_names, name);
+    if (scope_id >= 0) {
+      u->kind = PEG_TERM;
+      u->id = scope_id;
+    } else {
+      u->kind = PEG_CALL;
+      u->id = symtab_intern(&ps->rule_names, name);
+    }
+    XFREE(name);
+    return true;
+  }
+  if (t->term_id == TOK_PEG_TOK_ID) {
+    _next(chunk, tpos);
+    u->kind = PEG_TERM;
+    u->id = _intern_tok(&ps->tokens, ps->src, t);
+    return true;
+  }
+  if (t->term_id == SCOPE_PEG_STR) {
+    _next(chunk, tpos);
+    TokenChunk* sc = _scope_chunk(ps, t);
+    u->kind = PEG_TERM;
+    u->id = symtab_intern_f(&ps->tokens, "@lit.%s", sc->aux_value);
+    XFREE(sc->aux_value);
+    sc->aux_value = NULL;
+    return true;
+  }
+  if (t->term_id == SCOPE_BRANCHES) {
+    _next(chunk, tpos);
+    return _parse_branches(ps, _scope_chunk(ps, t), u);
+  }
+  _error_at(ps, t, "expected lookahead expression after & or !");
+  return false;
+}
+
+// peg_unit = [ "&" peg_lookahead_unit | "!" peg_lookahead_unit | @peg_id multiplier? | @peg_tok_id multiplier? |
+// peg_str multiplier? | branches ]
 static bool _parse_peg_unit(ParseState* ps, TokenChunk* chunk, int32_t* tpos, PegUnit* u) {
   Token* t = _peek(chunk, *tpos);
   if (!t) {
     return true;
+  }
+  if (t->term_id == LIT_AND || t->term_id == LIT_NOT) {
+    char la = (t->term_id == LIT_AND) ? '&' : '!';
+    _next(chunk, tpos);
+    u->lookahead = la;
+    return _parse_lookahead_unit(ps, chunk, tpos, u);
   }
   if (t->term_id == TOK_PEG_ID) {
     _next(chunk, tpos);
@@ -1207,6 +1269,7 @@ static bool _parse_peg_unit(ParseState* ps, TokenChunk* chunk, int32_t* tpos, Pe
 
 // seq = peg_unit+
 static bool _parse_seq(ParseState* ps, TokenChunk* chunk, int32_t* tpos, PegUnit* seq) {
+  int32_t tpos_before = *tpos;
   while (!_at_end(chunk, *tpos) && _is_peg_unit(_peek(chunk, *tpos)->term_id)) {
     if (!seq->children) {
       seq->children = darray_new(sizeof(PegUnit), 0);
@@ -1215,6 +1278,11 @@ static bool _parse_seq(ParseState* ps, TokenChunk* chunk, int32_t* tpos, PegUnit
     if (!_parse_peg_unit(ps, chunk, tpos, &seq->children[darray_size(seq->children) - 1])) {
       return false;
     }
+  }
+  if (*tpos == tpos_before) {
+    Token* stuck = _peek(chunk, *tpos);
+    _error_at(ps, stuck, "expected peg unit");
+    return false;
   }
   if (seq->children && darray_size(seq->children) == 1) {
     PegUnit child = seq->children[0];

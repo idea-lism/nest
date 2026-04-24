@@ -63,13 +63,15 @@ static void _build_re_ops(ReLex* l) {
   re_lex_add(l, "\\*", __LINE__, 15, LIT_STAR);
 }
 
-// *peg_ops: "<" ">" "?" "+" "*"
+// *peg_ops: "<" ">" "?" "+" "*" "&" "!"
 static void _build_peg_ops(ReLex* l) {
   re_lex_add(l, "<", __LINE__, 15, LIT_INTERLACE_BEGIN);
   re_lex_add(l, ">", __LINE__, 15, LIT_INTERLACE_END);
   re_lex_add(l, "\\?", __LINE__, 15, LIT_QUESTION);
   re_lex_add(l, "\\+", __LINE__, 15, LIT_PLUS);
   re_lex_add(l, "\\*", __LINE__, 15, LIT_STAR);
+  re_lex_add(l, "&", __LINE__, 15, LIT_AND);
+  re_lex_add(l, "!", __LINE__, 15, LIT_NOT);
 }
 
 // main = { vpa peg *noise }
@@ -211,13 +213,14 @@ static ReLex* _build_branches_scope(void) {
   return l;
 }
 
-// peg_tag = /:/ .begin { ID @tag_id *noise /./ .unparse .end }
+// peg_tag = /:/ .begin { ID @tag_id /\n/ .end @nl *noise }
+// tag_id must appear on the same line after colon
 static ReLex* _build_peg_tag_scope(void) {
   ReLex* l = re_lex_new("lex_peg_tag", "nest", "");
 
   re_lex_add(l, "[a-z_][a-zA-Z0-9_]*", __LINE__, 15, TOK_TAG_ID);
+  re_lex_add(l, "\\n", __LINE__, 15, ACTION_END_NL);
   _build_noise(l);
-  re_lex_add(l, ".", __LINE__, 15, ACTION_UNPARSE_END);
 
   return l;
 }

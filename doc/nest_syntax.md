@@ -169,6 +169,38 @@ name = seq
 
 The separator in `+<sep>` / `*<sep>` can be a rule name, `@token_id`, or `"literal"`.
 
+### Lookahead Predicates
+
+| Prefix | Meaning |
+|--------|---------|
+| `&e` | And-predicate: succeeds iff `e` matches, consumes nothing |
+| `!e` | Not-predicate: succeeds iff `e` fails, consumes nothing |
+
+The expression `e` can be a rule name, `@token_id`, `"literal"`, or `[branches]`.
+Lookaheads cannot have multipliers (`?`, `+`, `*`).
+
+```
+item = [
+  &@number @number : is_num    # match number only if it looks like a number
+  !@number @ident  : is_id     # match ident only if it's not a number
+]
+
+# and-predicate on a rule call
+checked = &num @number
+
+# not-predicate on a string literal
+filtered = !"end" @ident
+
+# and-predicate on branches
+guarded = &[
+  @number
+  @ident
+] value
+```
+
+Lookaheads produce no node fields in the generated parse tree — they consume
+no input and exist only to guide the parse.
+
 ### Branches (ordered choice)
 
 ```

@@ -6,6 +6,9 @@ Create "src/post_process.c".
 
 `bool pp_inline_macros(ParseState* ps);`:
 1. inline macro vpa rules
+   - note that macro rules reference each other
+   - do a topological sort by dependency, report error on recursive dependency
+   - expand by topo-sort order
 2. check sub-scope calls: if a sub-scope call is a macro, report error
 3. then build a new list of VPA scopes to replace the old one, including only the non-macro ones.
 
@@ -149,3 +152,12 @@ _Thread_local (C11)(deprecated in C23)
     1. with vpa rule `foo = /.../ { @a ... }`, `bar = /.../ { @b ... foo ... }`, then `bar`'s emit_set is `{@b, foo}`
     2. with peg rule `foo = @a`, `baz = @c?`, `bar = foo @b baz`, and `baz` is not a scope, then `bar`'s used_set is `{@b, @c, foo}`
     3. `{@b, foo} != {@b, @c, foo}`, then it is a mismatch, then we should raise error to tell user this rule doesn't add up
+
+### Acceptance criteria
+
+- on macro inlining
+  - must test recursion
+  - must test cascaded expanding (re-arrange macro definitions so we can see the sorting effect)
+- on emit set computing
+  - must not expand scopes that have a mapping peg parser
+  - expanding should not hit infinite recursion

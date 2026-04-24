@@ -1,0 +1,18 @@
+[[vpa]]
+%ignore @space
+main = {
+  /[0-9]+/ @number
+  /[a-zA-Z_]\w*/ @ident
+  /\s+/ @space
+  *kw
+}
+*kw = @{
+  "end"
+}
+[[peg]]
+main = checked+
+num = @number
+checked = [
+  &num @number : confirmed_num
+  !"end" @ident : not_end
+]

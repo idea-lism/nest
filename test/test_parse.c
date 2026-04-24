@@ -314,7 +314,150 @@ TEST(test_peg_optional) {
   parse_state_del(ps);
 }
 
-// --- Re-parse (reuse ParseState) ---
+// --- PEG with lookahead predicates ---
+
+// Helper to find a peg rule by name
+static PegRule* _find_rule(ParseState* ps, const char* name) {
+  for (size_t i = 0; i < darray_size(ps->peg_rules); i++) {
+    const char* rname = symtab_get(&ps->rule_names, ps->peg_rules[i].global_id);
+    if (strcmp(rname, name) == 0) {
+      return &ps->peg_rules[i];
+    }
+  }
+  return NULL;
+}
+
+// &@tok and !@tok inside branches
+static const char PEG_LA_TOK_NEST[] = "[[vpa]]\n"
+                                      "%ignore @space\n"
+                                      "main = { /[0-9]+/ @number /[a-z]+/ @ident /\\s+/ @space }\n"
+                                      "[[peg]]\n"
+                                      "main = item+\n"
+                                      "item = [\n"
+                                      "  &@number @number : is_num\n"
+                                      "  !@number @ident : is_id\n"
+                                      "]\n";
+
+TEST(test_peg_lookahead) {
+  ParseState* ps = parse_state_new();
+  bool ok = _parse(ps, PEG_LA_TOK_NEST);
+  if (!ok) {
+    fprintf(stderr, "error: %s\n", parse_get_error(ps));
+  }
+  assert(ok);
+  PegRule* item_rule = _find_rule(ps, "item");
+  assert(item_rule);
+  assert(item_rule->body.kind == PEG_BRANCHES);
+  assert(darray_size(item_rule->body.children) == 2);
+
+  // branch 0: "&@number @number" -> SEQ(lookahead=&, TERM) (TERM)
+  PegUnit* br0 = &item_rule->body.children[0];
+  assert(br0->kind == PEG_SEQ);
+  assert(darray_size(br0->children) == 2);
+  assert(br0->children[0].lookahead == '&');
+  assert(br0->children[0].kind == PEG_TERM);
+  assert(br0->children[1].lookahead == 0);
+
+  // branch 1: "!@number @ident" -> SEQ(lookahead=!, TERM) (TERM)
+  PegUnit* br1 = &item_rule->body.children[1];
+  assert(br1->kind == PEG_SEQ);
+  assert(br1->children[0].lookahead == '!');
+  assert(br1->children[0].kind == PEG_TERM);
+  assert(br1->children[1].lookahead == 0);
+  parse_state_del(ps);
+}
+
+// &rule_name and !rule_name in seq
+static const char PEG_LA_RULE_NEST[] = "[[vpa]]\n"
+                                       "%ignore @space\n"
+                                       "main = { /[0-9]+/ @number /[a-z]+/ @ident /\\s+/ @space }\n"
+                                       "[[peg]]\n"
+                                       "main = checked+\n"
+                                       "num = @number\n"
+                                       "checked = [\n"
+                                       "  &num @number : is_num\n"
+                                       "  !num @ident : is_id\n"
+                                       "]\n";
+
+TEST(test_peg_lookahead_rule) {
+  ParseState* ps = parse_state_new();
+  bool ok = _parse(ps, PEG_LA_RULE_NEST);
+  if (!ok) {
+    fprintf(stderr, "error: %s\n", parse_get_error(ps));
+  }
+  assert(ok);
+  PegRule* checked = _find_rule(ps, "checked");
+  assert(checked);
+  assert(checked->body.kind == PEG_BRANCHES);
+  PegUnit* br0 = &checked->body.children[0];
+  assert(br0->kind == PEG_SEQ);
+  assert(br0->children[0].lookahead == '&');
+  assert(br0->children[0].kind == PEG_CALL); // rule call
+  PegUnit* br1 = &checked->body.children[1];
+  assert(br1->children[0].lookahead == '!');
+  assert(br1->children[0].kind == PEG_CALL);
+  parse_state_del(ps);
+}
+
+// &"string" and !"string"
+static const char PEG_LA_STR_NEST[] = "[[vpa]]\n"
+                                      "%ignore @space\n"
+                                      "main = { /[0-9]+/ @number /[a-z]+/ @ident /\\s+/ @space }\n"
+                                      "*ops = @{ \"+\" \"-\" }\n"
+                                      "[[peg]]\n"
+                                      "main = item+\n"
+                                      "item = [\n"
+                                      "  &\"+\" @number : with_plus\n"
+                                      "  !\"+\" @ident : no_plus\n"
+                                      "]\n";
+
+TEST(test_peg_lookahead_str) {
+  ParseState* ps = parse_state_new();
+  bool ok = _parse(ps, PEG_LA_STR_NEST);
+  if (!ok) {
+    fprintf(stderr, "error: %s\n", parse_get_error(ps));
+  }
+  assert(ok);
+  PegRule* item_rule = _find_rule(ps, "item");
+  assert(item_rule);
+  PegUnit* br0 = &item_rule->body.children[0];
+  assert(br0->children[0].lookahead == '&');
+  assert(br0->children[0].kind == PEG_TERM); // string becomes term
+  PegUnit* br1 = &item_rule->body.children[1];
+  assert(br1->children[0].lookahead == '!');
+  assert(br1->children[0].kind == PEG_TERM);
+  parse_state_del(ps);
+}
+
+// &[branches] and ![branches]
+static const char PEG_LA_BR_NEST[] = "[[vpa]]\n"
+                                     "%ignore @space\n"
+                                     "main = { /[0-9]+/ @number /[a-z]+/ @ident /\\s+/ @space }\n"
+                                     "[[peg]]\n"
+                                     "main = checked+\n"
+                                     "checked = &[\n"
+                                     "  @number\n"
+                                     "  @ident\n"
+                                     "] @number\n";
+
+TEST(test_peg_lookahead_branches) {
+  ParseState* ps = parse_state_new();
+  bool ok = _parse(ps, PEG_LA_BR_NEST);
+  if (!ok) {
+    fprintf(stderr, "error: %s\n", parse_get_error(ps));
+  }
+  assert(ok);
+  PegRule* checked = _find_rule(ps, "checked");
+  assert(checked);
+  // body is SEQ: &[branches] @number
+  assert(checked->body.kind == PEG_SEQ);
+  assert(darray_size(checked->body.children) == 2);
+  assert(checked->body.children[0].lookahead == '&');
+  assert(checked->body.children[0].kind == PEG_BRANCHES);
+  assert(checked->body.children[1].lookahead == 0);
+  assert(checked->body.children[1].kind == PEG_TERM);
+  parse_state_del(ps);
+}
 
 TEST(test_reparse_fresh_state) {
   ParseState* ps = parse_state_new();
@@ -764,6 +907,10 @@ int main(void) {
   // PEG features (ok-only, test distinct PEG syntax)
   RUN(test_peg_multiplier_interlace);
   RUN(test_peg_optional);
+  RUN(test_peg_lookahead);
+  RUN(test_peg_lookahead_rule);
+  RUN(test_peg_lookahead_str);
+  RUN(test_peg_lookahead_branches);
 
   // structural assertions
   RUN(test_minimal_parse_tokens);

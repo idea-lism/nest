@@ -1,0 +1,401 @@
+[[vpa]]
+%ignore @space @line_comment
+
+%define LETTER /[a-zA-Z_]/
+%define IDCHAR /[a-zA-Z_0-9]/
+
+# Keywords used everywhere (statements+expressions)
+*kw_common = @{
+  "class"
+  "interface"
+  "object"
+  "fun"
+  "val"
+  "var"
+  "if"
+  "else"
+  "when"
+  "for"
+  "while"
+  "do"
+  "return"
+  "break"
+  "continue"
+  "throw"
+  "try"
+  "catch"
+  "finally"
+  "is"
+  "in"
+  "as"
+  "null"
+  "true"
+  "false"
+  "this"
+  "super"
+  "override"
+  "open"
+  "abstract"
+  "private"
+  "protected"
+  "internal"
+  "public"
+  "data"
+  "sealed"
+  "enum"
+  "suspend"
+  "inline"
+  "out"
+  "by"
+}
+
+# Keywords used only at top level
+*kw_top = @{
+  "package"
+  "import"
+}
+
+*ops = @{
+  "==="
+  "!=="
+  "as?"
+  "+="
+  "-="
+  "*="
+  "/="
+  "%="
+  "++"
+  "--"
+  "&&"
+  "||"
+  "=="
+  "!="
+  "<="
+  ">="
+  ".."
+  "::"
+  "."
+  ","
+  ":"
+  ";"
+  "="
+  "+"
+  "-"
+  "*"
+  "/"
+  "%"
+  "!"
+  "<"
+  ">"
+  "@"
+}
+
+*noise = {
+  /\/\/[^\n]*/ @line_comment
+  /\s+/ @space
+}
+
+*literals = {
+  /\d[\d_]*\.\d[\d_]*([eE][-+]?\d[\d_]*)?[fF]?/ @real_lit
+  /\d[\d_]*[eE][-+]?\d[\d_]*[fF]?/ @real_lit
+  /\d[\d_]*[fF]/ @real_lit
+  /\d[\d_]*[lL]/ @long_lit
+  /0[xX][\da-fA-F][\da-fA-F_]*/ @hex_lit
+  /0[bB][01][01_]*/ @bin_lit
+  /\d[\d_]*/ @int_lit
+  /'([^'\\]|\\[btnrv'"\\$]|\\u[\da-fA-F]{4})'/ @char_lit
+  /#{LETTER}#{IDCHAR}*/ @ident
+  /`[^`\r\n]+`/ @ident
+}
+
+*inner_toks = {
+  *noise
+  *kw_common
+  *kw_top
+  *ops
+  /\?/ @question
+  *literals
+  line_str
+  block
+  parens
+  brackets
+}
+
+main = {
+  *noise
+  *kw_common
+  *kw_top
+  *ops
+  /\?/ @question
+  *literals
+  line_str
+  block
+  parens
+  brackets
+}
+
+block = /{/ .begin @lbrace {
+  /}/ @rbrace .end
+  *noise
+  *kw_common
+  *kw_top
+  *ops
+  /\?/ @question
+  *literals
+  line_str
+  block
+  parens
+  brackets
+}
+
+parens = /\(/ .begin @lparen {
+  /\)/ @rparen .end
+  *noise
+  *kw_common
+  *kw_top
+  *ops
+  /\?/ @question
+  *literals
+  line_str
+  block
+  parens
+  brackets
+}
+
+brackets = /\[/ .begin @lbracket {
+  /\]/ @rbracket .end
+  *noise
+  *kw_common
+  *kw_top
+  *ops
+  /\?/ @question
+  *literals
+  line_str
+  block
+  parens
+  brackets
+}
+
+line_str = /"/ .begin @quote_open {
+  /"/ @quote_close .end
+  str_interp
+  /\\[btnrv'"\\$]/ @str_escape
+  /\\u[\da-fA-F]{4}/ @str_unicode
+  /\$#{LETTER}#{IDCHAR}*/ @str_ref
+  /[^"\\\n$]+/ @str_text
+  /\$/ @str_text
+}
+
+str_interp = /\$\{/ .begin @str_expr_open {
+  /}/ @str_expr_close .end
+  *noise
+  *kw_common
+  *kw_top
+  *ops
+  /\?/ @question
+  *literals
+  line_str
+  block
+  parens
+  brackets
+}
+
+[[peg]]
+
+# ─── Top-level (main scope) ─────────────────────────────────
+main = brackets? top_level*
+
+top_level = [
+  package_header
+  import_header
+  declaration
+]
+
+package_header = "package" identifier ";"?
+import_header = "import" identifier import_tail? ";"?
+import_tail = [
+  "." "*" : wildcard
+  "as" simple_id : alias
+]
+identifier = simple_id+<".">
+
+# ─── Declarations ────────────────────────────────────────────
+declaration = [
+  class_decl
+  fun_decl
+  property_decl
+]
+
+class_decl = modifier* class_kw simple_id type_params? class_body?
+class_kw = [ "class" "interface" "object" ]
+class_body = block
+
+fun_decl = modifier* "fun" type_params? simple_id fun_params return_type? fun_body?
+fun_params = parens
+return_type = ":" type
+fun_body = [
+  block : block_body
+  "=" expression : expr_body
+]
+
+property_decl = modifier* val_or_var simple_id type_annotation? property_init?
+val_or_var = [ "val" "var" ]
+type_annotation = ":" type
+property_init = [
+  "=" expression : assign
+  "by" expression : delegate
+]
+
+# ─── Types ───────────────────────────────────────────────────
+type = type_body @question*
+type_body = [ paren_type user_type ]
+user_type = simple_user_type+<".">
+simple_user_type = simple_id type_args?
+paren_type = parens
+type_params = "<" type_param+<","> ">"
+type_param = variance_modifier? simple_id type_bound?
+type_bound = ":" type
+type_args = "<" type_arg+<","> ">"
+type_arg = [
+  variance_modifier? type : projected
+  "*" : star
+]
+variance_modifier = [ "in" "out" ]
+
+# ─── Scoped PEG rules ───────────────────────────────────────
+parens = @lparen inner_expr? @rparen
+brackets = @lbracket inner_expr_list? @rbracket
+inner_expr_list = expression+<",">
+block = @lbrace statement*<";"> @rbrace
+
+statement = [
+  declaration
+  for_stmt
+  while_stmt
+  do_while_stmt
+  assignment
+  expression
+]
+
+assignment = assignable assign_op expression
+assign_op = [ "+=" "-=" "*=" "/=" "%=" "=" ]
+assignable = postfix_unary
+
+for_stmt = "for" parens control_body?
+while_stmt = "while" parens control_body?
+do_while_stmt = "do" control_body "while" parens
+
+control_body = [ block statement ]
+
+# ─── String scope ────────────────────────────────────────────
+line_str = @quote_open line_str_content* @quote_close
+line_str_content = [
+  str_interp
+  @str_escape
+  @str_unicode
+  @str_ref
+  @str_text
+]
+str_interp = @str_expr_open expression @str_expr_close
+
+# ─── Expressions ─────────────────────────────────────────────
+expression = disjunction
+disjunction = conjunction+<"||">
+conjunction = equality+<"&&">
+equality = comparison+<eq_op>
+eq_op = [ "===" "==" "!==" "!=" ]
+comparison = named_check+<cmp_op>
+cmp_op = [ "<=" ">=" "<" ">" ]
+
+named_check = elvis_expr named_tail?
+named_tail = [
+  in_op elvis_expr : in_check
+  is_op type : is_check
+]
+in_op = [ "!" "in" : not_in  "in" : is_in ]
+is_op = [ "!" "is" : not_is  "is" : is_is ]
+
+elvis_expr = range_expr+<elvis>
+elvis = @question ":"
+range_expr = additive+<"..">
+additive = multiplicative+<add_op>
+add_op = [ "+" "-" ]
+multiplicative = as_expr+<mul_op>
+mul_op = [ "*" "/" "%" ]
+as_expr = prefix_unary as_tail*
+as_tail = as_op type
+as_op = [ "as?" "as" ]
+
+prefix_unary = prefix_op* postfix_unary
+prefix_op = [ "++" "--" "-" "+" "!" ]
+
+postfix_unary = primary_expr postfix_suffix*
+postfix_suffix = [
+  "++" : incr
+  "--" : decr
+  call_suffix : call
+  index_suffix : index
+  nav_suffix : nav
+]
+call_suffix = type_args? value_args
+value_args = parens
+index_suffix = brackets
+nav_suffix = nav_op simple_id
+nav_op = [ @question "." "." "::" ]
+
+primary_expr = [
+  if_expr
+  when_expr
+  try_expr
+  jump_expr
+  callable_ref
+  string_literal
+  literal_constant
+  paren_expr
+  simple_id
+]
+
+paren_expr = parens
+literal_constant = [
+  "true" "false" "null"
+  @real_lit @long_lit @hex_lit @bin_lit @int_lit @char_lit
+]
+
+if_expr = [
+  "if" parens control_body? "else" control_body : if_else
+  "if" parens control_body? : if_only
+]
+when_expr = "when" parens? block
+try_expr = "try" block catch_block* finally_block?
+catch_block = "catch" parens block
+finally_block = "finally" block
+jump_expr = [
+  "throw" expression : throw_expr
+  "return" expression? : return_expr
+  "continue" : continue_expr
+  "break" : break_expr
+]
+callable_ref = user_type? "::" simple_id
+string_literal = line_str
+inner_expr = expression
+
+# ─── Modifiers ───────────────────────────────────────────────
+modifier = [
+  annotation
+  "override" "open" "abstract"
+  "private" "protected" "internal" "public"
+  "data" "sealed" "enum"
+  "suspend" "inline"
+]
+annotation = "@" simple_id
+
+# ─── Identifiers (uses !hard_keyword lookahead) ──────────────
+simple_id = !hard_keyword @ident
+
+hard_keyword = [
+  "as" "break" "class" "continue" "do" "else"
+  "false" "for" "fun" "if" "in" "interface"
+  "is" "null" "object" "package" "return"
+  "super" "this" "throw" "true" "try"
+  "val" "var" "when" "while"
+]

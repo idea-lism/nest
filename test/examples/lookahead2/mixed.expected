@@ -1,0 +1,12 @@
+------
+@number "42"
+@ident "hello"
+@number "7"
+------
+main
+  checked
+    @number
+  checked
+    @ident
+  checked
+    @number

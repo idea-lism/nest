@@ -81,6 +81,7 @@ typedef enum {
   ACTION_SET_QUOTE_BEGIN, // .set_quote .begin
   ACTION_RE_TAG_BEGIN, // @re_tag .begin
   ACTION_CHARCLASS_BEGIN_BEGIN, // @charclass_begin .begin
+  ACTION_END_NL, // .end @nl
 
   ACTION_COUNT
 } ActionId;

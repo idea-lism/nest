@@ -87,40 +87,135 @@ static VpaScope* _find_macro(ParseState* ps, const char* name) {
   return NULL;
 }
 
+// --- Topological sort helpers for macro inlining ---
+
+typedef enum { _TOPO_WHITE = 0, _TOPO_GRAY = 1, _TOPO_BLACK = 2 } _TopoColor;
+
+// Collect macro dependencies: which macros does this macro reference?
+static void _collect_macro_deps(VpaScope* macro, ParseState* ps, int32_t** deps) {
+  for (size_t i = 0; i < darray_size(macro->children); i++) {
+    VpaUnit* u = &macro->children[i];
+    if (u->kind == VPA_MACRO_REF) {
+      for (size_t j = 0; j < darray_size(ps->vpa_scopes); j++) {
+        VpaScope* s = &ps->vpa_scopes[j];
+        if (s->is_macro && strcmp(s->name, u->macro_name) == 0) {
+          _id_set_add(deps, (int32_t)j);
+          break;
+        }
+      }
+    }
+  }
+}
+
+// DFS visit for topological sort. Returns false on cycle.
+static bool _topo_visit(int32_t idx, ParseState* ps, _TopoColor* color, int32_t** order, int32_t** deps_per_macro) {
+  if (color[idx] == _TOPO_BLACK) {
+    return true;
+  }
+  if (color[idx] == _TOPO_GRAY) {
+    // cycle detected
+    parse_error(ps, "recursive macro dependency involving '%s'", ps->vpa_scopes[idx].name);
+    return false;
+  }
+  color[idx] = _TOPO_GRAY;
+  int32_t* deps = deps_per_macro[idx];
+  for (size_t i = 0; i < darray_size(deps); i++) {
+    if (!_topo_visit(deps[i], ps, color, order, deps_per_macro)) {
+      return false;
+    }
+  }
+  color[idx] = _TOPO_BLACK;
+  darray_push(*order, idx);
+  return true;
+}
+
+// Expand all VPA_MACRO_REF nodes in a scope's children by splicing in macro children.
+static bool _expand_macro_refs(VpaScope* scope, ParseState* ps) {
+  for (size_t i = 0; i < darray_size(scope->children); i++) {
+    VpaUnit* unit = &scope->children[i];
+    if (unit->kind != VPA_MACRO_REF) {
+      continue;
+    }
+    VpaScope* macro = _find_macro(ps, unit->macro_name);
+    if (!macro) {
+      parse_error(ps, "macro '%s' not found (referenced in scope '%s')", unit->macro_name, scope->name);
+      return false;
+    }
+
+    int32_t macro_n = (int32_t)darray_size(macro->children);
+    int32_t new_count = (int32_t)darray_size(scope->children) - 1 + macro_n;
+    int32_t tail = (int32_t)darray_size(scope->children) - (int32_t)i - 1;
+
+    _free_vpa_unit(unit);
+
+    scope->children = darray_grow(scope->children, (size_t)new_count);
+
+    if (tail > 0 && macro_n != 1) {
+      memmove(&scope->children[i + macro_n], &scope->children[i + 1], (size_t)tail * sizeof(VpaUnit));
+    }
+
+    for (int32_t m = 0; m < macro_n; m++) {
+      scope->children[i + m] = _clone_vpa_unit(&macro->children[m]);
+    }
+    i += macro_n - 1;
+  }
+  return true;
+}
+
 bool pp_inline_macros(ParseState* ps) {
-  // inline macro references (VPA_MACRO_REF)
-  for (size_t r = 0; r < darray_size(ps->vpa_scopes); r++) {
+  size_t n = darray_size(ps->vpa_scopes);
+
+  // 1. Topological sort macros by dependency
+  //    Build per-macro dependency lists, then DFS.
+  int32_t** deps_per_macro = XCALLOC(n, sizeof(int32_t*));
+  for (size_t i = 0; i < n; i++) {
+    deps_per_macro[i] = darray_new(sizeof(int32_t), 0);
+    if (ps->vpa_scopes[i].is_macro) {
+      _collect_macro_deps(&ps->vpa_scopes[i], ps, &deps_per_macro[i]);
+    }
+  }
+
+  _TopoColor* color = XCALLOC(n, sizeof(_TopoColor));
+  int32_t* order = darray_new(sizeof(int32_t), 0);
+
+  for (size_t i = 0; i < n; i++) {
+    if (ps->vpa_scopes[i].is_macro && color[i] == _TOPO_WHITE) {
+      if (!_topo_visit((int32_t)i, ps, color, &order, deps_per_macro)) {
+        // cycle detected — clean up and return
+        for (size_t j = 0; j < n; j++) {
+          darray_del(deps_per_macro[j]);
+        }
+        XFREE(deps_per_macro);
+        XFREE(color);
+        darray_del(order);
+        return false;
+      }
+    }
+  }
+  XFREE(color);
+  for (size_t i = 0; i < n; i++) {
+    darray_del(deps_per_macro[i]);
+  }
+  XFREE(deps_per_macro);
+
+  // Expand macros in topo-sort order (dependencies first)
+  for (size_t i = 0; i < darray_size(order); i++) {
+    int32_t idx = order[i];
+    if (!_expand_macro_refs(&ps->vpa_scopes[idx], ps)) {
+      darray_del(order);
+      return false;
+    }
+  }
+  darray_del(order);
+
+  // Expand macro refs in non-macro scopes
+  for (size_t r = 0; r < n; r++) {
     VpaScope* scope = &ps->vpa_scopes[r];
     if (scope->is_macro) {
       continue;
     }
-    for (size_t i = 0; i < darray_size(scope->children); i++) {
-      VpaUnit* unit = &scope->children[i];
-      if (unit->kind != VPA_MACRO_REF) {
-        continue;
-      }
-      VpaScope* macro = _find_macro(ps, unit->macro_name);
-      if (!macro) {
-        parse_error(ps, "macro '%s' not found (referenced in scope '%s')", unit->macro_name, scope->name);
-        return false;
-      }
-
-      int32_t macro_n = (int32_t)darray_size(macro->children);
-      int32_t new_count = (int32_t)darray_size(scope->children) - 1 + macro_n;
-      int32_t tail = (int32_t)darray_size(scope->children) - i - 1;
-
-      _free_vpa_unit(unit);
-
-      scope->children = darray_grow(scope->children, (size_t)new_count);
-
-      if (tail > 0 && macro_n != 1) {
-        memmove(&scope->children[i + macro_n], &scope->children[i + 1], (size_t)tail * sizeof(VpaUnit));
-      }
-
-      for (int32_t m = 0; m < macro_n; m++) {
-        scope->children[i + m] = _clone_vpa_unit(&macro->children[m]);
-      }
-      i += macro_n - 1;
+    if (!_expand_macro_refs(scope, ps)) {
+      return false;
     }
   }
 
@@ -215,7 +310,7 @@ static void _collect_post_end_tokens(VpaUnits units, int32_t** set) {
   }
 }
 
-static void _collect_emit_set(VpaUnits units, int32_t** set, ParseState* ps, bool stop_at_end) {
+static void _collect_emit_set_impl(VpaUnits units, int32_t** set, ParseState* ps, bool stop_at_end, int32_t** visited) {
   for (size_t i = 0; i < darray_size(units); i++) {
     VpaUnit* u = &units[i];
 
@@ -233,13 +328,22 @@ static void _collect_emit_set(VpaUnits units, int32_t** set, ParseState* ps, boo
       if (callee && callee->has_parser) {
         _id_set_add(set, u->call_scope_id);
       } else if (callee) {
-        _collect_emit_set(callee->children, set, ps, false);
+        if (!_id_set_has(*visited, u->call_scope_id)) {
+          _id_set_add(visited, u->call_scope_id);
+          _collect_emit_set_impl(callee->children, set, ps, false, visited);
+        }
       }
       if (callee) {
         _collect_post_end_tokens(callee->children, set);
       }
     }
   }
+}
+
+static void _collect_emit_set(VpaUnits units, int32_t** set, ParseState* ps, bool stop_at_end) {
+  int32_t* visited = darray_new(sizeof(int32_t), 0);
+  _collect_emit_set_impl(units, set, ps, stop_at_end, &visited);
+  darray_del(visited);
 }
 
 static void _collect_peg_used_set(PegUnit* unit, int32_t** set, ParseState* ps, int32_t** visited_rules) {

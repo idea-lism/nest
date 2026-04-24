@@ -1,0 +1,13 @@
+[[vpa]]
+%ignore @space
+main = {
+  /[0-9]+/ @number
+  /[a-zA-Z_]\w*/ @ident
+  /\s+/ @space
+}
+[[peg]]
+main = item+
+item = [
+  &@number @number : is_num
+  !@number @ident : is_id
+]

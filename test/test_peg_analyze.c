@@ -13,7 +13,7 @@
   do {                                                                                                                 \
     printf("  %s...", #name);                                                                                          \
     name();                                                                                                            \
-    printf(" OK\n");                                                                                                   \
+    printf(" ok\n");                                                                                                   \
   } while (0)
 
 // ============================================================
@@ -684,6 +684,278 @@ TEST(test_exclusive_rules_share_slots) {
   _free_input(&input);
 }
 
+// ============================================================
+// Lookahead predicate tests
+// ============================================================
+
+// Build a grammar: main = &@number @number
+// This tests that &@number creates SCOPED_UNIT_AND with SCOPED_UNIT_TERM inside
+TEST(test_lookahead_and_breakdown) {
+  PegAnalyzeInput input = {0};
+  symtab_init(&input.tokens, 1);
+  symtab_intern(&input.tokens, "number"); // 1
+
+  symtab_init(&input.scope_names, 0);
+  symtab_intern(&input.scope_names, "main"); // 0
+
+  symtab_init(&input.rule_names, 0);
+  symtab_intern(&input.rule_names, "main"); // 0
+
+  input.rules = darray_new(sizeof(PegRule), 0);
+
+  // main = &@number @number
+  PegUnit and_unit = {.kind = PEG_TERM, .id = 1, .lookahead = '&'};
+  PegUnit num_unit = {.kind = PEG_TERM, .id = 1};
+  PegUnit main_seq = {.kind = PEG_SEQ};
+  main_seq.children = darray_new(sizeof(PegUnit), 0);
+  darray_push(main_seq.children, and_unit);
+  darray_push(main_seq.children, num_unit);
+
+  PegRule main_rule = {.global_id = 0, .scope_id = 0, .body = main_seq};
+  darray_push(input.rules, main_rule);
+
+  PegGenInput result = peg_analyze(&input, MEMOIZE_NAIVE, "test");
+  assert(darray_size(result.scope_closures) == 1);
+  ScopeClosure* cl = &result.scope_closures[0];
+
+  // The first scoped rule is main$main
+  ScopedRule* sr = &cl->scoped_rules[0];
+  // body should be a seq with 2 children: SCOPED_UNIT_AND and SCOPED_UNIT_TERM
+  assert(sr->body.kind == SCOPED_UNIT_SEQ);
+  assert(darray_size(sr->body.as.children) == 2);
+  assert(sr->body.as.children[0].kind == SCOPED_UNIT_AND);
+  assert(sr->body.as.children[0].as.base->kind == SCOPED_UNIT_TERM);
+  assert(sr->body.as.children[0].as.base->as.term_id == 1);
+  assert(sr->body.as.children[1].kind == SCOPED_UNIT_TERM);
+  assert(sr->body.as.children[1].as.term_id == 1);
+
+  // tag_bit_local_offset should be -1 for the and-predicate and its inner unit
+  assert(sr->body.as.children[0].tag_bit_local_offset == -1);
+  assert(sr->body.as.children[0].as.base->tag_bit_local_offset == -1);
+
+  peg_analyze_free(&result);
+  _free_input(&input);
+}
+
+// Build: main = !@number @string
+// Tests not-predicate breakdown
+TEST(test_lookahead_not_breakdown) {
+  PegAnalyzeInput input = {0};
+  symtab_init(&input.tokens, 1);
+  symtab_intern(&input.tokens, "number"); // 1
+  symtab_intern(&input.tokens, "string"); // 2
+
+  symtab_init(&input.scope_names, 0);
+  symtab_intern(&input.scope_names, "main"); // 0
+
+  symtab_init(&input.rule_names, 0);
+  symtab_intern(&input.rule_names, "main"); // 0
+
+  input.rules = darray_new(sizeof(PegRule), 0);
+
+  // main = !@number @string
+  PegUnit not_unit = {.kind = PEG_TERM, .id = 1, .lookahead = '!'};
+  PegUnit str_unit = {.kind = PEG_TERM, .id = 2};
+  PegUnit main_seq = {.kind = PEG_SEQ};
+  main_seq.children = darray_new(sizeof(PegUnit), 0);
+  darray_push(main_seq.children, not_unit);
+  darray_push(main_seq.children, str_unit);
+
+  PegRule main_rule = {.global_id = 0, .scope_id = 0, .body = main_seq};
+  darray_push(input.rules, main_rule);
+
+  PegGenInput result = peg_analyze(&input, MEMOIZE_NAIVE, "test");
+  assert(darray_size(result.scope_closures) == 1);
+  ScopeClosure* cl = &result.scope_closures[0];
+
+  ScopedRule* sr = &cl->scoped_rules[0];
+  assert(sr->body.kind == SCOPED_UNIT_SEQ);
+  assert(darray_size(sr->body.as.children) == 2);
+  assert(sr->body.as.children[0].kind == SCOPED_UNIT_NOT);
+  assert(sr->body.as.children[0].as.base->kind == SCOPED_UNIT_TERM);
+  assert(sr->body.as.children[0].as.base->as.term_id == 1);
+  assert(sr->body.as.children[1].kind == SCOPED_UNIT_TERM);
+  assert(sr->body.as.children[1].as.term_id == 2);
+
+  peg_analyze_free(&result);
+  _free_input(&input);
+}
+
+// Lookahead nullability: and/not predicates are always nullable, min=0, max=0
+TEST(test_lookahead_nullable_analysis) {
+  PegAnalyzeInput input = {0};
+  symtab_init(&input.tokens, 1);
+  symtab_intern(&input.tokens, "number"); // 1
+
+  symtab_init(&input.scope_names, 0);
+  symtab_intern(&input.scope_names, "main"); // 0
+
+  symtab_init(&input.rule_names, 0);
+  symtab_intern(&input.rule_names, "main"); // 0
+
+  input.rules = darray_new(sizeof(PegRule), 0);
+
+  // main = &@number @number
+  PegUnit and_unit = {.kind = PEG_TERM, .id = 1, .lookahead = '&'};
+  PegUnit num_unit = {.kind = PEG_TERM, .id = 1};
+  PegUnit main_seq = {.kind = PEG_SEQ};
+  main_seq.children = darray_new(sizeof(PegUnit), 0);
+  darray_push(main_seq.children, and_unit);
+  darray_push(main_seq.children, num_unit);
+
+  PegRule main_rule = {.global_id = 0, .scope_id = 0, .body = main_seq};
+  darray_push(input.rules, main_rule);
+
+  PegGenInput result = peg_analyze(&input, MEMOIZE_NAIVE, "test");
+  ScopeClosure* cl = &result.scope_closures[0];
+  ScopedRule* sr = &cl->scoped_rules[0];
+
+  // The &@number child should be nullable
+  assert(sr->body.as.children[0].nullable == true);
+  // The entire rule is not nullable (seq has a non-nullable @number after the lookahead)
+  assert(sr->nullable == false);
+  assert(sr->min_size == 1);
+
+  peg_analyze_free(&result);
+  _free_input(&input);
+}
+
+// Lookahead predicates produce no node fields
+TEST(test_lookahead_no_node_fields) {
+  PegAnalyzeInput input = {0};
+  symtab_init(&input.tokens, 1);
+  symtab_intern(&input.tokens, "number"); // 1
+  symtab_intern(&input.tokens, "string"); // 2
+
+  symtab_init(&input.scope_names, 0);
+  symtab_intern(&input.scope_names, "main"); // 0
+
+  symtab_init(&input.rule_names, 0);
+  symtab_intern(&input.rule_names, "main"); // 0
+
+  input.rules = darray_new(sizeof(PegRule), 0);
+
+  // main = &@number @string
+  PegUnit and_unit = {.kind = PEG_TERM, .id = 1, .lookahead = '&'};
+  PegUnit str_unit = {.kind = PEG_TERM, .id = 2};
+  PegUnit main_seq = {.kind = PEG_SEQ};
+  main_seq.children = darray_new(sizeof(PegUnit), 0);
+  darray_push(main_seq.children, and_unit);
+  darray_push(main_seq.children, str_unit);
+
+  PegRule main_rule = {.global_id = 0, .scope_id = 0, .body = main_seq};
+  darray_push(input.rules, main_rule);
+
+  PegGenInput result = peg_analyze(&input, MEMOIZE_NAIVE, "test");
+  ScopeClosure* cl = &result.scope_closures[0];
+  ScopedRule* sr = &cl->scoped_rules[0];
+
+  // Only 1 node field (@string) — the &@number produces no node field
+  assert(sr->node_fields);
+  assert(darray_size(sr->node_fields) == 1);
+  assert(strcmp(sr->node_fields[0].name, "string") == 0);
+
+  peg_analyze_free(&result);
+  _free_input(&input);
+}
+
+// Lookahead on a rule call: &rule creates SCOPED_UNIT_AND with SCOPED_UNIT_CALL
+TEST(test_lookahead_and_call) {
+  PegAnalyzeInput input = {0};
+  symtab_init(&input.tokens, 1);
+  symtab_intern(&input.tokens, "number"); // 1
+
+  symtab_init(&input.scope_names, 0);
+  symtab_intern(&input.scope_names, "main"); // 0
+
+  symtab_init(&input.rule_names, 0);
+  symtab_intern(&input.rule_names, "main"); // 0
+  symtab_intern(&input.rule_names, "num");  // 1
+
+  input.rules = darray_new(sizeof(PegRule), 0);
+
+  // num = @number
+  PegUnit num_body = {.kind = PEG_TERM, .id = 1};
+  PegRule num_rule = {.global_id = 1, .scope_id = -1, .body = num_body};
+  darray_push(input.rules, num_rule);
+
+  // main = &num @number
+  PegUnit and_unit = {.kind = PEG_CALL, .id = 1, .lookahead = '&'};
+  PegUnit num_unit = {.kind = PEG_TERM, .id = 1};
+  PegUnit main_seq = {.kind = PEG_SEQ};
+  main_seq.children = darray_new(sizeof(PegUnit), 0);
+  darray_push(main_seq.children, and_unit);
+  darray_push(main_seq.children, num_unit);
+
+  PegRule main_rule = {.global_id = 0, .scope_id = 0, .body = main_seq};
+  darray_push(input.rules, main_rule);
+
+  PegGenInput result = peg_analyze(&input, MEMOIZE_NAIVE, "test");
+  assert(darray_size(result.scope_closures) == 1);
+  ScopeClosure* cl = &result.scope_closures[0];
+  ScopedRule* sr = &cl->scoped_rules[0];
+  assert(sr->body.kind == SCOPED_UNIT_SEQ);
+  assert(darray_size(sr->body.as.children) == 2);
+  assert(sr->body.as.children[0].kind == SCOPED_UNIT_AND);
+  // inner is a call to num
+  assert(sr->body.as.children[0].as.base->kind == SCOPED_UNIT_CALL);
+  assert(sr->body.as.children[1].kind == SCOPED_UNIT_TERM);
+
+  peg_analyze_free(&result);
+  _free_input(&input);
+}
+
+// Not-predicate on branches: ![branches]
+TEST(test_lookahead_not_branches) {
+  PegAnalyzeInput input = {0};
+  symtab_init(&input.tokens, 1);
+  symtab_intern(&input.tokens, "number"); // 1
+  symtab_intern(&input.tokens, "ident");  // 2
+
+  symtab_init(&input.scope_names, 0);
+  symtab_intern(&input.scope_names, "main"); // 0
+
+  symtab_init(&input.rule_names, 0);
+  symtab_intern(&input.rule_names, "main"); // 0
+
+  input.rules = darray_new(sizeof(PegRule), 0);
+
+  // main = ![  @number @ident ] @ident
+  PegUnit br_num = {.kind = PEG_TERM, .id = 1, .tag = strdup("num")};
+  PegUnit br_id = {.kind = PEG_TERM, .id = 2, .tag = strdup("id")};
+  PegUnit branches = {.kind = PEG_BRANCHES, .lookahead = '!'};
+  branches.children = darray_new(sizeof(PegUnit), 0);
+  darray_push(branches.children, br_num);
+  darray_push(branches.children, br_id);
+
+  PegUnit id_unit = {.kind = PEG_TERM, .id = 2};
+  PegUnit main_seq = {.kind = PEG_SEQ};
+  main_seq.children = darray_new(sizeof(PegUnit), 0);
+  darray_push(main_seq.children, branches);
+  darray_push(main_seq.children, id_unit);
+
+  PegRule main_rule = {.global_id = 0, .scope_id = 0, .body = main_seq};
+  darray_push(input.rules, main_rule);
+
+  PegGenInput result = peg_analyze(&input, MEMOIZE_NAIVE, "test");
+  assert(darray_size(result.scope_closures) == 1);
+  ScopeClosure* cl = &result.scope_closures[0];
+  ScopedRule* sr = &cl->scoped_rules[0];
+  assert(sr->body.kind == SCOPED_UNIT_SEQ);
+  assert(darray_size(sr->body.as.children) == 2);
+  assert(sr->body.as.children[0].kind == SCOPED_UNIT_NOT);
+  // inner of not-predicate: branches get breakdown'd (may be BRANCHES or CALL to wrapper)
+  ScopedUnit* inner = sr->body.as.children[0].as.base;
+  assert(inner->kind == SCOPED_UNIT_BRANCHES || inner->kind == SCOPED_UNIT_CALL);
+  assert(sr->body.as.children[1].kind == SCOPED_UNIT_TERM);
+
+  // All tags inside the not-predicate must be -1
+  assert(sr->body.as.children[0].tag_bit_local_offset == -1);
+
+  peg_analyze_free(&result);
+  _free_input(&input);
+}
+
 int main(void) {
   printf("test_peg_analyze:\n");
   RUN(test_scope_closure_count);
@@ -702,6 +974,12 @@ int main(void) {
   RUN(test_node_fields_dedup);
   RUN(test_nested_branches_wrapped);
   RUN(test_exclusive_rules_share_slots);
+  RUN(test_lookahead_and_breakdown);
+  RUN(test_lookahead_not_breakdown);
+  RUN(test_lookahead_nullable_analysis);
+  RUN(test_lookahead_no_node_fields);
+  RUN(test_lookahead_and_call);
+  RUN(test_lookahead_not_branches);
   printf("test_peg_analyze: OK\n");
   return 0;
 }
