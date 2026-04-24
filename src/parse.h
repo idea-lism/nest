@@ -26,11 +26,14 @@ typedef enum {
   ACTION_START = SCOPE_COUNT,
 
   ACTION_IGNORE,        // .ignore
-  ACTION_BEGIN,         // .begin
   ACTION_END,           // .end
   ACTION_UNPARSE,       // .unparse
   ACTION_FAIL,          // .fail
   ACTION_STR_CHECK_END, // .str_check_end
+  // .begin hook is scope-specific
+  ACTION_BEGIN_PUSH,    // scope has PEG rule mapped (see materializable in parse.md), push token_tree. scope example:
+                        // branches
+  ACTION_BEGIN_NO_PUSH, // when scope has no PEG rule mapped, no need push. scope example: re_ref
 
   // composite: since lexer api only accepts single action_id, multiple actions must be combined
   ACTION_UNPARSE_END,       // .unparse .end

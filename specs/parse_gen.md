@@ -59,7 +59,8 @@ typedef enum {
   SCOPE_RE,
   SCOPE_RE_REF,
   SCOPE_CHARCLASS,
-  SCOPE_STR,
+  SCOPE_RE_STR,
+  SCOPE_PEG_STR,
 
   SCOPE_COUNT
 } ScopeId;
@@ -68,19 +69,19 @@ typedef enum {
   ACTION_START = SCOPE_COUNT,
 
   ACTION_IGNORE, // .ignore
-  ACTION_BEGIN, // .begin
   ACTION_END, // .end
   ACTION_UNPARSE, // .unparse
   ACTION_FAIL, // .fail
   ACTION_STR_CHECK_END, // .str_check_end
+  // .begin hook is scope-specific
+  ACTION_BEGIN_PUSH, // scope has PEG rule mapped (see materializable in parse.md), push token_tree. scope example: branches
+  ACTION_BEGIN_NO_PUSH, // when scope has no PEG rule mapped, no need push. scope example: re_ref
 
   // composite: since lexer api only accepts single action_id, multiple actions must be combined
   ACTION_UNPARSE_END, // .unparse .end
   ACTION_SET_RE_MODE_BEGIN, // .set_re_mode .begin
   ACTION_SET_CC_KIND_BEGIN, // set_cc_kind .begin
   ACTION_SET_QUOTE_BEGIN, // .set_quote .begin
-  ACTION_RE_TAG_BEGIN, // @re_tag .begin
-  ACTION_CHARCLASS_BEGIN_BEGIN, // @charclass_begin .begin
   ACTION_END_NL, // .end @nl
 
   ACTION_COUNT
@@ -101,6 +102,8 @@ typedef enum {
   LIT_STAR, // "*"
   LIT_LPAREN, // "("
   LIT_RPAREN, // ")"
+  LIT_AND,
+  LIT_NOT,
 
   LIT_COUNT
 } LitId;

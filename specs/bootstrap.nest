@@ -334,6 +334,6 @@ branches = @nl* branch_line+<@nl> @nl*
 
 # branch can't nest
 branch_line = [
-  peg_simple_unit @tag_id?
+  peg_simple_unit+ @tag_id?
   @tag_id
 ]

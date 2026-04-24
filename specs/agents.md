@@ -90,3 +90,7 @@ Bad code: `n_tags`, `n_tokens`
 
 Good code: `tag_size`, `token_bytesize`, `tag_size_in_i32`, `tag_size_in_i64`
 `````
+
+### Precision
+
+Implementation must match spec precisely. If the spec is wrong, point out, ask, don't get around it or changing it randomly.

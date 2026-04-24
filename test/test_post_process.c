@@ -650,9 +650,18 @@ TEST(test_inline_macros_cascaded) {
     assert(u->kind != VPA_MACRO_REF); // no unresolved macro refs
     const char* tok = _unit_tok_name(u, &ps->tokens);
     if (u->kind == VPA_RE && tok) {
-      if (strcmp(tok, "tok_z") == 0) { found_z = true; found++; }
-      if (strcmp(tok, "tok_x") == 0) { found_x = true; found++; }
-      if (strcmp(tok, "tok_y") == 0) { found_y = true; found++; }
+      if (strcmp(tok, "tok_z") == 0) {
+        found_z = true;
+        found++;
+      }
+      if (strcmp(tok, "tok_x") == 0) {
+        found_x = true;
+        found++;
+      }
+      if (strcmp(tok, "tok_y") == 0) {
+        found_y = true;
+        found++;
+      }
     }
   }
   assert(found_z);
@@ -1062,8 +1071,8 @@ TEST(test_match_scopes_expand_non_parser_scope) {
 TEST(test_match_scopes_no_expand_parser_scope) {
   ParseState* ps = parse_state_new();
   _init_symtabs(ps);
-  symtab_intern(&ps->scope_names, "main");           // 0
-  symtab_intern(&ps->scope_names, "parser_scope");   // 1
+  symtab_intern(&ps->scope_names, "main");            // 0
+  symtab_intern(&ps->scope_names, "parser_scope");    // 1
   symtab_intern(&ps->scope_names, "no_parser_scope"); // 2
   ps->vpa_scopes = darray_new(sizeof(VpaScope), 0);
   ps->peg_rules = darray_new(sizeof(PegRule), 0);

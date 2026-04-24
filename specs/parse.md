@@ -139,13 +139,15 @@ struct ScopeConfig {
 
 In the loop of `_lex_scope`
 - when met `end_token`, return and pop chunk head.
-- when a token_id is a scope_id (tok_id <= SCOPE_MAX), call `_lex_scope(ctx, tok_id)`.
+- when a token_id is a scope_id (tok_id < SCOPE_COUNT), call `_lex_scope(ctx, tok_id)`.
 
-Error handling:
-- when sub lexer meets error, set error to lexing state
-- parent lexer checks lexing state after calling sub lexer, if error, just return
+Error propagation:
+- when sub lexer meets error, set error to lexing state, return false
+- parent lexer checks if error, just return false
 
-The [token stream tree](token_tree.md) is organized the same way as `TokenTree` in [VPA generated code](specs/vpa.md).
+The [token stream tree](token_tree.md) is organized the same way as [VPA generated code](specs/vpa.md):
+- Materializable scopes (having a same-name mapped rule in PEG, that is, having `parse_fn`) creates child token chunk
+- other scopes are pushed flatten in current chunk
 
 The parsing also follows this nested structure:
 - When parsing matches to a rule that is not a scope, call it as in normal recursive descend parsers
@@ -173,59 +175,101 @@ ACTION_CHARCLASS_BEGIN_BEGIN, // @charclass_begin .begin
 
 For detailed scope/action/lit/tok see [parse_gen](parse_gen.md).
 
-So after we called a generated `lex_xxx()` and met a mismatch / eof, we check the `last_action_id`:
+So after we called a generated `lex_xxx()` and met a mismatch, we check the `last_action_id`:
 
 ```c
+bool _end_scope(token_tree, scope_id, parse_fn) {
+  if (parse_fn) {
+    chunk = current;
+    chunk->scope_id = scope_id;
+    pop token tree;
+    return parse_fn(src, chunk);
+  }
+  return true;
+}
+
 bool _lex_scope(ctx, scope_id) {
   ScopeConfig cfg = configs[scope_id];
-  while (take a codepoint from input) {
-    if (scope has eof) {
-      // the scope has EOF (@pseudo_frag_eof)
-      ... check if we are at eof and invoke aciton if needed
+  while (take a codepoint from input, including the EOF) {
+    if (cp is EOF and scope has EOF @pseudo_frag_eof) {
+      invoke the action after EOF, return if there is .end
     }
+
+    // when cp is EOF and come to this point, action_id becomes mismatch and triggers prev action
     action_id = feed codepoint to current lexer
-    if (action_id is mismatch) {
-      if (last_action_id > 0) {
-        if (last_action_id < SCOPE_COUNT) {
-          _lex_scope(ctx, last_aciton_id); // call down the lexer
-        } else if (last_action_id < ACTION_COUNT) {
-          switch (last_action_id) {
-            case ACTION_IGNORE:
-              // do nothing
-            case ACTION_BEGIN:
-              create new token chunk at current pos
-            case ACTION_END:
-              goto done
-            case ACTION_UNPARSE:
-              revert one token
-            case ACTION_SET_QUOTE_BEGIN:
-              ctx->last_quote_cp = decode_cp;
-              goto ACTION_BEGIN;
-            case ACTION_STR_CHECK_END:
-              if (decode_cp == ctx->last_quote_cp) {
-                goto ACTION_END;
-              } else {
-                emit char token
-              }
-            case ...
-          }
-        } else if (last_action_id < LIT_COUNT) {
-          emit literal token in token chunk
-        } else {
-          emit token in token chunk
-        }
-      } else {
-        error
+    if (action_id is not mismatch) {
+      update state and last action
+      continue
+    }
+
+    greedy match found, rewind the cp
+    if (last_action_id <= 0) {
+      error unexpected character
+      return false
+
+    } else if (last_action_id < SCOPE_COUNT) {
+      if (!_lex_scope(ctx, last_action_id)) {// call down the lexer
         return false
       }
+
+    } else if (last_action_id < ACTION_COUNT) {
+      switch (last_action_id) {
+        case ACTION_IGNORE:
+        case ACTION_BEGIN_NO_PUSH:
+          // do nothing
+          // scope example: re_ref
+          break
+        case ACTION_BEGIN_PUSH:
+          // new scope has parse_fn
+          // scope example: branches
+          create new token chunk at current pos
+          break
+        case ACTION_END:
+          return _end_scope(...)
+        case ACTION_UNPARSE:
+          revert one token
+          break
+        case ACTION_STR_CHECK_END:
+          if (last_decode_cp == ctx->last_quote_cp) {
+            return _end_scope(...)
+          } else {
+            emit char token
+            break
+          }
+        case ACTION_UNPARSE_END:
+          revert one token
+          return _end_scope(...)
+        case ACTION_SET_RE_MODE_BEGIN:
+          ...
+        case ACTION_SET_CC_KIND_BEGIN:
+          ...
+        case ACTION_SET_QUOTE_BEGIN:
+          ctx->last_quote_cp = last_decode_cp;
+          tt_push scope;
+          break
+        case ACTION_END_NL:
+          bool result = _end_scope(...)
+          emit nl token
+          return result
+        default:
+          should not come here, report unhandled action id
+          abort();
+      }
+
     } else {
-      continue feeding
+      emit token in token chunk
     }
+
+    reset DFA state
+  } // end while
+
+  if (scope is main) {
+    // parse_vpa & parse_peg already work out the results
+    return true
+  } else {
+    error expect more inputs
+    return false
   }
-done:
-  // now the chunk is finished, call the parse function
-  cfg.parse_fn(src, token_chunk);
-  return true;
 }
 ```
 
