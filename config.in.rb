@@ -51,6 +51,9 @@ exe "test_coloring",
   srcs: %w[test/test_coloring.c src/coloring.c src/graph.c src/xmalloc.c] - %w[src/parse.c],
   ext_libs: kissat
 
+exe "bench_coloring",
+  srcs: %w[src/bench_coloring.c src/coloring.c src/graph.c src/xmalloc.c],
+  ext_libs: kissat
 exe "test_peg_ir",
   srcs: base_lean + %w[test/test_peg_ir.c test/compat.c],
   deps: %w[ustr],

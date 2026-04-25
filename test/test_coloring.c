@@ -68,8 +68,7 @@ static void _test_segmenting(void) {
     }
   }
 
-  ColoringResult* cr = coloring_solve(100, graph_edges(g), graph_n_edges(g), 2, 10000, 42);
-  assert(cr != NULL);
+  ColoringResult* cr = coloring_solve(100, graph_edges(g), graph_n_edges(g), 2, 10000, 42, false);
 
   int32_t sg_size = coloring_get_sg_size(cr);
   assert(sg_size >= 2);
@@ -90,21 +89,18 @@ int main(void) {
   _test_segmenting();
 
   int32_t edges[] = {0, 1, 1, 2, 2, 0};
-  ColoringResult* cr = coloring_solve(3, edges, 3, 3, 1000, 42);
-  assert(cr != NULL);
+  ColoringResult* cr = coloring_solve(3, edges, 3, 3, 1000, 42, false);
   assert(coloring_get_sg_size(cr) >= 3);
   coloring_result_del(cr);
 
   Graph* g = graph_random_erdos_renyi(10, 0.3);
-  cr = coloring_solve(graph_n_vertices(g), graph_edges(g), graph_n_edges(g), 4, 10000, 42);
-  assert(cr != NULL);
+  cr = coloring_solve(graph_n_vertices(g), graph_edges(g), graph_n_edges(g), 4, 10000, 42, false);
   assert(_verify_coloring(g, cr));
   coloring_result_del(cr);
   graph_del(g);
 
   g = graph_random_erdos_renyi(50, 0.2);
-  cr = coloring_solve(graph_n_vertices(g), graph_edges(g), graph_n_edges(g), 10, 10000, 42);
-  assert(cr != NULL);
+  cr = coloring_solve(graph_n_vertices(g), graph_edges(g), graph_n_edges(g), 10, 10000, 42, false);
   assert(_verify_coloring(g, cr));
   coloring_result_del(cr);
   graph_del(g);

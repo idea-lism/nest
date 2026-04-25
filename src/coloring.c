@@ -12,6 +12,7 @@ struct ColoringResult {
   int32_t n_vertices;
   int32_t sg_size;
   VertexInfo* vertex_info;
+  int32_t* colors;
 };
 
 #ifdef _WIN32
@@ -98,12 +99,21 @@ extern void kissat_reserve(kissat* solver, int max_var);
 static int32_t _var(int32_t v, int32_t c, int32_t k) { return v * k + c + 1; }
 
 static int32_t* _solve_sat(int32_t n_vertices, int32_t* edges, int32_t n_edges, int32_t k, int32_t max_steps,
-                           int32_t seed) {
+                           int32_t seed, bool use_product_encoding) {
   kissat* solver = kissat_init();
   kissat_set_option(solver, "seed", seed);
   kissat_set_option(solver, "quiet", 1);
 
   int32_t max_var = n_vertices * k;
+  int32_t p = 0, q = 0;
+  if (use_product_encoding) {
+    p = 1;
+    while (p * p < k) {
+      p++;
+    }
+    q = (k + p - 1) / p;
+    max_var += n_vertices * (p + q);
+  }
   kissat_reserve(solver, max_var);
 
   if (max_steps > 0) {
@@ -118,11 +128,43 @@ static int32_t* _solve_sat(int32_t n_vertices, int32_t* edges, int32_t n_edges, 
   }
 
   for (int32_t v = 0; v < n_vertices; v++) {
-    for (int32_t c1 = 0; c1 < k; c1++) {
-      for (int32_t c2 = c1 + 1; c2 < k; c2++) {
-        kissat_add(solver, -_var(v, c1, k));
-        kissat_add(solver, -_var(v, c2, k));
+    if (use_product_encoding) {
+      int32_t v_offset = n_vertices * k + v * (p + q);
+      for (int32_t c = 0; c < k; c++) {
+        int32_t i = c / q;
+        int32_t j = c % q;
+        // x_{v,c} => r_{v,i}
+        kissat_add(solver, -_var(v, c, k));
+        kissat_add(solver, v_offset + i + 1);
         kissat_add(solver, 0);
+        // x_{v,c} => c_{v,j}
+        kissat_add(solver, -_var(v, c, k));
+        kissat_add(solver, v_offset + p + j + 1);
+        kissat_add(solver, 0);
+      }
+      // AMO on rows
+      for (int32_t i1 = 0; i1 < p; i1++) {
+        for (int32_t i2 = i1 + 1; i2 < p; i2++) {
+          kissat_add(solver, -(v_offset + i1 + 1));
+          kissat_add(solver, -(v_offset + i2 + 1));
+          kissat_add(solver, 0);
+        }
+      }
+      // AMO on columns
+      for (int32_t j1 = 0; j1 < q; j1++) {
+        for (int32_t j2 = j1 + 1; j2 < q; j2++) {
+          kissat_add(solver, -(v_offset + p + j1 + 1));
+          kissat_add(solver, -(v_offset + p + j2 + 1));
+          kissat_add(solver, 0);
+        }
+      }
+    } else {
+      for (int32_t c1 = 0; c1 < k; c1++) {
+        for (int32_t c2 = c1 + 1; c2 < k; c2++) {
+          kissat_add(solver, -_var(v, c1, k));
+          kissat_add(solver, -_var(v, c2, k));
+          kissat_add(solver, 0);
+        }
       }
     }
   }
@@ -205,7 +247,7 @@ static void _build_segments(ColoringResult* cr, int32_t* colors, int32_t k) {
 }
 
 ColoringResult* coloring_solve(int32_t n_vertices, int32_t* edges, int32_t n_edges, int32_t k, int32_t max_steps,
-                               int32_t seed) {
+                               int32_t seed, bool use_product_encoding) {
   ColoringResult* cr = XMALLOC(sizeof(ColoringResult));
   cr->n_vertices = n_vertices;
   cr->vertex_info = XMALLOC(n_vertices * sizeof(VertexInfo));
@@ -215,7 +257,7 @@ ColoringResult* coloring_solve(int32_t n_vertices, int32_t* edges, int32_t n_edg
   (void)seed;
   int32_t* colors = _solve_dsatur(n_vertices, edges, n_edges, k);
 #else
-  int32_t* colors = _solve_sat(n_vertices, edges, n_edges, k, max_steps, seed);
+  int32_t* colors = _solve_sat(n_vertices, edges, n_edges, k, max_steps, seed, use_product_encoding);
 #endif
 
   if (!colors) {
@@ -225,6 +267,8 @@ ColoringResult* coloring_solve(int32_t n_vertices, int32_t* edges, int32_t n_edg
   }
 
   _build_segments(cr, colors, k);
+  cr->colors = XMALLOC(n_vertices * sizeof(int32_t));
+  memcpy(cr->colors, colors, n_vertices * sizeof(int32_t));
   XFREE(colors);
 
   return cr;
@@ -235,8 +279,11 @@ void coloring_result_del(ColoringResult* cr) {
     return;
   }
   XFREE(cr->vertex_info);
+  XFREE(cr->colors);
   XFREE(cr);
 }
+
+int32_t coloring_get_color(ColoringResult* cr, int32_t vertex_id) { return cr->colors[vertex_id]; }
 
 void coloring_get_segment_info(ColoringResult* cr, int32_t vertex_id, int32_t* out_sg_id, int64_t* out_seg_mask) {
   *out_sg_id = cr->vertex_info[vertex_id].sg_id;
@@ -244,3 +291,5 @@ void coloring_get_segment_info(ColoringResult* cr, int32_t vertex_id, int32_t* o
 }
 
 int32_t coloring_get_sg_size(ColoringResult* cr) { return cr->sg_size; }
+
+int32_t coloring_get_n_vertices(ColoringResult* cr) { return cr->n_vertices; }
