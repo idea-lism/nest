@@ -19,7 +19,7 @@ With this optimization - arangement, we can
 - assign each vertex a bit in a bitset (`uint64_t seg_groups[sg_size]`)
 - given a vertex id, we can find out its `sg_id` in the seg_group and the `seg_mask` that represents all the vertexes in the segment
 
-## Symmetry breaking
+## Symmetry Breaking
 
 Very simple: find one max clique (with helper from graph.c), assign different colors to it.
 
@@ -34,6 +34,12 @@ Instead of comparing every variable to every other variable, we map our $n$ vari
 3.  **The Constraints:**
     * Apply an AMO constraint to the **rows** ($r$).
     * Apply an AMO constraint to the **columns** ($c$).
+
+## Binary Searching
+
+We have LB (max clique) and UB (DSatur) in the beginning, we wan't to find out the a good coloring allocation.
+
+We do a binary search for `LB <= k <= UB` to find the minimal coloring number that: SAT can give an answer in our limited time step settings.
 
 ## Graph helpers (src/graph.c)
 

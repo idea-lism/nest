@@ -15,9 +15,8 @@ struct ColoringResult {
   int32_t* colors;
 };
 
-#ifdef _WIN32
-
 // DSatur: pick uncolored vertex with max saturation (ties broken by degree), assign smallest feasible color.
+// Returns colors or NULL if k is insufficient.
 static int32_t* _solve_dsatur(int32_t n_vertices, int32_t* edges, int32_t n_edges, int32_t k) {
   int32_t* adj = XCALLOC(n_vertices * n_vertices, sizeof(int32_t));
   int32_t* degree = XCALLOC(n_vertices, sizeof(int32_t));
@@ -84,7 +83,81 @@ static int32_t* _solve_dsatur(int32_t n_vertices, int32_t* edges, int32_t n_edge
   return colors;
 }
 
+static void _build_segments(ColoringResult* cr, int32_t* colors, int32_t k) {
+  int32_t* color_counts = XCALLOC(k, sizeof(int32_t));
+  for (int32_t i = 0; i < cr->n_vertices; i++) {
+    color_counts[colors[i]]++;
+  }
+
+  int32_t sg_id = 0;
+  int32_t* color_sg_base = XMALLOC(k * sizeof(int32_t));
+
+  for (int32_t c = 0; c < k; c++) {
+    color_sg_base[c] = sg_id;
+    int32_t count = color_counts[c];
+    sg_id += (count + 63) / 64;
+  }
+  cr->sg_size = sg_id;
+
+  int32_t* color_pos = XCALLOC(k, sizeof(int32_t));
+  for (int32_t v = 0; v < cr->n_vertices; v++) {
+    int32_t c = colors[v];
+    int32_t pos = color_pos[c]++;
+    int32_t seg_idx = pos / 64;
+    int32_t bit_idx = pos % 64;
+    cr->vertex_info[v].sg_id = color_sg_base[c] + seg_idx;
+    cr->vertex_info[v].seg_mask = (int64_t)(1ULL << bit_idx);
+  }
+
+  XFREE(color_counts);
+  XFREE(color_sg_base);
+  XFREE(color_pos);
+}
+
+#ifdef _WIN32
+
+// Windows fallback: DSatur only, no SAT solver.
+
+ColoringResult* coloring_solve(int32_t n_vertices, int32_t* edges, int32_t n_edges, int32_t max_steps,
+                               int32_t seed, bool use_product_encoding) {
+  (void)max_steps;
+  (void)seed;
+  (void)use_product_encoding;
+
+  // DSatur always succeeds with n_vertices colors.
+  int32_t* colors = _solve_dsatur(n_vertices, edges, n_edges, n_vertices);
+  if (!colors) {
+    return NULL;
+  }
+
+  ColoringResult* cr = XMALLOC(sizeof(ColoringResult));
+  cr->n_vertices = n_vertices;
+  cr->vertex_info = XMALLOC(n_vertices * sizeof(VertexInfo));
+  _build_segments(cr, colors, n_vertices);
+  cr->colors = XMALLOC(n_vertices * sizeof(int32_t));
+  memcpy(cr->colors, colors, n_vertices * sizeof(int32_t));
+  XFREE(colors);
+  return cr;
+}
+
 #else
+
+// Non-Windows: use kissat SAT solver with binary search between LB and UB.
+
+// Compute the lower bound: max clique size.
+static int32_t _max_clique(int32_t n_vertices, int32_t* edges, int32_t n_edges) {
+  Graph* g = graph_new(n_vertices);
+  for (int32_t i = 0; i < n_edges; i++) {
+    graph_add_edge(g, edges[i * 2], edges[i * 2 + 1]);
+  }
+  int32_t* clique = graph_find_max_clique(g);
+  graph_del(g);
+  int32_t lb = clique ? clique[0] : 0;
+  if (clique) {
+    XFREE(clique);
+  }
+  return lb;
+}
 
 typedef struct kissat kissat;
 extern kissat* kissat_init(void);
@@ -96,8 +169,10 @@ extern void kissat_set_conflict_limit(kissat* solver, unsigned limit);
 extern int kissat_set_option(kissat* solver, const char* name, int new_value);
 extern void kissat_reserve(kissat* solver, int max_var);
 
+// Variable index: vertex v, color c, k colors total.
 static int32_t _var(int32_t v, int32_t c, int32_t k) { return v * k + c + 1; }
 
+// SAT solver for a single k value. Returns colors or NULL on failure.
 static int32_t* _solve_sat(int32_t n_vertices, int32_t* edges, int32_t n_edges, int32_t k, int32_t max_steps,
                            int32_t seed, bool use_product_encoding) {
   kissat* solver = kissat_init();
@@ -179,6 +254,7 @@ static int32_t* _solve_sat(int32_t n_vertices, int32_t* edges, int32_t n_edges, 
     }
   }
 
+  // Symmetry breaking: assign different colors to max clique vertices.
   Graph* g = graph_new(n_vertices);
   for (int32_t i = 0; i < n_edges; i++) {
     graph_add_edge(g, edges[i * 2], edges[i * 2 + 1]);
@@ -213,66 +289,68 @@ static int32_t* _solve_sat(int32_t n_vertices, int32_t* edges, int32_t n_edges, 
   return colors;
 }
 
-#endif
-
-static void _build_segments(ColoringResult* cr, int32_t* colors, int32_t k) {
-  int32_t* color_counts = XCALLOC(k, sizeof(int32_t));
-  for (int32_t i = 0; i < cr->n_vertices; i++) {
-    color_counts[colors[i]]++;
-  }
-
-  int32_t sg_id = 0;
-  int32_t* color_sg_base = XMALLOC(k * sizeof(int32_t));
-
-  for (int32_t c = 0; c < k; c++) {
-    color_sg_base[c] = sg_id;
-    int32_t count = color_counts[c];
-    sg_id += (count + 63) / 64;
-  }
-  cr->sg_size = sg_id;
-
-  int32_t* color_pos = XCALLOC(k, sizeof(int32_t));
-  for (int32_t v = 0; v < cr->n_vertices; v++) {
-    int32_t c = colors[v];
-    int32_t pos = color_pos[c]++;
-    int32_t seg_idx = pos / 64;
-    int32_t bit_idx = pos % 64;
-    cr->vertex_info[v].sg_id = color_sg_base[c] + seg_idx;
-    cr->vertex_info[v].seg_mask = (int64_t)(1ULL << bit_idx);
-  }
-
-  XFREE(color_counts);
-  XFREE(color_sg_base);
-  XFREE(color_pos);
-}
-
-ColoringResult* coloring_solve(int32_t n_vertices, int32_t* edges, int32_t n_edges, int32_t k, int32_t max_steps,
-                               int32_t seed, bool use_product_encoding) {
-  ColoringResult* cr = XMALLOC(sizeof(ColoringResult));
-  cr->n_vertices = n_vertices;
-  cr->vertex_info = XMALLOC(n_vertices * sizeof(VertexInfo));
-
-#ifdef _WIN32
-  (void)max_steps;
-  (void)seed;
-  int32_t* colors = _solve_dsatur(n_vertices, edges, n_edges, k);
-#else
-  int32_t* colors = _solve_sat(n_vertices, edges, n_edges, k, max_steps, seed, use_product_encoding);
-#endif
-
-  if (!colors) {
-    XFREE(cr->vertex_info);
-    XFREE(cr);
+// Binary search for the minimal k between lb and ub that SAT can solve.
+// Returns a ColoringResult on success, NULL if no k in [lb, ub] works.
+static ColoringResult* _binary_search_color(int32_t n_vertices, int32_t* edges, int32_t n_edges, int32_t lb,
+                                            int32_t ub, int32_t max_steps, int32_t seed, bool use_product_encoding) {
+  if (lb > ub) {
     return NULL;
   }
 
-  _build_segments(cr, colors, k);
-  cr->colors = XMALLOC(n_vertices * sizeof(int32_t));
-  memcpy(cr->colors, colors, n_vertices * sizeof(int32_t));
-  XFREE(colors);
+  int32_t lo = lb, hi = ub;
+  ColoringResult* best = NULL;
 
-  return cr;
+  while (lo <= hi) {
+    int32_t mid = lo + (hi - lo) / 2;
+    int32_t* colors = _solve_sat(n_vertices, edges, n_edges, mid, max_steps, seed, use_product_encoding);
+    if (colors) {
+      // mid works, try smaller
+      ColoringResult* cr = XMALLOC(sizeof(ColoringResult));
+      cr->n_vertices = n_vertices;
+      cr->vertex_info = XMALLOC(n_vertices * sizeof(VertexInfo));
+      _build_segments(cr, colors, mid);
+      cr->colors = XMALLOC(n_vertices * sizeof(int32_t));
+      memcpy(cr->colors, colors, n_vertices * sizeof(int32_t));
+      XFREE(colors);
+      XFREE(best);
+      best = cr;
+      hi = mid - 1;
+    } else {
+      // mid doesn't work, need more colors
+      lo = mid + 1;
+    }
+  }
+
+  return best;
 }
+
+ColoringResult* coloring_solve(int32_t n_vertices, int32_t* edges, int32_t n_edges, int32_t max_steps,
+                               int32_t seed, bool use_product_encoding) {
+  // Compute LB (max clique) and UB (DSatur).
+  int32_t lb = _max_clique(n_vertices, edges, n_edges);
+
+  int32_t* dsatur_colors = _solve_dsatur(n_vertices, edges, n_edges, n_vertices);
+  int32_t ub;
+  if (dsatur_colors) {
+    // Find the max color used by DSatur to get a tight UB.
+    ub = 0;
+    for (int32_t i = 0; i < n_vertices; i++) {
+      if (dsatur_colors[i] > ub) {
+        ub = dsatur_colors[i];
+      }
+    }
+    ub++;
+    XFREE(dsatur_colors);
+  } else {
+    // DSatur failed (shouldn't happen with n_vertices colors, but be safe).
+    ub = n_vertices;
+  }
+
+  // Binary search between lb and ub for the minimal k.
+  return _binary_search_color(n_vertices, edges, n_edges, lb, ub, max_steps, seed, use_product_encoding);
+}
+
+#endif
 
 void coloring_result_del(ColoringResult* cr) {
   if (!cr) {

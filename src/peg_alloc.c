@@ -417,13 +417,7 @@ static void _alloc_slot_bits(ScopeClosure* cl) {
   }
   int32_t* edges = graph_edges(g);
   int32_t edge_size = graph_n_edges(g);
-  ColoringResult* cr = NULL;
-  for (size_t k = 1; k <= n; k++) {
-    cr = coloring_solve(n, edges, edge_size, k, 10000, 42, true);
-    if (cr) {
-      break;
-    }
-  }
+  cr = coloring_solve(n, edges, edge_size, 10000, 42, true);
   graph_del(g);
   assert(cr);
   cl->slots_size = coloring_get_sg_size(cr);
