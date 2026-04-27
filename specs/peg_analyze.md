@@ -247,7 +247,7 @@ Code generation and user API are specified in [peg_gen](peg_gen.md).
 
 # Verbose level
 
-When verbose level > 1, print number of scopes, number of tag bits, color group allocations, final column layout for the memoize table.
+When verbose level > 1, print number of scopes, number of nodes in coloring, numbero edges in coloring, number of tag bits, color group allocations, final column layout for the memoize table.
 
 # Acceptance criteria
 

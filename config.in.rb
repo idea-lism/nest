@@ -52,7 +52,7 @@ exe "test_coloring",
   ext_libs: kissat
 
 exe "bench_coloring",
-  srcs: %w[src/bench_coloring.c src/coloring.c src/graph.c src/xmalloc.c],
+  srcs: %w[test/bench_coloring.c src/coloring.c src/graph.c src/xmalloc.c],
   ext_libs: kissat
 exe "test_peg_ir",
   srcs: base_lean + %w[test/test_peg_ir.c test/compat.c],

@@ -118,11 +118,12 @@ static void _build_segments(ColoringResult* cr, int32_t* colors, int32_t k) {
 
 // Windows fallback: DSatur only, no SAT solver.
 
-ColoringResult* coloring_solve(int32_t n_vertices, int32_t* edges, int32_t n_edges, int32_t max_steps,
-                               int32_t seed, bool use_product_encoding) {
+ColoringResult* coloring_solve(int32_t n_vertices, int32_t* edges, int32_t n_edges, int32_t max_steps, int32_t seed,
+                               bool use_product_encoding, FILE* log) {
   (void)max_steps;
   (void)seed;
   (void)use_product_encoding;
+  (void)log;
 
   // DSatur always succeeds with n_vertices colors.
   int32_t* colors = _solve_dsatur(n_vertices, edges, n_edges, n_vertices);
@@ -291,18 +292,24 @@ static int32_t* _solve_sat(int32_t n_vertices, int32_t* edges, int32_t n_edges, 
 
 // Binary search for the minimal k between lb and ub that SAT can solve.
 // Returns a ColoringResult on success, NULL if no k in [lb, ub] works.
-static ColoringResult* _binary_search_color(int32_t n_vertices, int32_t* edges, int32_t n_edges, int32_t lb,
-                                            int32_t ub, int32_t max_steps, int32_t seed, bool use_product_encoding) {
+static ColoringResult* _binary_search_color(int32_t n_vertices, int32_t* edges, int32_t n_edges, int32_t lb, int32_t ub,
+                                            int32_t max_steps, int32_t seed, bool use_product_encoding, FILE* log) {
   if (lb > ub) {
     return NULL;
   }
 
   int32_t lo = lb, hi = ub;
   ColoringResult* best = NULL;
+  int32_t iter = 0;
 
   while (lo <= hi) {
     int32_t mid = lo + (hi - lo) / 2;
     int32_t* colors = _solve_sat(n_vertices, edges, n_edges, mid, max_steps, seed, use_product_encoding);
+    if (log) {
+      fprintf(log, "  [coloring] iter %d: lo=%d hi=%d try k=%d => %s\n", iter, lo, hi, mid,
+              colors ? "SAT" : "UNSAT/timeout");
+    }
+    iter++;
     if (colors) {
       // mid works, try smaller
       ColoringResult* cr = XMALLOC(sizeof(ColoringResult));
@@ -312,7 +319,7 @@ static ColoringResult* _binary_search_color(int32_t n_vertices, int32_t* edges, 
       cr->colors = XMALLOC(n_vertices * sizeof(int32_t));
       memcpy(cr->colors, colors, n_vertices * sizeof(int32_t));
       XFREE(colors);
-      XFREE(best);
+      coloring_result_del(best);
       best = cr;
       hi = mid - 1;
     } else {
@@ -324,8 +331,8 @@ static ColoringResult* _binary_search_color(int32_t n_vertices, int32_t* edges, 
   return best;
 }
 
-ColoringResult* coloring_solve(int32_t n_vertices, int32_t* edges, int32_t n_edges, int32_t max_steps,
-                               int32_t seed, bool use_product_encoding) {
+ColoringResult* coloring_solve(int32_t n_vertices, int32_t* edges, int32_t n_edges, int32_t max_steps, int32_t seed,
+                               bool use_product_encoding, FILE* log) {
   // Compute LB (max clique) and UB (DSatur).
   int32_t lb = _max_clique(n_vertices, edges, n_edges);
 
@@ -346,8 +353,17 @@ ColoringResult* coloring_solve(int32_t n_vertices, int32_t* edges, int32_t n_edg
     ub = n_vertices;
   }
 
+  if (log) {
+    fprintf(log, "  [coloring] n=%d edges=%d lb=%d (max clique) ub=%d (DSatur)\n", n_vertices, n_edges, lb, ub);
+  }
+
   // Binary search between lb and ub for the minimal k.
-  return _binary_search_color(n_vertices, edges, n_edges, lb, ub, max_steps, seed, use_product_encoding);
+  ColoringResult* cr =
+      _binary_search_color(n_vertices, edges, n_edges, lb, ub, max_steps, seed, use_product_encoding, log);
+  if (log && cr) {
+    fprintf(log, "  [coloring] result: %d colors\n", coloring_get_sg_size(cr));
+  }
+  return cr;
 }
 
 #endif

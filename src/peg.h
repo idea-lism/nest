@@ -166,6 +166,11 @@ typedef struct {
 
   int64_t bits_bucket_size;
   int64_t slots_size;
+
+  // coloring stats (populated by peg_alloc_scope in shared mode)
+  int32_t coloring_n_vertices;
+  int32_t coloring_n_edges;
+  int32_t coloring_n_colors;
 } ScopeClosure;
 
 // --- Memoize modes (from cli.md) ---
@@ -199,4 +204,4 @@ void peg_gen(PegGenInput* input, HeaderWriter* hw, IrWriter* w);
 // Depends only on coloring. Allocates slot/tag bits for a single closure:
 // on return, every ScopedRule has its allocation fields filled in, and
 // `closure->bits_bucket_size` / `closure->slots_size` are set.
-void peg_alloc_scope(ScopeClosure* closure, MemoizeMode mode);
+void peg_alloc_scope(ScopeClosure* closure, MemoizeMode mode, FILE* log);

@@ -194,7 +194,7 @@ TEST(test_shared_two_segments_pack_into_one_bucket) {
   int32_t tag_counts[] = {0, 0};
   ScopeClosure cl = _make_closure("s", 2, token_ids, tag_counts);
 
-  peg_alloc_scope(&cl, MEMOIZE_SHARED);
+  peg_alloc_scope(&cl, MEMOIZE_SHARED, NULL);
 
   // 2 segments expected (rules interfere).
   assert(cl.slots_size == 2);
@@ -212,7 +212,7 @@ TEST(test_shared_four_tiny_segments_pack_into_one_bucket) {
   int32_t tag_counts[] = {0, 0, 0, 0};
   ScopeClosure cl = _make_closure("s", 4, token_ids, tag_counts);
 
-  peg_alloc_scope(&cl, MEMOIZE_SHARED);
+  peg_alloc_scope(&cl, MEMOIZE_SHARED, NULL);
   assert(cl.slots_size == 4);
 
   BucketUsage u = _compute_usage_shared(&cl);
@@ -228,7 +228,7 @@ TEST(test_naive_small_tags_pack_tight) {
   int32_t tag_counts[] = {10, 10, 10}; // 30 bits total -> 1 bucket
   ScopeClosure cl = _make_closure("s", 3, token_ids, tag_counts);
 
-  peg_alloc_scope(&cl, MEMOIZE_NAIVE);
+  peg_alloc_scope(&cl, MEMOIZE_NAIVE, NULL);
 
   BucketUsage u = _compute_usage_naive(&cl);
   _assert_no_large_gap(&u);
