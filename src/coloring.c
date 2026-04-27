@@ -174,8 +174,10 @@ extern void kissat_reserve(kissat* solver, int max_var);
 static int32_t _var(int32_t v, int32_t c, int32_t k) { return v * k + c + 1; }
 
 // SAT solver for a single k value. Returns colors or NULL on failure.
+// *out_timeout is set to true if the solver hit the conflict limit (UNKNOWN result).
 static int32_t* _solve_sat(int32_t n_vertices, int32_t* edges, int32_t n_edges, int32_t k, int32_t max_steps,
-                           int32_t seed, bool use_product_encoding) {
+                           int32_t seed, bool use_product_encoding, bool* out_timeout) {
+  *out_timeout = false;
   kissat* solver = kissat_init();
   kissat_set_option(solver, "seed", seed);
   kissat_set_option(solver, "quiet", 1);
@@ -274,7 +276,9 @@ static int32_t* _solve_sat(int32_t n_vertices, int32_t* edges, int32_t n_edges, 
 
   int result = kissat_solve(solver);
   int32_t* colors = NULL;
-  if (result == 10) {
+  if (result == 0) {
+    *out_timeout = true;
+  } else if (result == 10) {
     colors = XMALLOC(n_vertices * sizeof(int32_t));
     for (int32_t v = 0; v < n_vertices; v++) {
       for (int32_t c = 0; c < k; c++) {
@@ -304,10 +308,11 @@ static ColoringResult* _binary_search_color(int32_t n_vertices, int32_t* edges, 
 
   while (lo <= hi) {
     int32_t mid = lo + (hi - lo) / 2;
-    int32_t* colors = _solve_sat(n_vertices, edges, n_edges, mid, max_steps, seed, use_product_encoding);
+    bool timeout = false;
+    int32_t* colors = _solve_sat(n_vertices, edges, n_edges, mid, max_steps, seed, use_product_encoding, &timeout);
     if (log) {
       fprintf(log, "  [coloring] iter %d: lo=%d hi=%d try k=%d => %s\n", iter, lo, hi, mid,
-              colors ? "SAT" : "UNSAT/timeout");
+              colors ? "SAT" : (timeout ? "timeout" : "UNSAT"));
     }
     iter++;
     if (colors) {

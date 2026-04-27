@@ -634,6 +634,11 @@ static int32_t _cmd_compile(int32_t argc, char** argv) {
       goto cleanup;
     }
   }
+  int32_t max_steps = arg_s ? atoi(arg_s) : 10000;
+  if (max_steps <= 0) {
+    max_steps = 10000;
+  }
+
   if (verbose) {
     fprintf(stderr, "[nest] peg_analyze\n");
   }
@@ -644,6 +649,7 @@ static int32_t _cmd_compile(int32_t argc, char** argv) {
           .scope_names = ps->scope_names,
           .rule_names = ps->rule_names,
           .verbose_level = verbose,
+          .max_steps = max_steps,
       },
       memoize_mode, prefix);
   if (verbose) {

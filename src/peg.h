@@ -45,6 +45,7 @@ typedef struct {
   int32_t source_line; // line in .nest file (for LLVM IR debug info), 0 = unknown
   int32_t source_col;
   PegUnit body;
+  bool visited; // post-process: orphan detection
 } PegRule;
 
 typedef PegRule* PegRules; // darray
@@ -55,6 +56,7 @@ typedef struct {
   Symtab scope_names; // owned by ParseState
   Symtab rule_names;  // owned by ParseState
   int verbose_level;  // passed from from cli.md
+  int32_t max_steps;  // SAT solver conflict limit (0 = default 10000)
 } PegAnalyzeInput;
 
 // --- Scoped unit types (produced by analysis) ---
@@ -204,4 +206,4 @@ void peg_gen(PegGenInput* input, HeaderWriter* hw, IrWriter* w);
 // Depends only on coloring. Allocates slot/tag bits for a single closure:
 // on return, every ScopedRule has its allocation fields filled in, and
 // `closure->bits_bucket_size` / `closure->slots_size` are set.
-void peg_alloc_scope(ScopeClosure* closure, MemoizeMode mode, FILE* log);
+void peg_alloc_scope(ScopeClosure* closure, MemoizeMode mode, int32_t max_steps, FILE* log);

@@ -616,6 +616,29 @@ static bool _check_undefined_calls(ParseState* ps, PegUnit* unit, const char* ru
   return true;
 }
 
+static void _visit_rule(ParseState* ps, PegUnit* unit);
+
+static void _visit_call(ParseState* ps, int32_t id) {
+  const char* rn = _rule_name(ps, id);
+  PegRule* callee = rn ? _find_peg_rule(ps, rn) : NULL;
+  if (callee && !callee->visited) {
+    callee->visited = true;
+    _visit_rule(ps, &callee->body);
+  }
+}
+
+static void _visit_rule(ParseState* ps, PegUnit* unit) {
+  if (unit->kind == PEG_CALL) {
+    _visit_call(ps, unit->id);
+  }
+  if (unit->interlace_rhs_kind == PEG_CALL) {
+    _visit_call(ps, unit->interlace_rhs_id);
+  }
+  for (size_t i = 0; i < darray_size(unit->children); i++) {
+    _visit_rule(ps, &unit->children[i]);
+  }
+}
+
 bool pp_detect_left_recursions(ParseState* ps) {
   for (size_t r = 0; r < darray_size(ps->peg_rules); r++) {
     PegRule* rule = &ps->peg_rules[r];
@@ -651,6 +674,27 @@ bool pp_detect_left_recursions(ParseState* ps) {
       continue;
     }
     if (!_check_interlace_loops(ps, &rule->body, rn)) {
+      return false;
+    }
+  }
+
+  // orphan rule detection: seed from entry points (main + scope rules), then report unvisited
+  for (size_t r = 0; r < darray_size(ps->peg_rules); r++) {
+    PegRule* rule = &ps->peg_rules[r];
+    const char* rn = _rule_name(ps, rule->global_id);
+    if (rn && (_find_scope(ps, rn) || strcmp(rn, "main") == 0)) {
+      rule->visited = true;
+      _visit_rule(ps, &rule->body);
+    }
+  }
+  for (size_t r = 0; r < darray_size(ps->peg_rules); r++) {
+    PegRule* rule = &ps->peg_rules[r];
+    if (!rule->visited) {
+      const char* rn = _rule_name(ps, rule->global_id);
+      if (!rn) {
+        continue;
+      }
+      parse_error(ps, "orphan rule '%s' is not reachable from 'main'", rn);
       return false;
     }
   }
@@ -896,6 +940,26 @@ static bool _unit_has_hook(VpaUnit* u, int32_t hook_id, ParseState* ps) {
 
 // --- vpa scope validity ---
 
+static void _visit_scope(ParseState* ps, VpaScope* scope) {
+  if (scope->leader.kind == VPA_CALL) {
+    VpaScope* callee = _find_scope_by_id(ps, scope->leader.call_scope_id);
+    if (callee && !callee->visited) {
+      callee->visited = true;
+      _visit_scope(ps, callee);
+    }
+  }
+  for (size_t j = 0; j < darray_size(scope->children); j++) {
+    VpaUnit* u = &scope->children[j];
+    if (u->kind == VPA_CALL) {
+      VpaScope* callee = _find_scope_by_id(ps, u->call_scope_id);
+      if (callee && !callee->visited) {
+        callee->visited = true;
+        _visit_scope(ps, callee);
+      }
+    }
+  }
+}
+
 bool pp_validate_vpa_scopes(ParseState* ps) {
   bool has_main = false;
   for (size_t i = 0; i < darray_size(ps->vpa_scopes); i++) {
@@ -972,6 +1036,20 @@ bool pp_validate_vpa_scopes(ParseState* ps) {
           parse_error(ps, "scope '%s': empty pattern must have .end or .fail", scope->name);
           return false;
         }
+      }
+    }
+  }
+
+  // orphan scope detection: color from 'main', report unvisited
+  VpaScope* main_vpa = _find_scope(ps, "main");
+  if (main_vpa) {
+    main_vpa->visited = true;
+    _visit_scope(ps, main_vpa);
+    for (size_t i = 0; i < darray_size(ps->vpa_scopes); i++) {
+      VpaScope* scope = &ps->vpa_scopes[i];
+      if (!scope->visited) {
+        parse_error(ps, "orphan scope '%s' is not reachable from 'main'", scope->name);
+        return false;
       }
     }
   }

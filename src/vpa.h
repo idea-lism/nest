@@ -60,6 +60,7 @@ typedef struct {
   int32_t eof_action;  // action_id for VPA_EOF child, 0 = none
   int32_t source_line; // line in .nest file (for LLVM IR debug info), 0 = unknown
   int32_t source_col;
+  bool visited; // post-process: orphan detection
 } VpaScope;
 
 typedef struct {

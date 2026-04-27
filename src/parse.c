@@ -177,6 +177,12 @@ static bool _is_str_char(int32_t id) {
   return id == TOK_CHAR || id == TOK_CODEPOINT || id == TOK_C_ESCAPE || id == TOK_PLAIN_ESCAPE;
 }
 
+static bool _is_shorthand_class(int32_t id) {
+  return id == TOK_RE_SPACE_CLASS || id == TOK_RE_WORD_CLASS || id == TOK_RE_DIGIT_CLASS || id == TOK_RE_HEX_CLASS;
+}
+
+static bool _is_cc_unit(int32_t id) { return _is_str_char(id) || _is_shorthand_class(id); }
+
 // fragment lookup/create
 static int32_t _frag_id(ParseState* ps, Token* t) { return _intern_tok(&ps->re_frag_names, ps->src, t); }
 
@@ -388,10 +394,29 @@ static bool _lex_scope(LexCtx* ctx, ScopeId scope_id) {
 
 static ReIr _parse_re_expr(ParseState* ps, TokenChunk* chunk, int32_t* p, ReIr ir, bool icase);
 
-// charclass_unit = [ charclass_char @range_sep charclass_char : range | charclass_char : single ]
+// charclass_unit = [
+//   charclass_char @range_sep charclass_char : range
+//   charclass_char : single
+// ]
 static ReIr _parse_charclass_unit(ParseState* ps, TokenChunk* chunk, int32_t* p, ReIr ir) {
   Token* first = &T(p);
   Location loc = _loc(ps, first);
+  if (_is_shorthand_class(first->term_id)) {
+    int32_t id = first->term_id;
+    (*p)++;
+    switch (id) {
+    case TOK_RE_SPACE_CLASS:
+      return re_ir_emit(ir, RE_IR_APPEND_GROUP_S, 0, 0, loc.line, loc.col);
+    case TOK_RE_WORD_CLASS:
+      return re_ir_emit(ir, RE_IR_APPEND_GROUP_W, 0, 0, loc.line, loc.col);
+    case TOK_RE_DIGIT_CLASS:
+      return re_ir_emit(ir, RE_IR_APPEND_GROUP_D, 0, 0, loc.line, loc.col);
+    case TOK_RE_HEX_CLASS:
+      return re_ir_emit(ir, RE_IR_APPEND_GROUP_H, 0, 0, loc.line, loc.col);
+    default:
+      break;
+    }
+  }
   int32_t lo = _decode_cp(ps->src, &T(p));
   (*p)++;
   if (_eat(chunk, p, TOK_RANGE_SEP)) {
@@ -412,14 +437,14 @@ static bool _parse_charclass(ParseState* ps, TokenChunk* chunk) {
   int32_t p = 0;
   bool neg = ps->shared->cc_kind_neg, icase = ps->shared->re_mode_icase;
   ReIr ir = re_ir_new();
-  if (!_is_str_char(T(&p).term_id)) {
+  if (!_is_cc_unit(T(&p).term_id)) {
     _error_at(ps, &T(&p), "empty character class");
     chunk->value = ir;
     return false;
   }
   Location loc = _loc(ps, &T(&p));
   ir = re_ir_emit(ir, RE_IR_RANGE_BEGIN, 0, 0, loc.line, loc.col);
-  while (_is_str_char(T(&p).term_id)) {
+  while (_is_cc_unit(T(&p).term_id)) {
     ir = _parse_charclass_unit(ps, chunk, &p, ir);
   }
   if (neg) {
@@ -455,7 +480,20 @@ static ReIr _emit_shorthand(ReIr ir, int32_t tok_id, int32_t line, int32_t col) 
   return re_ir_emit(ir, RE_IR_RANGE_END, 0, 0, line, col);
 }
 
-// re_unit = [ "(" re ")" | charclass | @re_dot | ... | @re_ref | @char | ... ]
+// re_unit = [
+//   "(" re ")"
+//   charclass
+//   @re_dot
+//   @re_space_class
+//   @re_word_class
+//   @re_digit_class
+//   @re_hex_class
+//   @re_ref
+//   @char
+//   @codepoint
+//   @c_escape
+//   @plain_escape
+// ]
 static ReIr _parse_re_unit(ParseState* ps, TokenChunk* chunk, int32_t* p, ReIr ir, bool icase) {
   Token* t = &T(p);
   Location loc = _loc(ps, t);
@@ -499,7 +537,12 @@ static ReIr _parse_re_unit(ParseState* ps, TokenChunk* chunk, int32_t* p, ReIr i
   }
 }
 
-// re_quantified = re_unit [ "?" | "+" | "*" | (none) ]
+// re_quantified = re_unit [
+//   "?" : maybe
+//   "+" : plus
+//   "*" : star
+//   : unquantified
+// ]
 static ReIr _parse_re_quantified(ParseState* ps, TokenChunk* chunk, int32_t* p, ReIr ir, bool icase) {
   size_t s = darray_size(ir);
   ir = _parse_re_unit(ps, chunk, p, ir, icase);
@@ -616,7 +659,15 @@ static int32_t _intern_hook(int32_t tok_id) {
   }
 }
 
-// action = [ @tok_id | hooks | @user_hook_id ]
+// action = [
+//   @tok_id
+//   @hook_begin
+//   @hook_end
+//   @hook_fail
+//   @hook_unparse
+//   @hook_noop
+//   @user_hook_id
+// ]
 static void _parse_actions(ParseState* ps, TokenChunk* chunk, int32_t* p, VpaUnit* u) {
   for (;;) {
     Token* t = &T(p);
@@ -661,8 +712,14 @@ static void _take_re_str(ParseState* ps, TokenChunk* chunk, int32_t* p, VpaUnit*
   sc->aux_value = NULL;
 }
 
-// scope_line = [ re action* | re_str action* | @pseudo_frag_eof action* | @re_frag_id action* | @vpa_id action* |
-// @module_id ]
+// scope_line = [
+//   re action*
+//   re_str action*
+//   @pseudo_frag_eof action*
+//   @re_frag_id action*
+//   @vpa_id action*
+//   @module_id
+// ]
 static bool _parse_scope_line(ParseState* ps, TokenChunk* chunk, int32_t* p, VpaUnit** children) {
   Token* t = &T(p);
   if (!t->term_id) {
@@ -863,7 +920,12 @@ static VpaScope* _new_scope(ParseState* ps, char* name) {
   return &ps->vpa_scopes[darray_size(ps->vpa_scopes) - 1];
 }
 
-// vpa_rule = @vpa_id "=" [ re | re_str | @pseudo_frag_eof | @re_frag_id ] action* scope?
+// vpa_rule = @vpa_id "=" [
+//   re
+//   re_str
+//   @pseudo_frag_eof
+//   @re_frag_id
+// ] action* scope?
 static bool _parse_vpa_rule(ParseState* ps, TokenChunk* chunk, int32_t* p) {
   if (T(p).term_id != TOK_VPA_ID) {
     return false;
@@ -928,7 +990,10 @@ static bool _parse_vpa_rule(ParseState* ps, TokenChunk* chunk, int32_t* p) {
   return true;
 }
 
-// vpa_module_rule = [ @module_id "=" scope | @module_id "=" lit_scope ]
+// vpa_module_rule = [
+//   @module_id "=" scope
+//   @module_id "=" lit_scope
+// ]
 static bool _parse_vpa_module_rule(ParseState* ps, TokenChunk* chunk, int32_t* p) {
   if (T(p).term_id != TOK_MODULE_ID) {
     return false;
@@ -991,7 +1056,13 @@ static bool _validate_all_re_ir(ParseState* ps) {
   return true;
 }
 
-// vpa_line = [ ignore_toks | effect_spec | define_frag | vpa_rule | vpa_module_rule ]
+// vpa_line = [
+//   ignore_toks
+//   effect_spec
+//   define_frag
+//   vpa_rule
+//   vpa_module_rule
+// ]
 static bool _parse_vpa_line(ParseState* ps, TokenChunk* chunk, int32_t* p) {
 
   bool (*parsers[])(ParseState*, TokenChunk*, int32_t*) = {_parse_ignore_toks, _parse_effect_spec, _parse_define_frag,
@@ -1051,7 +1122,7 @@ static void _resolve_peg_str(ParseState* ps, Token* t, PegUnit* u) {
   XFREE(str);
 }
 
-// parse one of: @peg_id | @peg_tok_id | peg_str — returns true if matched
+// parse one of: @peg_id, @peg_tok_id, or peg_str — returns true if matched
 static bool _parse_peg_atom(ParseState* ps, TokenChunk* chunk, int32_t* p, PegUnit* u) {
   Token* t = &T(p);
   if (t->term_id == TOK_PEG_ID) {
@@ -1074,7 +1145,11 @@ static bool _parse_peg_atom(ParseState* ps, TokenChunk* chunk, int32_t* p, PegUn
 }
 
 // interlace = "<" interlace_rhs ">"
-// interlace_rhs = [ @peg_id | @peg_tok_id | peg_str ]
+// interlace_rhs = [
+//   @peg_id
+//   @peg_tok_id
+//   peg_str
+// ]
 static bool _parse_interlace(ParseState* ps, TokenChunk* chunk, int32_t* p, PegUnit* u) {
   if (!_eat(chunk, p, LIT_INTERLACE_BEGIN)) {
     return false;
@@ -1109,7 +1184,11 @@ static bool _parse_interlace(ParseState* ps, TokenChunk* chunk, int32_t* p, PegU
   return true;
 }
 
-// multiplier = [ "?" | "+" interlace? | "*" interlace? ]
+// multiplier = [
+//   "?"
+//   "+" interlace?
+//   "*" interlace?
+// ]
 static void _parse_multiplier(ParseState* ps, TokenChunk* chunk, int32_t* p, PegUnit* u) {
   if (_eat(chunk, p, LIT_QUESTION)) {
     u->multiplier = '?';
@@ -1133,7 +1212,12 @@ static void _take_branches(PegUnit* u, TokenChunk* child) {
   XFREE(parsed);
 }
 
-// peg_lookahead_unit = [ @peg_id | @peg_tok_id | peg_str | branches ]
+// peg_lookahead_unit = [
+//   @peg_id
+//   @peg_tok_id
+//   peg_str
+//   branches
+// ]
 static bool _parse_lookahead_unit(ParseState* ps, TokenChunk* chunk, int32_t* p, PegUnit* u) {
   if (_parse_peg_atom(ps, chunk, p, u)) {
     return true;
@@ -1148,7 +1232,14 @@ static bool _parse_lookahead_unit(ParseState* ps, TokenChunk* chunk, int32_t* p,
   return false;
 }
 
-// peg_unit = [ "&" la | "!" la | atom multiplier? | branches ]
+// peg_unit = [
+//   "&" peg_lookahead_unit
+//   "!" peg_lookahead_unit
+//   @peg_id multiplier?
+//   @peg_tok_id multiplier?
+//   peg_str multiplier?
+//   branches
+// ]
 static bool _parse_peg_unit(ParseState* ps, TokenChunk* chunk, int32_t* p, PegUnit* u, bool allow_branches) {
   if (_eat(chunk, p, LIT_AND)) {
     u->lookahead = '&';
@@ -1200,7 +1291,10 @@ static bool _parse_seq(ParseState* ps, TokenChunk* chunk, int32_t* p, PegUnit* s
   return true;
 }
 
-// branch_line = [ peg_simple_unit+ @tag_id? | @tag_id ]
+// branch_line = [
+//   peg_simple_unit+ @tag_id?
+//   @tag_id
+// ]
 static bool _parse_branch_line(ParseState* ps, TokenChunk* chunk, int32_t* p, PegUnit* br) {
   if (!br->children) {
     br->children = darray_new(sizeof(PegUnit), 0);

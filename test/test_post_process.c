@@ -510,6 +510,124 @@ TEST(test_undefined_call) {
 }
 
 // ============================================================================
+// pp_detect_left_recursions: orphan rule detection
+// ============================================================================
+
+TEST(test_orphan_rule) {
+  ParseState* ps = parse_state_new();
+  _init_symtabs(ps);
+  ps->peg_rules = darray_new(sizeof(PegRule), 0);
+  ps->vpa_scopes = darray_new(sizeof(VpaScope), 0);
+
+  // main = @tok
+  PegRule main_rule = {.global_id = symtab_intern(&ps->rule_names, "main"), .scope_id = -1, .body = {.kind = PEG_SEQ}};
+  main_rule.body.children = darray_new(sizeof(PegUnit), 0);
+  PegUnit tok = {.kind = PEG_TERM, .id = symtab_intern(&ps->tokens, "tok")};
+  darray_push(main_rule.body.children, tok);
+  darray_push(ps->peg_rules, main_rule);
+
+  // orphan = @tok (never called)
+  PegRule orphan = {.global_id = symtab_intern(&ps->rule_names, "orphan"), .scope_id = -1, .body = {.kind = PEG_SEQ}};
+  orphan.body.children = darray_new(sizeof(PegUnit), 0);
+  PegUnit tok2 = {.kind = PEG_TERM, .id = symtab_intern(&ps->tokens, "tok")};
+  darray_push(orphan.body.children, tok2);
+  darray_push(ps->peg_rules, orphan);
+
+  bool ok = pp_detect_left_recursions(ps);
+  assert(!ok);
+  assert(strstr(parse_get_error(ps), "orphan") != NULL);
+
+  parse_state_del(ps);
+}
+
+TEST(test_orphan_rule_scope_ok) {
+  ParseState* ps = parse_state_new();
+  _init_symtabs(ps);
+  ps->peg_rules = darray_new(sizeof(PegRule), 0);
+  ps->vpa_scopes = darray_new(sizeof(VpaScope), 0);
+
+  // main = @tok
+  PegRule main_rule = {.global_id = symtab_intern(&ps->rule_names, "main"), .scope_id = -1, .body = {.kind = PEG_SEQ}};
+  main_rule.body.children = darray_new(sizeof(PegUnit), 0);
+  PegUnit tok = {.kind = PEG_TERM, .id = symtab_intern(&ps->tokens, "tok")};
+  darray_push(main_rule.body.children, tok);
+  darray_push(ps->peg_rules, main_rule);
+
+  // str = @tok (not called by main, but matches VPA scope name)
+  PegRule str_rule = {.global_id = symtab_intern(&ps->rule_names, "str"), .scope_id = -1, .body = {.kind = PEG_SEQ}};
+  str_rule.body.children = darray_new(sizeof(PegUnit), 0);
+  PegUnit tok2 = {.kind = PEG_TERM, .id = symtab_intern(&ps->tokens, "tok")};
+  darray_push(str_rule.body.children, tok2);
+  darray_push(ps->peg_rules, str_rule);
+
+  // VPA scope "str" exists
+  int32_t str_scope_id = symtab_intern(&ps->scope_names, "str");
+  VpaUnit leader = _make_re_unit_hook('"', HOOK_ID_BEGIN);
+  VpaScope str_scope = _make_scoped("str", str_scope_id, leader);
+  VpaUnit end = _make_re_unit_hook('"', HOOK_ID_END);
+  darray_push(str_scope.children, end);
+  darray_push(ps->vpa_scopes, str_scope);
+
+  bool ok = pp_detect_left_recursions(ps);
+  assert(ok); // str is a VPA scope, not an orphan
+
+  parse_state_del(ps);
+}
+
+// ============================================================================
+// pp_validate_vpa_scopes: orphan scope detection
+// ============================================================================
+
+TEST(test_orphan_scope) {
+  ParseState* ps = parse_state_new();
+  _init_symtabs(ps);
+  ps->vpa_scopes = darray_new(sizeof(VpaScope), 0);
+  ps->effect_decls = darray_new(sizeof(EffectDecl), 0);
+
+  VpaScope main_s = _make_scope("main", 0, false);
+  darray_push(ps->vpa_scopes, main_s);
+
+  // str scope: has .begin/.end, but main doesn't call it
+  VpaUnit leader = _make_re_unit_hook('"', HOOK_ID_BEGIN);
+  VpaScope str_s = _make_scoped("str", 1, leader);
+  VpaUnit end = _make_re_unit_hook('"', HOOK_ID_END);
+  darray_push(str_s.children, end);
+  darray_push(ps->vpa_scopes, str_s);
+
+  bool ok = pp_validate_vpa_scopes(ps);
+  assert(!ok);
+  assert(strstr(parse_get_error(ps), "orphan") != NULL);
+  assert(strstr(parse_get_error(ps), "str") != NULL);
+
+  parse_state_del(ps);
+}
+
+TEST(test_orphan_scope_reachable) {
+  ParseState* ps = parse_state_new();
+  _init_symtabs(ps);
+  ps->vpa_scopes = darray_new(sizeof(VpaScope), 0);
+  ps->effect_decls = darray_new(sizeof(EffectDecl), 0);
+
+  // main calls str
+  VpaScope main_s = _make_scope("main", 0, false);
+  VpaUnit call_str = _make_call_unit(1);
+  darray_push(main_s.children, call_str);
+  darray_push(ps->vpa_scopes, main_s);
+
+  // str scope: reachable via main
+  VpaUnit leader = _make_re_unit_hook('"', HOOK_ID_BEGIN);
+  VpaScope str_s = _make_scoped("str", 1, leader);
+  VpaUnit end = _make_re_unit_hook('"', HOOK_ID_END);
+  darray_push(str_s.children, end);
+  darray_push(ps->vpa_scopes, str_s);
+
+  bool ok = pp_validate_vpa_scopes(ps);
+  assert(ok);
+
+  parse_state_del(ps);
+}
+
+// ============================================================================
 // pp_inline_macros: literal naming
 // ============================================================================
 
@@ -1195,6 +1313,10 @@ int main(void) {
   RUN(test_interlace_rhs_not_nullable);
   RUN(test_interlace_indirect_nullable);
   RUN(test_undefined_call);
+  RUN(test_orphan_rule);
+  RUN(test_orphan_rule_scope_ok);
+  RUN(test_orphan_scope);
+  RUN(test_orphan_scope_reachable);
   RUN(test_validate_vpa_missing_main);
   RUN(test_validate_vpa_duplicate_scope);
   RUN(test_validate_vpa_leading_re_empty);

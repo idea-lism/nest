@@ -21,6 +21,8 @@ Command line tool that generates
     - if not given, default to `"nest"`
     - prefix must match `[a-zA-Z]\w*`, with a limit of 64 chars.
     - to prevent conflicts: if prefix be any of `parse`, `ustr`, `load`, `lex`, report "prefix name preserved" and exit instantly.
+  - `s <max_steps>`, or `--max-steps=<max_steps>`.
+    - max steps for graph coloring solver, default is 10000
 
 ### lex
 

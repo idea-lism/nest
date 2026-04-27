@@ -401,7 +401,7 @@ static bool _are_exclusive(ScopedRule* a, ScopedRule* b) {
   return false;
 }
 
-static void _alloc_slot_bits(ScopeClosure* cl, FILE* log) {
+static void _alloc_slot_bits(ScopeClosure* cl, int32_t max_steps, FILE* log) {
   size_t n = darray_size(cl->scoped_rules);
   if (n == 0) {
     cl->slots_size = 0;
@@ -417,7 +417,7 @@ static void _alloc_slot_bits(ScopeClosure* cl, FILE* log) {
   }
   int32_t* edges = graph_edges(g);
   int32_t edge_size = graph_n_edges(g);
-  ColoringResult* cr = coloring_solve(n, edges, edge_size, 10000, 42, true, log);
+  ColoringResult* cr = coloring_solve(n, edges, edge_size, max_steps, 42, true, log);
   graph_del(g);
   assert(cr);
   cl->coloring_n_vertices = (int32_t)n;
@@ -611,10 +611,10 @@ static void _alloc_shared_tag_bits(ScopeClosure* cl) {
 // Public API
 // ============================================================
 
-void peg_alloc_scope(ScopeClosure* closure, MemoizeMode mode, FILE* log) {
+void peg_alloc_scope(ScopeClosure* closure, MemoizeMode mode, int32_t max_steps, FILE* log) {
   _analyze_rules(closure);
   if (mode == MEMOIZE_SHARED) {
-    _alloc_slot_bits(closure, log);
+    _alloc_slot_bits(closure, max_steps, log);
     _alloc_shared_tag_bits(closure);
   } else {
     _alloc_naive_slots(closure);

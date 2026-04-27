@@ -809,6 +809,45 @@ TEST(test_re_neg_charclass_ir_order) {
   parse_state_del(ps);
 }
 
+// --- Shorthand classes inside character classes ---
+
+static const char CC_SHORTHAND_NEST[] = "[[vpa]]\n"
+                                        "%ignore @space\n"
+                                        "main = {\n"
+                                        "  /[\\d_]+/ @num\n"
+                                        "  /[\\w]+/ @word\n"
+                                        "  /[\\s]+/ @space\n"
+                                        "  /[\\h]+/ @hex\n"
+                                        "}\n"
+                                        "[[peg]]\n"
+                                        "main = @num* @word* @hex*\n";
+
+TEST(test_re_shorthand_in_charclass) {
+  ParseState* ps = parse_state_new();
+  bool ok = _parse(ps, CC_SHORTHAND_NEST);
+  if (!ok) {
+    fprintf(stderr, "error: %s\n", parse_get_error(ps));
+  }
+  assert(ok);
+  // verify the \d charclass emits GROUP_D inside the range
+  ReIr ir = _find_re_with_op(ps, "main", RE_IR_APPEND_GROUP_D);
+  assert(ir != NULL);
+  bool found_begin = false, found_group = false, found_end = false;
+  for (size_t i = 0; i < darray_size(ir); i++) {
+    if (ir[i].kind == RE_IR_RANGE_BEGIN) {
+      found_begin = true;
+    }
+    if (ir[i].kind == RE_IR_APPEND_GROUP_D && found_begin) {
+      found_group = true;
+    }
+    if (ir[i].kind == RE_IR_RANGE_END && found_group) {
+      found_end = true;
+    }
+  }
+  assert(found_begin && found_group && found_end);
+  parse_state_del(ps);
+}
+
 static const char DOT_NEST[] = "[[vpa]]\n"
                                "main = {\n"
                                "  /./ @any\n"
@@ -925,6 +964,7 @@ int main(void) {
 
   // re_ir ordering
   RUN(test_re_neg_charclass_ir_order);
+  RUN(test_re_shorthand_in_charclass);
   RUN(test_re_dot_ir_order);
 
   RUN(test_bootstrap_structure);

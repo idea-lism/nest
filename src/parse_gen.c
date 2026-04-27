@@ -160,6 +160,10 @@ static ReLex* _build_charclass_scope(void) {
   re_lex_add(l, "/", __LINE__, 15, ACTION_UNPARSE_END);
   re_lex_add(l, "\\]", __LINE__, 15, ACTION_END);
   re_lex_add(l, "-", __LINE__, 15, TOK_RANGE_SEP);
+  re_lex_add(l, "\\\\s", __LINE__, 15, TOK_RE_SPACE_CLASS);
+  re_lex_add(l, "\\\\w", __LINE__, 15, TOK_RE_WORD_CLASS);
+  re_lex_add(l, "\\\\d", __LINE__, 15, TOK_RE_DIGIT_CLASS);
+  re_lex_add(l, "\\\\h", __LINE__, 15, TOK_RE_HEX_CLASS);
   _build_chars(l);
 
   return l;

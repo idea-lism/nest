@@ -880,7 +880,8 @@ PegGenInput peg_analyze(PegAnalyzeInput* input, int memoize_mode, const char* pr
     if (input->verbose_level) {
       fprintf(stderr, "  [peg] analyzing scope '%s'\n", closures[c].scope_name);
     }
-    peg_alloc_scope(&closures[c], (MemoizeMode)memoize_mode, input->verbose_level > 1 ? stderr : NULL);
+    peg_alloc_scope(&closures[c], (MemoizeMode)memoize_mode, input->max_steps > 0 ? input->max_steps : 10000,
+                    input->verbose_level > 1 ? stderr : NULL);
     if (input->verbose_level > 1) {
       ScopeClosure* cl = &closures[c];
       int32_t rule_size = (int32_t)darray_size(cl->scoped_rules);

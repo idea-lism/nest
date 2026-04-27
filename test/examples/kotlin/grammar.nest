@@ -274,6 +274,7 @@ str_interp = /\$[{]/ .begin @str_expr_open {
   block
   /[}]/ @str_expr_close .end
   /,/ @comma
+  /;/ @semi
   /:/ @colon
   /\./ @dot
   /\?/ @quest
@@ -348,6 +349,7 @@ ml_str_interp = /\$[{]/ .begin @str_expr_open {
   block
   /[}]/ @str_expr_close .end
   /,/ @comma
+  /;/ @semi
   /:/ @colon
   /\./ @dot
   /\?/ @quest
@@ -426,13 +428,7 @@ delegation_spec = [
 class_body = block
 block = @lbrace statements @rbrace
 
-# Class members
-class_member = [
-  companion_obj
-  secondary_constructor
-  anon_init
-  declaration
-]
+# Class members (parsed as statements inside class bodies)
 companion_obj = modifier* "companion" "object" simple_id? delegation? class_body?
 secondary_constructor = modifier* "constructor" fun_value_params delegation_call? block?
 delegation_call = @colon [
@@ -476,9 +472,7 @@ setter_param = modifier* simple_id type_annotation?
 # Object
 object_decl = modifier* "object" simple_id delegation? class_body?
 
-# Enum
-enum_body = block
-enum_entries = enum_entry+<@comma> @comma?
+# Enum (enum_entry parsed as statement inside enum bodies)
 enum_entry = modifier* simple_id value_args? class_body?
 
 # Types
@@ -551,6 +545,11 @@ statements = terminated_stmt*
 terminated_stmt = statement semi*
 statement = [
   declaration
+  companion_obj
+  secondary_constructor
+  anon_init
+  enum_entry
+  when_entry
   assignment
   loop_stmt
   expression
@@ -693,11 +692,6 @@ value_args = @lparen value_arg*<@comma> @rparen
 value_arg = annotation? named_arg? @star? expression
 named_arg = simple_id @assign
 lambda_lit = block
-lambda_params = lambda_param+<@comma>
-lambda_param = [
-  variable_decl
-  @lparen variable_decl+<@comma> @rparen type_annotation?
-]
 
 # Primary expressions
 primary_expr = [
