@@ -51,7 +51,7 @@ module BenchmarkCommon
       input_ext: ".kt",
       compare_input: File.join(INPUTS_COMPARE_DIR, "kotlin.kt"),
       internal_dir: File.join(INPUTS_INTERNAL_DIR, "kotlin"),
-      nest_grammar: File.join(GRAMMARS_DIR, "kotlin.nest"),
+      nest_grammar: File.join(PROJECT_ROOT, "test", "examples", "kotlin", "grammar.nest"),
       packcc_grammar: File.join(GRAMMARS_DIR, "kotlin.peg"),
       tree_sitter_dir: File.join(VENDOR_DIR, "tree-sitter-kotlin"),
       tree_sitter_lang: "kotlin"
