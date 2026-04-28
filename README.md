@@ -104,6 +104,23 @@ cd examples/simple_nest
 Both build scripts default to the debug build of `nest`. Override with
 `NEST=path/to/nest`, `CC`, or `CFLAGS` environment variables.
 
+## Known issues
+
+### Clang crash at `-O2` on generated `.ll`
+
+When compiling a `nest c`–generated `.ll` at `-O2` (or any level that runs GVN
+with memory-dependency analysis), `clang`/LLVM can crash inside GVN on large
+PEG grammars. Disable the GVN memory-dependency analysis to work around it:
+
+```sh
+clang -O2 -mllvm --enable-gvn-memdep=false -c grammar.ll -o grammar.o
+```
+
+This flag is only needed when compiling the generated `.ll` — the runner `.c`
+file can still be compiled with plain `-O2`. The project's
+`scripts/test_examples` and `benchmark/internal/run_internal.rb` already pass
+this flag.
+
 ## Benchmarks
 
 Benchmarks compare nest against [PackCC](https://github.com/arithy/packcc) and [tree-sitter](https://tree-sitter.github.io/) across calc, json, and kotlin grammars.

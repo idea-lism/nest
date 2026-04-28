@@ -4,7 +4,9 @@ set -euo pipefail
 MODE="${1:-debug}"
 NEST="build/${MODE}/nest"
 CC="${CC:-clang}"
-CFLAGS="${CFLAGS:--std=c23 -O0}"
+# Note: -mllvm --enable-gvn-memdep=false works around a clang crash on large
+# PEG grammars at -O2. See README.md "Known issues".
+CFLAGS="${CFLAGS:--std=c23 -O2 -mllvm --enable-gvn-memdep=false}"
 TMPDIR=$(mktemp -d)
 trap 'rm -rf "$TMPDIR"' EXIT
 

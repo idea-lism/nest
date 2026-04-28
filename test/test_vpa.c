@@ -381,8 +381,8 @@ TEST(test_vpa_gen_single_scope) {
 
   char* ir_buf = _read_file(BUILD_DIR "/test_vpa_gen_scope.ll");
   assert(strstr(ir_buf, "define {i64, i64} @lex_main") != NULL);
-  assert(strstr(ir_buf, "@vpa_dispatch") != NULL);
-  assert(strstr(ir_buf, "@vpa_lex") != NULL);
+  assert(strstr(ir_buf, "define i64 @vpa_dispatch") != NULL);
+  assert(strstr(ir_buf, "define i64 @vpa_lex") != NULL);
   free(ir_buf);
 
   char* h_buf = _read_file(BUILD_DIR "/test_vpa_gen_scope.h");
@@ -968,7 +968,7 @@ TEST(test_vpa_scope_switch_exec) {
               "struct { int64_t a; int64_t b; } parse_main(void* tt, void* sp) { (void)tt; (void)sp; return "
               "(typeof(parse_main(0,0))){0,0}; }\n"
               "struct { int64_t a; int64_t b; } parse_block(void* tt, void* sp) { (void)tt; (void)sp; return "
-              "(typeof(parse_block(0,0))){0,0}; }\n"
+              "(typeof(parse_block(0,0))){4,0}; }\n"
               "\n"
               "int main(void) {\n"
               "  const char* input = \"a{bb}a\";\n"

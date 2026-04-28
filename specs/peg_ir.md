@@ -20,7 +20,7 @@ typedef struct {
   // shared allocas
   IrVal col; // current %col
   IrVal stack_ptr; // register storing the input stack_ptr
-  IrVal parse_result; // PegRef %parse_result
+  IrVal parse_result; // i64 %parse_result = parsed tokens
   IrVal tag_bits; // %tag_bits for successful match to set (if tag_bit_count > 64: one IrVal per bucket)
   // and other context vars if needed in implementation
 
@@ -302,6 +302,10 @@ done_bb:
  - Return-site in _emit_call → corresponding decrements
 
  At every fail_label branch and done_bb branch, assert(ctx->stack_depth == entry_depth). This catches imbalanced codegen at compile time (when nest runs), not at parse time.
+
+# Caveats
+
+When compiling generated `.ll`, should use `--enable-gvn-memdep=false` to prevent clang from crashing itself when compiling a huge grammar with `-O2`. If clang is using the new MemorySSA, it may be OK though.
 
 # Acceptance criteria
 

@@ -187,6 +187,7 @@ static void _gen_dispatch(VpaGenInput* input, IrWriter* w, Actions actions) {
   irwriter_declare(w, "void", "tt_add", "i8*, i32, i32, i32, i32");
   irwriter_declare(w, "i8*", "tt_push_assoc", "i8*, i32");
   irwriter_declare(w, "i8*", "tt_pop", "i8*, i32");
+  irwriter_declare(w, "i64", "tt_current_size", "ptr");
 
   // pre-declare PEG parse functions for scopes with .end
   for (int32_t i = 1; i < n_actions; i++) {
@@ -221,7 +222,7 @@ static void _gen_dispatch(VpaGenInput* input, IrWriter* w, Actions actions) {
 
   irwriter_define_startf(
       w, "vpa_dispatch",
-      "void @vpa_dispatch(i64 %%action_id_i64, i8* %%tt, i64 %%cp_start_i64, i64 %%cp_size_i64, i8* %%ctx, "
+      "i64 @vpa_dispatch(i64 %%action_id_i64, i8* %%tt, i64 %%cp_start_i64, i64 %%cp_size_i64, i8* %%ctx, "
       "ptr %%stack_ptr)");
   irwriter_bb(w);
   irwriter_dbg(w, 0, 0);
@@ -230,7 +231,7 @@ static void _gen_dispatch(VpaGenInput* input, IrWriter* w, Actions actions) {
   irwriter_rawf(w, "  %%cp_size = trunc i64 %%cp_size_i64 to i32\n");
 
   if (n_actions <= 1) {
-    irwriter_ret_void(w);
+    irwriter_ret(w, "i64", irwriter_imm_int(w, -1));
     irwriter_define_end(w);
     return;
   }
@@ -265,13 +266,32 @@ static void _gen_dispatch(VpaGenInput* input, IrWriter* w, Actions actions) {
           // push scope onto VPA stack
           irwriter_call_retf(w, "i8*", "tt_push_assoc", "i8* %%tt, i32 %d", actions[i].begin_scope_id);
         } else if (hook_id == HOOK_ID_END) {
-          // invoke PEG parser before popping scope
+          // invoke PEG parser before popping scope; failure returns the offending token column
           if (actions[i].end_scope_name) {
             int fn_len = snprintf(NULL, 0, "parse_%s", actions[i].end_scope_name);
             char* fn_name = XMALLOC((size_t)fn_len + 1);
             snprintf(fn_name, (size_t)fn_len + 1, "parse_%s", actions[i].end_scope_name);
-            irwriter_call_retf(w, "{i64, i64}", fn_name, "ptr %%tt, ptr %%stack_ptr");
+            IrVal parse_ret = irwriter_call_retf(w, "{i64, i64}", fn_name, "ptr %%tt, ptr %%stack_ptr");
             XFREE(fn_name);
+            IrVal parsed_size = irwriter_extractvalue(w, "{i64, i64}", parse_ret, 0);
+            IrVal chunk_size = irwriter_call_retf(w, "i64", "tt_current_size", "ptr %%tt");
+            IrVal parsed_ok = irwriter_icmp(w, "eq", "i64", parsed_size, chunk_size);
+            IrLabel parse_ok_bb = irwriter_label(w);
+            IrLabel parse_fail_bb = irwriter_label(w);
+            irwriter_br_cond(w, parsed_ok, parse_ok_bb, parse_fail_bb);
+            irwriter_bb_at(w, parse_fail_bb);
+            IrVal cp_end_fail =
+                irwriter_binop(w, "add", "i32", irwriter_imm(w, "%cp_start"), irwriter_imm(w, "%cp_size"));
+            irwriter_call_retf(w, "i8*", "tt_pop", "i8* %%tt, i32 %%r%d", (int)cp_end_fail);
+            IrVal is_negative = irwriter_icmp(w, "slt", "i64", parsed_size, irwriter_imm_int(w, 0));
+            IrLabel neg_fail_bb = irwriter_label(w);
+            IrLabel partial_fail_bb = irwriter_label(w);
+            irwriter_br_cond(w, is_negative, neg_fail_bb, partial_fail_bb);
+            irwriter_bb_at(w, neg_fail_bb);
+            irwriter_ret(w, "i64", irwriter_imm_int(w, 0));
+            irwriter_bb_at(w, partial_fail_bb);
+            irwriter_ret(w, "i64", parsed_size);
+            irwriter_bb_at(w, parse_ok_bb);
           }
           // pop scope + add scope-ref to parent
           IrVal cp_end = irwriter_binop(w, "add", "i32", irwriter_imm(w, "%cp_start"), irwriter_imm(w, "%cp_size"));
@@ -328,11 +348,11 @@ static void _gen_dispatch(VpaGenInput* input, IrWriter* w, Actions actions) {
         }
       }
     }
-    irwriter_ret_void(w);
+    irwriter_ret(w, "i64", irwriter_imm_int(w, -1));
   }
 
   irwriter_bb_at(w, default_bb);
-  irwriter_ret_void(w);
+  irwriter_ret(w, "i64", irwriter_imm_int(w, -1));
 
   irwriter_define_end(w);
   XFREE(case_bbs);
@@ -353,7 +373,7 @@ static void _gen_vpa_lex(VpaGenInput* input, IrWriter* w, const char* prefix) {
   irwriter_declare(w, "void", "tt_mark_newline", "i8*, i32");
 
   irwriter_define_startf(w, "vpa_lex",
-                         "void @vpa_lex(i8* %%src, i64 %%len_i64, i8* %%tt, i8* %%errors, i8* %%ctx, "
+                         "i64 @vpa_lex(i8* %%src, i64 %%len_i64, i8* %%tt, i8* %%errors, i8* %%ctx, "
                          "ptr %%stack_ptr)");
 
   irwriter_bb(w);
@@ -568,9 +588,14 @@ static void _gen_vpa_lex(VpaGenInput* input, IrWriter* w, const char* prefix) {
       IrVal eof_aid = irwriter_imm_int(w, input->scopes[si].eof_action);
       IrVal ea64 = irwriter_sext(w, "i32", eof_aid, "i64");
       IrVal ets64 = irwriter_sext(w, "i32", eof_tok_start, "i64");
-      irwriter_call_void_fmtf(w, "vpa_dispatch", "i64 %%r%d, i8* %%tt, i64 %%r%d, i64 0, i8* %%ctx, ptr %%stack_ptr",
-                              (int)ea64, (int)ets64);
-      irwriter_br(w, done_bb);
+      IrVal eof_dispatch_result = irwriter_call_retf(
+          w, "i64", "vpa_dispatch", "i64 %%r%d, i8* %%tt, i64 %%r%d, i64 0, i8* %%ctx, ptr %%stack_ptr", (int)ea64,
+          (int)ets64);
+      IrVal eof_failed = irwriter_icmp(w, "sge", "i64", eof_dispatch_result, irwriter_imm_int(w, 0));
+      IrLabel eof_fail_bb = irwriter_label(w);
+      irwriter_br_cond(w, eof_failed, eof_fail_bb, done_bb);
+      irwriter_bb_at(w, eof_fail_bb);
+      irwriter_ret(w, "i64", eof_dispatch_result);
     }
     XFREE(eof_case_bbs);
   } else {
@@ -582,8 +607,16 @@ static void _gen_vpa_lex(VpaGenInput* input, IrWriter* w, const char* prefix) {
   IrVal la64 = irwriter_sext(w, "i32", last_action, "i64");
   IrVal ts64 = irwriter_sext(w, "i32", tok_start, "i64");
   IrVal sz64 = irwriter_sext(w, "i32", tok_size, "i64");
-  irwriter_call_void_fmtf(w, "vpa_dispatch", "i64 %%r%d, i8* %%tt, i64 %%r%d, i64 %%r%d, i8* %%ctx, ptr %%stack_ptr",
-                          (int)la64, (int)ts64, (int)sz64);
+  IrVal dispatch_result = irwriter_call_retf(w, "i64", "vpa_dispatch",
+                                             "i64 %%r%d, i8* %%tt, i64 %%r%d, i64 %%r%d, i8* %%ctx, ptr %%stack_ptr",
+                                             (int)la64, (int)ts64, (int)sz64);
+  IrVal dispatch_failed = irwriter_icmp(w, "sge", "i64", dispatch_result, irwriter_imm_int(w, 0));
+  IrLabel dispatch_fail_bb = irwriter_label(w);
+  IrLabel dispatch_ok_bb = irwriter_label(w);
+  irwriter_br_cond(w, dispatch_failed, dispatch_fail_bb, dispatch_ok_bb);
+  irwriter_bb_at(w, dispatch_fail_bb);
+  irwriter_ret(w, "i64", dispatch_result);
+  irwriter_bb_at(w, dispatch_ok_bb);
 
   irwriter_store(w, "i32", match_off, cp_off_ptr);
   irwriter_store(w, "i32", match_off, token_start_ptr);
@@ -598,7 +631,7 @@ static void _gen_vpa_lex(VpaGenInput* input, IrWriter* w, const char* prefix) {
 
   // --- done ---
   irwriter_bb_at(w, done_bb);
-  irwriter_ret_void(w);
+  irwriter_ret(w, "i64", irwriter_imm_int(w, -1));
 
   irwriter_define_end(w);
   XFREE(read_cp_name);
@@ -696,11 +729,16 @@ static void _gen_parse_entry(VpaGenInput* input, IrWriter* w, const char* prefix
 #else
   IrVal stack_buf = irwriter_call_retf(w, "ptr", "malloc", "i64 1048576");
 #endif
-  irwriter_call_void_fmtf(w, "vpa_lex", "ptr %%r%d, i64 %%r%d, ptr %%r%d, ptr null, ptr %%r%d, ptr %%r%d",
-                          (int)iter_ptr, (int)len64, (int)tt, (int)ctx_alloca, (int)stack_buf);
+  IrVal lex_error_col =
+      irwriter_call_retf(w, "i64", "vpa_lex", "ptr %%r%d, i64 %%r%d, ptr %%r%d, ptr null, ptr %%r%d, ptr %%r%d",
+                         (int)iter_ptr, (int)len64, (int)tt, (int)ctx_alloca, (int)stack_buf);
   // vpa_lex sets root chunk scope_id; now call parse_main
   IrVal parse_ret = irwriter_call_retf(w, "{i64, i64}", "parse_main", "ptr %%r%d, ptr %%r%d", (int)tt, (int)stack_buf);
-  IrVal parse_end_col = irwriter_extractvalue(w, "{i64, i64}", parse_ret, 0);
+  IrVal main_parse_end_col = irwriter_extractvalue(w, "{i64, i64}", parse_ret, 0);
+  IrVal has_nested_error = irwriter_icmp(w, "sge", "i64", lex_error_col, irwriter_imm_int(w, 0));
+  irwriter_rawf(w, "  %%r%d = select i1 %%r%d, i64 %%r%d, i64 %%r%d\n", irwriter_next_reg(w), (int)has_nested_error,
+                (int)lex_error_col, (int)main_parse_end_col);
+  IrVal parse_end_col = (IrVal)(irwriter_next_reg(w) - 1);
   IrVal tc = irwriter_call_retf(w, "ptr", "tt_current", "ptr %%r%d", (int)tt);
 
   // Store results via out-params

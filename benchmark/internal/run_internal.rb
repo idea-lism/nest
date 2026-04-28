@@ -33,10 +33,11 @@ def build_nest_runner(grammar, prefix, memoize, opt, build_dir)
   rendered = ERB.new(File.read(runner_erb), trim_mode: "-").result_with_hash(prefix: prefix)
   File.write(runner_c, rendered)
 
-  # Compile: .ll at -O0 (avoids clang optimization bug with large PEG grammars),
-  # runner .c at the requested opt level, then link.
+  # Compile: .ll and runner .c at the requested opt level, then link.
+  # -mllvm --enable-gvn-memdep=false avoids a clang crash at -O2 on large PEG
+  # grammars (see README.md "Known issues").
   runner_bin = File.join(build_dir, "runner")
-  sh("#{CC} -O0 -std=c23 -c #{prefix}.ll -o #{prefix}.o", chdir: build_dir)
+  sh("#{CC} #{opt} -std=c23 -mllvm --enable-gvn-memdep=false -c #{prefix}.ll -o #{prefix}.o", chdir: build_dir)
   sh("#{CC} #{opt} -std=c23 runner.c #{prefix}.o -o runner", chdir: build_dir)
   runner_bin
 end

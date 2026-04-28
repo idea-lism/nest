@@ -210,6 +210,126 @@ TEST(test_tag_bits_allocated) {
 // Tests: nullable / first_set / last_set analysis
 // ============================================================
 
+TEST(test_plus_interlace_call_site_order) {
+  PegAnalyzeInput input = {0};
+  symtab_init(&input.tokens, 1);
+  symtab_intern(&input.tokens, "tok_a");
+  symtab_intern(&input.tokens, "tok_sep");
+
+  symtab_init(&input.scope_names, 0);
+  symtab_intern(&input.scope_names, "main");
+
+  symtab_init(&input.rule_names, 0);
+  symtab_intern(&input.rule_names, "main");
+  symtab_intern(&input.rule_names, "lhs");
+  symtab_intern(&input.rule_names, "rhs");
+
+  input.rules = darray_new(sizeof(PegRule), 0);
+
+  PegUnit lhs_term = {.kind = PEG_TERM, .id = 1};
+  PegUnit lhs_seq = {.kind = PEG_SEQ};
+  lhs_seq.children = darray_new(sizeof(PegUnit), 0);
+  darray_push(lhs_seq.children, lhs_term);
+  PegRule lhs_rule = {.global_id = 1, .scope_id = -1, .body = lhs_seq};
+  darray_push(input.rules, lhs_rule);
+
+  PegUnit rhs_term = {.kind = PEG_TERM, .id = 2};
+  PegUnit rhs_seq = {.kind = PEG_SEQ};
+  rhs_seq.children = darray_new(sizeof(PegUnit), 0);
+  darray_push(rhs_seq.children, rhs_term);
+  PegRule rhs_rule = {.global_id = 2, .scope_id = -1, .body = rhs_seq};
+  darray_push(input.rules, rhs_rule);
+
+  PegUnit plus = {.kind = PEG_CALL, .id = 1, .multiplier = '+', .interlace_rhs_kind = PEG_CALL, .interlace_rhs_id = 2};
+  PegUnit main_seq = {.kind = PEG_SEQ};
+  main_seq.children = darray_new(sizeof(PegUnit), 0);
+  darray_push(main_seq.children, plus);
+  PegRule main_rule = {.global_id = 0, .scope_id = 0, .body = main_seq};
+  darray_push(input.rules, main_rule);
+
+  PegGenInput result = peg_analyze(&input, MEMOIZE_NAIVE, "plus_interlace");
+  ScopeClosure* cl = &result.scope_closures[0];
+
+  int32_t lhs_id = symtab_find(&cl->scoped_rule_names, "main$lhs") - cl->scoped_rule_names.start_num;
+  int32_t rhs_id = symtab_find(&cl->scoped_rule_names, "main$rhs") - cl->scoped_rule_names.start_num;
+  assert(lhs_id >= 0);
+  assert(rhs_id >= 0);
+
+  CallSite* lhs_sites = cl->scoped_rules[lhs_id].call_sites;
+  CallSite* rhs_sites = cl->scoped_rules[rhs_id].call_sites;
+  assert(darray_size(lhs_sites) == 2);
+  assert(darray_size(rhs_sites) == 1);
+
+  int32_t caller_id = lhs_sites[0].caller_id;
+  assert(caller_id >= 0);
+  assert(lhs_sites[0].caller_id == caller_id && lhs_sites[0].site == 0);
+  assert(rhs_sites[0].caller_id == caller_id && rhs_sites[0].site == 1);
+  assert(lhs_sites[1].caller_id == caller_id && lhs_sites[1].site == 2);
+
+  peg_analyze_free(&result);
+  _free_input(&input);
+}
+
+TEST(test_star_interlace_call_site_order) {
+  PegAnalyzeInput input = {0};
+  symtab_init(&input.tokens, 1);
+  symtab_intern(&input.tokens, "tok_a");
+  symtab_intern(&input.tokens, "tok_sep");
+
+  symtab_init(&input.scope_names, 0);
+  symtab_intern(&input.scope_names, "main");
+
+  symtab_init(&input.rule_names, 0);
+  symtab_intern(&input.rule_names, "main");
+  symtab_intern(&input.rule_names, "lhs");
+  symtab_intern(&input.rule_names, "rhs");
+
+  input.rules = darray_new(sizeof(PegRule), 0);
+
+  PegUnit lhs_term = {.kind = PEG_TERM, .id = 1};
+  PegUnit lhs_seq = {.kind = PEG_SEQ};
+  lhs_seq.children = darray_new(sizeof(PegUnit), 0);
+  darray_push(lhs_seq.children, lhs_term);
+  PegRule lhs_rule = {.global_id = 1, .scope_id = -1, .body = lhs_seq};
+  darray_push(input.rules, lhs_rule);
+
+  PegUnit rhs_term = {.kind = PEG_TERM, .id = 2};
+  PegUnit rhs_seq = {.kind = PEG_SEQ};
+  rhs_seq.children = darray_new(sizeof(PegUnit), 0);
+  darray_push(rhs_seq.children, rhs_term);
+  PegRule rhs_rule = {.global_id = 2, .scope_id = -1, .body = rhs_seq};
+  darray_push(input.rules, rhs_rule);
+
+  PegUnit star = {.kind = PEG_CALL, .id = 1, .multiplier = '*', .interlace_rhs_kind = PEG_CALL, .interlace_rhs_id = 2};
+  PegUnit main_seq = {.kind = PEG_SEQ};
+  main_seq.children = darray_new(sizeof(PegUnit), 0);
+  darray_push(main_seq.children, star);
+  PegRule main_rule = {.global_id = 0, .scope_id = 0, .body = main_seq};
+  darray_push(input.rules, main_rule);
+
+  PegGenInput result = peg_analyze(&input, MEMOIZE_NAIVE, "star_interlace");
+  ScopeClosure* cl = &result.scope_closures[0];
+
+  int32_t lhs_id = symtab_find(&cl->scoped_rule_names, "main$lhs") - cl->scoped_rule_names.start_num;
+  int32_t rhs_id = symtab_find(&cl->scoped_rule_names, "main$rhs") - cl->scoped_rule_names.start_num;
+  assert(lhs_id >= 0);
+  assert(rhs_id >= 0);
+
+  CallSite* lhs_sites = cl->scoped_rules[lhs_id].call_sites;
+  CallSite* rhs_sites = cl->scoped_rules[rhs_id].call_sites;
+  assert(darray_size(lhs_sites) == 2);
+  assert(darray_size(rhs_sites) == 1);
+
+  int32_t caller_id = lhs_sites[0].caller_id;
+  assert(caller_id >= 0);
+  assert(lhs_sites[0].caller_id == caller_id && lhs_sites[0].site == 0);
+  assert(rhs_sites[0].caller_id == caller_id && rhs_sites[0].site == 1);
+  assert(lhs_sites[1].caller_id == caller_id && lhs_sites[1].site == 2);
+
+  peg_analyze_free(&result);
+  _free_input(&input);
+}
+
 TEST(test_nullable_analysis) {
   PegAnalyzeInput input = {0};
   _build_json_input(&input);
@@ -962,6 +1082,8 @@ int main(void) {
   RUN(test_scoped_rules_breakdown);
   RUN(test_branches_have_tags);
   RUN(test_tag_bits_allocated);
+  RUN(test_plus_interlace_call_site_order);
+  RUN(test_star_interlace_call_site_order);
   RUN(test_nullable_analysis);
   RUN(test_first_set);
   RUN(test_naive_slots);

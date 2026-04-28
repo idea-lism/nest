@@ -787,20 +787,21 @@ static void _walk_call_sites(ScopeClosure* cl, int32_t caller_id, int32_t* site_
     break;
   case SCOPED_UNIT_STAR:
     // star without interlace: lhs called once (loop)
-    // star with interlace: lhs called twice (first elem + loop), rhs once (loop)
+    // star with interlace: emitted order is lhs(first), rhs(loop), lhs(loop)
     _walk_call_sites(cl, caller_id, site_counter, su->as.interlace.lhs);
     if (su->as.interlace.rhs) {
-      _walk_call_sites(cl, caller_id, site_counter, su->as.interlace.lhs);
       _walk_call_sites(cl, caller_id, site_counter, su->as.interlace.rhs);
+      _walk_call_sites(cl, caller_id, site_counter, su->as.interlace.lhs);
     }
     break;
   case SCOPED_UNIT_PLUS:
-    // plus: lhs called twice (first elem + loop), rhs once if interlaced
-    _walk_call_sites(cl, caller_id, site_counter, su->as.interlace.lhs);
+    // plus without interlace: lhs called twice (first elem + loop)
+    // plus with interlace: emitted order is lhs(first), rhs(loop), lhs(loop)
     _walk_call_sites(cl, caller_id, site_counter, su->as.interlace.lhs);
     if (su->as.interlace.rhs) {
       _walk_call_sites(cl, caller_id, site_counter, su->as.interlace.rhs);
     }
+    _walk_call_sites(cl, caller_id, site_counter, su->as.interlace.lhs);
     break;
   case SCOPED_UNIT_TERM:
     break;
