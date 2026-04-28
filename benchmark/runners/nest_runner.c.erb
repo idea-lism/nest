@@ -8,6 +8,9 @@
 #include <stdlib.h>
 #include <string.h>
 #include <time.h>
+#include <pthread.h>
+
+#define STACK_SIZE (128 * 1024 * 1024) // 128MB stack for deep PEG recursion with -O2 inlining
 
 static double now_sec(void) {
     struct timespec ts;
@@ -25,22 +28,23 @@ static int cmp_double(const void* a, const void* b) {
     return (da > db) - (da < db);
 }
 
-int main(int argc, char** argv) {
-    if (argc < 3) {
-        fprintf(stderr, "usage: %s <input_file> <iterations>\n", argv[0]);
-        return 1;
-    }
+typedef struct {
+    const char* input_path;
+    int iterations;
+    int result;
+} RunnerArgs;
 
-    const char* input_path = argv[1];
-    int iterations = atoi(argv[2]);
-    if (iterations < 1) iterations = 1;
+static void* runner_thread(void* arg) {
+    RunnerArgs* args = (RunnerArgs*)arg;
+    const char* input_path = args->input_path;
+    int iterations = args->iterations;
 
     // Read input file
     FILE* f = fopen(input_path, "rb");
-    if (!f) { perror(input_path); return 1; }
+    if (!f) { perror(input_path); args->result = 1; return NULL; }
     char* src = ustr_from_file(f);
     fclose(f);
-    if (!src) { fprintf(stderr, "failed to read %s\n", input_path); return 1; }
+    if (!src) { fprintf(stderr, "failed to read %s\n", input_path); args->result = 1; return NULL; }
     int32_t file_size = ustr_bytesize(src);
 
     // Warm up: 3 iterations
@@ -85,5 +89,25 @@ int main(int argc, char** argv) {
 
     free(times);
     ustr_del(src);
-    return 0;
+    args->result = 0;
+    return NULL;
+}
+
+int main(int argc, char** argv) {
+    if (argc < 3) {
+        fprintf(stderr, "usage: %s <input_file> <iterations>\n", argv[0]);
+        return 1;
+    }
+
+    RunnerArgs args = { .input_path = argv[1], .iterations = atoi(argv[2]), .result = 0 };
+    if (args.iterations < 1) args.iterations = 1;
+
+    pthread_t th;
+    pthread_attr_t attr;
+    pthread_attr_init(&attr);
+    pthread_attr_setstacksize(&attr, STACK_SIZE);
+    pthread_create(&th, &attr, runner_thread, &args);
+    pthread_join(th, NULL);
+    pthread_attr_destroy(&attr);
+    return args.result;
 }

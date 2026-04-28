@@ -3,7 +3,7 @@
 # https://kotlinlang.org/grammar/
 
 [[vpa]]
-%ignore @space @comment @nl
+%ignore @space @comment
 
 # Keywords (order matters for VPA: longer matches first by the DFA)
 *keywords = @{
@@ -102,7 +102,7 @@ main = {
   /[A-Za-z_]\w*/ @ident
   /`[^`\r\n]+`/ @ident
   /[\r]?\n/ @nl
-  /\s+/ @space
+  /[ \t]+/ @space
   /->/ @arrow
   /::/ @coloncolon
   /===/ @eqeqeq
@@ -167,7 +167,7 @@ block = /[{]/ .begin @lbrace {
   /[A-Za-z_]\w*/ @ident
   /`[^`\r\n]+`/ @ident
   /[\r]?\n/ @nl
-  /\s+/ @space
+  /[ \t]+/ @space
   /->/ @arrow
   /::/ @coloncolon
   /===/ @eqeqeq
@@ -243,7 +243,7 @@ str_interp = /\$[{]/ .begin @str_expr_open {
   /[A-Za-z_]\w*/ @ident
   /`[^`\r\n]+`/ @ident
   /[\r]?\n/ @nl
-  /\s+/ @space
+  /[ \t]+/ @space
   /->/ @arrow
   /::/ @coloncolon
   /===/ @eqeqeq
@@ -318,7 +318,7 @@ ml_str_interp = /\$[{]/ .begin @str_expr_open {
   /[A-Za-z_]\w*/ @ident
   /`[^`\r\n]+`/ @ident
   /[\r]?\n/ @nl
-  /\s+/ @space
+  /[ \t]+/ @space
   /->/ @arrow
   /::/ @coloncolon
   /===/ @eqeqeq
@@ -374,8 +374,30 @@ char_lit = /'/ .begin @char_open {
 
 [[peg]]
 
+# Newline handling: @nl is visible to PEG (not %ignore'd).
+# _ eats optional newlines (inside expressions, types, params).
+# semi eats statement terminators (one or more newlines/semicolons).
+# comma_sep is comma surrounded by optional newlines (for use as separator).
+_ = @nl*
+semi = semi_item+
+semi_item = [
+  @semi
+  @nl
+]
+comma_sep = _ @comma _
+
+# Operator separators (sep in +<sep> must be a single rule)
+disj_sep = _ @disj _
+conj_sep = _ @conj _
+elvis_sep = _ @elvis _
+range_sep = _ @range _
+eq_sep = _ equality_op _
+cmp_sep = _ comparison_op _
+add_sep = _ additive_op _
+mul_sep = _ mult_op _
+
 # Kotlin file structure
-main = file_part*
+main = _ file_part*
 
 file_part = [
   package_header
@@ -383,11 +405,9 @@ file_part = [
   declaration
 ]
 
-semi = @semi
-
 # Package & import
-package_header = "package" identifier semi?
-import_header = "import" identifier import_suffix? semi?
+package_header = "package" identifier semi
+import_header = "import" identifier import_suffix? semi
 import_suffix = [
   @dot @star
   "as" simple_id
@@ -402,78 +422,78 @@ declaration = [
   type_alias
 ]
 
-type_alias = modifier* "typealias" simple_id type_params? @assign type
+type_alias = modifier* "typealias" _ simple_id _ type_params? _ @assign _ type semi?
 
 # Class
-class_decl = modifier* class_kw simple_id type_params? primary_constructor? delegation? type_constraints? class_body?
+class_decl = modifier* class_kw _ simple_id _ type_params? _ primary_constructor? _ delegation? _ type_constraints? _ class_body? semi?
 class_kw = [
   "class"
   "interface"
 ]
-primary_constructor = modifier* "constructor" class_params
-class_params = @lparen class_param*<@comma> @rparen
-class_param = modifier* val_or_var? simple_id @colon type default_value?
+primary_constructor = modifier* "constructor"? _ class_params
+class_params = @lparen _ class_param*<comma_sep> _ @rparen
+class_param = modifier* val_or_var? simple_id _ @colon _ type _ default_value?
 val_or_var = [
   "val"
   "var"
 ]
-default_value = @assign expression
-delegation = @colon delegation_spec+<@comma>
+default_value = @assign _ expression
+delegation = @colon _ delegation_spec+<comma_sep>
 delegation_spec = [
-  user_type value_args : ctor_invocation
-  user_type "by" expression : explicit_delegation
+  user_type _ value_args : ctor_invocation
+  user_type _ "by" _ expression : explicit_delegation
   user_type : type_spec
   fun_type : fun_type_spec
 ]
-class_body = block
-block = @lbrace statements @rbrace
+class_body = _ block
+block = @lbrace _ statements _ @rbrace
 
 # Class members (parsed as statements inside class bodies)
-companion_obj = modifier* "companion" "object" simple_id? delegation? class_body?
-secondary_constructor = modifier* "constructor" fun_value_params delegation_call? block?
-delegation_call = @colon [
-  "this" value_args
-  "super" value_args
+companion_obj = modifier* "companion" _ "object" _ simple_id? _ delegation? _ class_body?
+secondary_constructor = modifier* "constructor" _ fun_value_params _ delegation_call? _ block?
+delegation_call = @colon _ [
+  "this" _ value_args
+  "super" _ value_args
 ]
-anon_init = "init" block
+anon_init = "init" _ block
 
 # Functions
-fun_decl = modifier* "fun" type_params? receiver_type_dot? simple_id fun_value_params return_type? type_constraints? fun_body?
-fun_value_params = @lparen fun_value_param*<@comma> @rparen
-fun_value_param = modifier* parameter default_value?
-parameter = simple_id @colon type
-return_type = @colon type
+fun_decl = modifier* "fun" _ type_params? _ receiver_type_dot? simple_id _ fun_value_params _ return_type? _ type_constraints? _ fun_body? semi?
+fun_value_params = @lparen _ fun_value_param*<comma_sep> _ @rparen
+fun_value_param = modifier* parameter _ default_value?
+parameter = simple_id _ @colon _ type
+return_type = @colon _ type
 fun_body = [
   block
-  @assign expression
+  @assign _ expression
 ]
-receiver_type_dot = receiver_type @dot
+receiver_type_dot = receiver_type @dot _
 
 # Properties
-property_decl = modifier* val_or_var type_params? receiver_type_dot? var_decl type_constraints? property_init? property_accessors?
+property_decl = modifier* val_or_var _ type_params? _ receiver_type_dot? var_decl _ type_constraints? _ property_init? _ property_accessors? semi?
 var_decl = [
-  @lparen variable_decl+<@comma> @rparen
+  @lparen _ variable_decl+<comma_sep> _ @rparen
   variable_decl
 ]
 variable_decl = simple_id type_annotation?
-type_annotation = @colon type
+type_annotation = _ @colon _ type
 property_init = [
-  @assign expression
-  "by" expression
+  @assign _ expression
+  "by" _ expression
 ]
 property_accessors = [
-  getter setter?
-  setter getter?
+  getter _ setter?
+  setter _ getter?
 ]
-getter = modifier* "get" @lparen @rparen return_type? fun_body
-setter = modifier* "set" @lparen setter_param @rparen return_type? fun_body
-setter_param = modifier* simple_id type_annotation?
+getter = modifier* "get" _ @lparen _ @rparen _ return_type? _ fun_body
+setter = modifier* "set" _ @lparen _ setter_param _ @rparen _ return_type? _ fun_body
+setter_param = modifier* simple_id _ type_annotation?
 
 # Object
-object_decl = modifier* "object" simple_id delegation? class_body?
+object_decl = modifier* "object" _ simple_id _ delegation? _ class_body? semi?
 
 # Enum (enum_entry parsed as statement inside enum bodies)
-enum_entry = modifier* simple_id value_args? class_body?
+enum_entry = modifier* simple_id _ value_args? _ class_body?
 
 # Types
 type = type_modifier* type_inner quest*
@@ -495,8 +515,8 @@ quest = [
   @quest
 ]
 user_type = simple_user_type+<@dot>
-simple_user_type = simple_id type_args?
-type_args = @langle type_projection+<@comma> @rangle
+simple_user_type = simple_id _ type_args?
+type_args = @langle _ type_projection+<comma_sep> _ @rangle
 type_projection = [
   type_projection_modifier* type
   @star
@@ -505,14 +525,14 @@ type_projection_modifier = [
   variance_modifier
   annotation
 ]
-fun_type = receiver_type_prefix? fun_type_params @arrow type
-receiver_type_prefix = receiver_type @dot
-fun_type_params = @lparen fun_type_param*<@comma> @rparen
+fun_type = receiver_type_prefix? fun_type_params _ @arrow _ type
+receiver_type_prefix = receiver_type @dot _
+fun_type_params = @lparen _ fun_type_param*<comma_sep> _ @rparen
 fun_type_param = [
   parameter
   type
 ]
-paren_type = @lparen type @rparen
+paren_type = @lparen _ type _ @rparen
 receiver_type = type_modifier* receiver_type_inner
 receiver_type_inner = [
   nullable_type
@@ -521,15 +541,15 @@ receiver_type_inner = [
 ]
 type_modifier = [
   annotation
-  "suspend"
+  "suspend" _
 ]
 
 # Type parameters & constraints
-type_params = @langle type_param+<@comma> @rangle
-type_param = type_param_modifier* simple_id type_bound?
-type_bound = @colon type
-type_constraints = "where" type_constraint+<@comma>
-type_constraint = annotation* simple_id @colon type
+type_params = @langle _ type_param+<comma_sep> _ @rangle
+type_param = type_param_modifier* simple_id _ type_bound?
+type_bound = @colon _ type
+type_constraints = "where" _ type_constraint+<comma_sep>
+type_constraint = annotation* simple_id _ @colon _ type
 variance_modifier = [
   "in"
   "out"
@@ -541,8 +561,8 @@ type_param_modifier = [
 ]
 
 # Statements
-statements = terminated_stmt*
-terminated_stmt = statement semi*
+statements = _ terminated_stmt*
+terminated_stmt = statement semi
 statement = [
   declaration
   companion_obj
@@ -555,8 +575,8 @@ statement = [
   expression
 ]
 assignment = [
-  directly_assignable assign_op expression
-  assignable assign_op expression
+  directly_assignable _ assign_op _ expression
+  assignable _ assign_op _ expression
 ]
 assign_op = [
   @assign
@@ -571,13 +591,13 @@ loop_stmt = [
   while_stmt
   do_while_stmt
 ]
-for_stmt = "for" @lparen annotation* for_var "in" expression @rparen control_body?
+for_stmt = "for" _ @lparen _ annotation* for_var _ "in" _ expression _ @rparen _ control_body?
 for_var = [
   variable_decl
-  @lparen variable_decl+<@comma> @rparen
+  @lparen _ variable_decl+<comma_sep> _ @rparen
 ]
-while_stmt = "while" @lparen expression @rparen control_body
-do_while_stmt = "do" control_body? "while" @lparen expression @rparen
+while_stmt = "while" _ @lparen _ expression _ @rparen _ control_body
+do_while_stmt = "do" _ control_body? _ "while" _ @lparen _ expression _ @rparen
 control_body = [
   block
   statement
@@ -585,28 +605,28 @@ control_body = [
 
 # Expressions
 expression = disjunction
-disjunction = conjunction+<@disj>
-conjunction = equality+<@conj>
-equality = comparison+<equality_op>
+disjunction = conjunction+<disj_sep>
+conjunction = equality+<conj_sep>
+equality = comparison+<eq_sep>
 equality_op = [
   @eqeqeq
   @eqeq
   @noteqeq
   @noteq
 ]
-comparison = generic_call_like+<comparison_op>
+comparison = generic_call_like+<cmp_sep>
 comparison_op = [
   @le
   @ge
   @langle
   @rangle
 ]
-generic_call_like = infix_op call_suffix*
+generic_call_like = infix_op _ call_suffix*
 infix_op = elvis_expr infix_tail*
 infix_tail = [
-  in_op elvis_expr
-  is_op type
-  simple_id elvis_expr
+  _ in_op _ elvis_expr : in_check
+  _ is_op _ type : is_check
+  _ simple_id _ elvis_expr : named_check
 ]
 in_op = [
   "in"
@@ -616,23 +636,23 @@ is_op = [
   "is"
   @not_is
 ]
-elvis_expr = infix_fn_call+<@elvis>
+elvis_expr = infix_fn_call+<elvis_sep>
 infix_fn_call = range_expr infix_fn_tail*
-infix_fn_tail = simple_id range_expr
-range_expr = additive_expr+<@range>
-additive_expr = mult_expr+<additive_op>
+infix_fn_tail = _ simple_id _ range_expr
+range_expr = additive_expr+<range_sep>
+additive_expr = mult_expr+<add_sep>
 additive_op = [
   @plus
   @minus
 ]
-mult_expr = as_expr+<mult_op>
+mult_expr = as_expr+<mul_sep>
 mult_op = [
   @star
   @slash
   @mod
 ]
 as_expr = prefix_unary as_tail*
-as_tail = as_op type
+as_tail = _ as_op _ type
 as_op = [
   @as_safe
   "as"
@@ -669,8 +689,8 @@ assignable_suffix = [
   type_args
   index_suffix
 ]
-index_suffix = @lbracket expression+<@comma> @rbracket
-nav_suffix = member_access_op nav_target
+index_suffix = @lbracket _ expression+<comma_sep> _ @rbracket
+nav_suffix = member_access_op _ nav_target
 member_access_op = [
   @safe_dot
   @dot
@@ -682,15 +702,15 @@ nav_target = [
   "class"
 ]
 call_suffix = [
-  type_args? value_args annotated_lambda : args_lambda
-  type_args? value_args : args_only
-  type_args annotated_lambda : type_lambda
-  annotated_lambda : lambda_only
+  type_args? _ value_args _ annotated_lambda : args_lambda
+  type_args? _ value_args : args_only
+  type_args _ annotated_lambda : type_lambda
+  _ annotated_lambda : lambda_only
 ]
 annotated_lambda = annotation* label? lambda_lit
-value_args = @lparen value_arg*<@comma> @rparen
+value_args = @lparen _ value_arg*<comma_sep> _ @rparen
 value_arg = annotation? named_arg? @star? expression
-named_arg = simple_id @assign
+named_arg = simple_id _ @assign _
 lambda_lit = block
 
 # Primary expressions
@@ -712,10 +732,10 @@ primary_expr = [
   simple_id
   literal_const
 ]
-paren_expr = @lparen expression @rparen
+paren_expr = @lparen _ expression _ @rparen
 collection_lit = [
-  @lbracket expression+<@comma> @rbracket : non_empty
-  @lbracket @rbracket : empty
+  @lbracket _ expression+<comma_sep> _ @rbracket : non_empty
+  @lbracket _ @rbracket : empty
 ]
 literal_const = [
   @float_lit
@@ -757,47 +777,47 @@ ml_str_content = [
   @str_ref
   @str_text
 ]
-str_interp = @str_expr_open expression @str_expr_close
-ml_str_interp = @str_expr_open expression @str_expr_close
+str_interp = @str_expr_open _ expression _ @str_expr_close
+ml_str_interp = @str_expr_open _ expression _ @str_expr_close
 
 # Function literals & object literals
 fun_literal = [
   lambda_lit
   anon_fun
 ]
-anon_fun = "fun" receiver_type_dot? fun_value_params return_type? type_constraints? fun_body?
+anon_fun = "fun" _ receiver_type_dot? fun_value_params _ return_type? _ type_constraints? _ fun_body?
 object_literal = [
-  "object" @colon delegation_spec+<@comma> class_body : with_delegation
-  "object" class_body : plain
+  "object" _ @colon _ delegation_spec+<comma_sep> _ class_body : with_delegation
+  "object" _ class_body : plain
 ]
 
 # Control flow
-if_expr = "if" @lparen expression @rparen control_body? else_branch?
-else_branch = "else" control_body
-when_expr = "when" when_subject? block
-when_subject = @lparen expression @rparen
+if_expr = "if" _ @lparen _ expression _ @rparen _ control_body? _ else_branch?
+else_branch = "else" _ control_body
+when_expr = "when" _ when_subject? _ block
+when_subject = @lparen _ expression _ @rparen
 when_entry = [
-  when_cond+<@comma> @arrow control_body semi?
-  "else" @arrow control_body semi?
+  when_cond+<comma_sep> _ @arrow _ control_body semi?
+  "else" _ @arrow _ control_body semi?
 ]
 when_cond = [
   expression
-  in_op expression
-  is_op type
+  in_op _ expression
+  is_op _ type
 ]
-try_expr = "try" block catch_block* finally_block?
-catch_block = "catch" @lparen annotation* simple_id @colon type @rparen block
-finally_block = "finally" block
+try_expr = "try" _ block _ catch_block* _ finally_block?
+catch_block = "catch" _ @lparen _ annotation* simple_id _ @colon _ type _ @rparen _ block
+finally_block = "finally" _ block
 jump_expr = [
-  "throw" expression : throw_expr
-  "return" @at simple_id expression? : return_at
-  "return" expression? : return_expr
+  "throw" _ expression : throw_expr
+  "return" @at simple_id _ expression? : return_at
+  "return" _ expression? : return_expr
   "continue" @at simple_id : continue_at
   "continue" : continue_expr
   "break" @at simple_id : break_at
   "break" : break_expr
 ]
-callable_ref = type? @coloncolon callable_ref_target
+callable_ref = type? @coloncolon _ callable_ref_target
 callable_ref_target = [
   simple_id
   "class"
@@ -805,8 +825,8 @@ callable_ref_target = [
 
 # Annotations & labels
 annotation = [
-  annotation_use_site unescaped_annotation
-  @at unescaped_annotation
+  annotation_use_site unescaped_annotation _
+  @at unescaped_annotation _
 ]
 annotation_use_site = @at annotation_target @colon
 annotation_target = [
@@ -821,21 +841,21 @@ annotation_target = [
   "file"
 ]
 unescaped_annotation = [
-  user_type value_args : with_args
+  user_type _ value_args : with_args
   user_type : type_only
 ]
 label = @label_ref
 
 # Modifiers
 modifier = [
-  class_modifier
-  member_modifier
-  visibility_modifier
-  function_modifier
-  property_modifier
-  inheritance_modifier
-  parameter_modifier
-  platform_modifier
+  class_modifier _
+  member_modifier _
+  visibility_modifier _
+  function_modifier _
+  property_modifier _
+  inheritance_modifier _
+  parameter_modifier _
+  platform_modifier _
   annotation
 ]
 class_modifier = [
