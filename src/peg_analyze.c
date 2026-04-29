@@ -494,9 +494,8 @@ static int32_t _scope_entry_row(PegAnalyzeInput* input, ScopeClosure* all_closur
 }
 
 // term: sanitize name, dedup, set advance based on is_link/in_branch context
-static NodeField _build_term_node_field(PegAnalyzeInput* input, ScopeClosure* cl, ScopeClosure* all_closures,
-                                        int32_t n_closures, FieldDedup* fd, int32_t term_id, bool is_link,
-                                        bool in_branch, const char* parent_rule_name, int32_t* mult_num,
+static NodeField _build_term_node_field(PegAnalyzeInput* input, ScopeClosure* all_closures, int32_t n_closures,
+                                        FieldDedup* fd, int32_t term_id, bool is_link, bool in_branch,
                                         int32_t branch_index) {
   char* san = _sanitize_field_name(_term_name(input, term_id));
   char* dedup = _field_dedup_next(fd, san);
@@ -512,68 +511,78 @@ static NodeField _build_term_node_field(PegAnalyzeInput* input, ScopeClosure* cl
       .wrapper_name = NULL,
       .branch_index = branch_index,
   };
-  if (is_link) {
-    (*mult_num)++;
-    const char* wrapper_name =
-        symtab_get(&cl->scoped_rule_names,
-                   symtab_find_f(&cl->scoped_rule_names, "%s$%s$%d", cl->scope_name, parent_rule_name, *mult_num));
-    ScopedRule* wrapper =
-        wrapper_name ? _find_scoped_rule(cl, symtab_find(&cl->scoped_rule_names, wrapper_name)) : NULL;
-    nf.ref_row = wrapper ? _slot_row(cl, wrapper) : 0;
-    nf.wrapper_name = wrapper_name;
-  }
   XFREE(san);
   return nf;
 }
 
-// call: dedup name, resolve callee/wrapper row, interlace rhs if applicable
+// call: dedup name, resolve callee row, interlace rhs if applicable
 static NodeField _build_call_node_field(PegAnalyzeInput* input, ScopeClosure* cl, FieldDedup* fd, int32_t call_id,
-                                        bool is_link, bool in_branch, PegUnit* u, const char* parent_rule_name,
-                                        int32_t* mult_num, int32_t branch_index) {
+                                        bool is_link, bool in_branch, PegUnit* u, int32_t branch_index) {
   const char* callee_name = symtab_get(&input->rule_names, call_id);
   char* dedup = _field_dedup_next(fd, callee_name);
+  ScopedRule* callee_sr =
+      _find_scoped_rule(cl, symtab_find_f(&cl->scoped_rule_names, "%s$%s", cl->scope_name, callee_name));
+  int32_t callee_row = callee_sr ? _slot_row(cl, callee_sr) : 0;
   NodeField nf = {
       .name = dedup,
       .is_link = is_link,
       .is_scope = false,
-      .ref_row = 0,
+      .ref_row = is_link ? 0 : callee_row,
       .rhs_row = PEG_ROW_NONE,
-      .advance = NODE_ADVANCE_NONE,
-      .advance_slot_row = 0,
+      .advance = (is_link || in_branch) ? NODE_ADVANCE_NONE : NODE_ADVANCE_SLOT,
+      .advance_slot_row = (is_link || in_branch) ? 0 : callee_row,
       .wrapper_name = NULL,
       .branch_index = branch_index,
   };
-  if (is_link) {
-    (*mult_num)++;
-    const char* wrapper_name =
-        symtab_get(&cl->scoped_rule_names,
-                   symtab_find_f(&cl->scoped_rule_names, "%s$%s$%d", cl->scope_name, parent_rule_name, *mult_num));
-    ScopedRule* wrapper =
-        wrapper_name ? _find_scoped_rule(cl, symtab_find(&cl->scoped_rule_names, wrapper_name)) : NULL;
-    nf.ref_row = wrapper ? _slot_row(cl, wrapper) : 0;
-    nf.wrapper_name = wrapper_name;
-    if (u && u->interlace_rhs_kind == PEG_CALL) {
+  if (is_link && u) {
+    if (u->interlace_rhs_kind == PEG_CALL) {
       const char* rhs_name = symtab_get(&input->rule_names, u->interlace_rhs_id);
       ScopedRule* rhs_sr =
           _find_scoped_rule(cl, symtab_find_f(&cl->scoped_rule_names, "%s$%s", cl->scope_name, rhs_name));
       if (rhs_sr) {
         nf.rhs_row = _slot_row(cl, rhs_sr);
       }
-    } else if (u && u->interlace_rhs_kind == PEG_TERM) {
+    } else if (u->interlace_rhs_kind == PEG_TERM) {
       nf.rhs_row = PEG_ROW_TERM;
-    }
-  } else {
-    ScopedRule* callee_sr =
-        _find_scoped_rule(cl, symtab_find_f(&cl->scoped_rule_names, "%s$%s", cl->scope_name, callee_name));
-    int32_t callee_row = callee_sr ? _slot_row(cl, callee_sr) : 0;
-    nf.ref_row = callee_row;
-    if (!in_branch) {
-      nf.advance = NODE_ADVANCE_SLOT;
-      nf.advance_slot_row = callee_row;
     }
   }
   return nf;
 }
+
+// Bump mult_num and return the quantifier/branches wrapper rule for the next `parent$N` slot.
+// The parser creates one such wrapper per `?`/`*`/`+` and per inline `[ ... ]` branches; callers
+// must invoke this in the same left-to-right order to stay in sync.
+static ScopedRule* _next_wrapper(ScopeClosure* cl, const char* parent_rule_name, int32_t* mult_num) {
+  (*mult_num)++;
+  int32_t wrap_id = symtab_find_f(&cl->scoped_rule_names, "%s$%s$%d", cl->scope_name, parent_rule_name, *mult_num);
+  return _find_scoped_rule(cl, wrap_id);
+}
+
+// Attach quantifier/branches wrapper info to the last emitted field. The wrapper slot is always
+// >= 0 when the parent rule succeeds, so it is the safe value to advance by — unlike the callee
+// slot, which can be -2 (cached failure) for an absent `?` or an empty `*`.
+static void _attach_wrapper(NodeField* nf, ScopeClosure* cl, ScopedRule* wrapper, bool is_last_in_seq) {
+  if (!wrapper) {
+    return;
+  }
+  int32_t row = _slot_row(cl, wrapper);
+  if (nf->is_link) {
+    // `*`/`+`: the wrapper is also the thing we iterate over.
+    nf->ref_row = row;
+    nf->wrapper_name =
+        symtab_get(&cl->scoped_rule_names, (int32_t)(wrapper - cl->scoped_rules) + cl->scoped_rule_names.start_num);
+    if (!is_last_in_seq) {
+      nf->advance = NODE_ADVANCE_SLOT;
+      nf->advance_slot_row = row;
+    }
+  } else {
+    // `?` / inline branches: keep ref_row pointing at the callee so `load_callee` works, but
+    // advance via the always-nonnegative wrapper slot.
+    nf->advance = NODE_ADVANCE_SLOT;
+    nf->advance_slot_row = row;
+  }
+}
+
 static void _build_child_fields(PegAnalyzeInput* input, ScopeClosure* cl, ScopeClosure* all_closures,
                                 int32_t n_closures, PegUnit* children, int32_t child_size, FieldDedup* fd,
                                 const char* parent_rule_name, int32_t* multiplier_num_ptr, NodeFields* out,
@@ -585,57 +594,38 @@ static void _build_child_fields(PegAnalyzeInput* input, ScopeClosure* cl, ScopeC
       continue;
     }
     bool is_link = (u->multiplier == '*' || u->multiplier == '+');
+    bool needs_wrapper = is_link || u->multiplier == '?' || u->kind == PEG_BRANCHES;
+    bool is_last = (i == child_size - 1);
+    size_t size_before = darray_size(*out);
     if (u->kind == PEG_TERM) {
-      darray_push(*out, _build_term_node_field(input, cl, all_closures, n_closures, fd, u->id, is_link, false,
-                                               parent_rule_name, multiplier_num_ptr, branch_index));
-      // link field followed by more children: advance cursor past repetition via wrapper slot
-      if (is_link && i < child_size - 1) {
-        NodeField* last = &(*out)[darray_size(*out) - 1];
-        last->advance = NODE_ADVANCE_SLOT;
-        last->advance_slot_row = last->ref_row;
-      }
+      darray_push(*out,
+                  _build_term_node_field(input, all_closures, n_closures, fd, u->id, is_link, false, branch_index));
     } else if (u->kind == PEG_CALL) {
-      darray_push(*out, _build_call_node_field(input, cl, fd, u->id, is_link, false, u, parent_rule_name,
-                                               multiplier_num_ptr, branch_index));
-      // link field followed by more children: advance cursor past repetition via wrapper slot
-      if (is_link && i < child_size - 1) {
-        NodeField* last = &(*out)[darray_size(*out) - 1];
-        last->advance = NODE_ADVANCE_SLOT;
-        last->advance_slot_row = last->ref_row;
-      }
+      darray_push(*out, _build_call_node_field(input, cl, fd, u->id, is_link, false, u, branch_index));
     } else if (u->kind == PEG_BRANCHES) {
       for (size_t j = 0; j < darray_size(u->children); j++) {
         PegUnit* branch = &u->children[j];
         if (branch->kind == PEG_TERM) {
-          darray_push(*out, _build_term_node_field(input, cl, all_closures, n_closures, fd, branch->id, false, true,
-                                                   parent_rule_name, multiplier_num_ptr, (int32_t)j));
+          darray_push(*out,
+                      _build_term_node_field(input, all_closures, n_closures, fd, branch->id, false, true, (int32_t)j));
         } else if (branch->kind == PEG_CALL) {
-          darray_push(*out, _build_call_node_field(input, cl, fd, branch->id, false, true, NULL, parent_rule_name,
-                                                   multiplier_num_ptr, (int32_t)j));
+          darray_push(*out, _build_call_node_field(input, cl, fd, branch->id, false, true, NULL, (int32_t)j));
         } else if (branch->kind == PEG_SEQ) {
           for (size_t k = 0; k < darray_size(branch->children); k++) {
             PegUnit* bc = &branch->children[k];
             if (bc->kind == PEG_TERM) {
-              darray_push(*out, _build_term_node_field(input, cl, all_closures, n_closures, fd, bc->id, false, true,
-                                                       parent_rule_name, multiplier_num_ptr, (int32_t)j));
+              darray_push(*out,
+                          _build_term_node_field(input, all_closures, n_closures, fd, bc->id, false, true, (int32_t)j));
             } else if (bc->kind == PEG_CALL) {
-              darray_push(*out, _build_call_node_field(input, cl, fd, bc->id, false, true, NULL, parent_rule_name,
-                                                       multiplier_num_ptr, (int32_t)j));
+              darray_push(*out, _build_call_node_field(input, cl, fd, bc->id, false, true, NULL, (int32_t)j));
             }
           }
         }
       }
-      // advance past the branch via wrapper rule's slot
-      (*multiplier_num_ptr)++;
-      ScopedRule* wrapper = _find_scoped_rule(
-          cl, symtab_find_f(&cl->scoped_rule_names, "%s$%s$%d", cl->scope_name, parent_rule_name, *multiplier_num_ptr));
-      if (wrapper && darray_size(*out) > 0) {
-        NodeField* last = &(*out)[darray_size(*out) - 1];
-        if (last->advance == NODE_ADVANCE_NONE) {
-          last->advance = NODE_ADVANCE_SLOT;
-          last->advance_slot_row = _slot_row(cl, wrapper);
-        }
-      }
+    }
+    if (needs_wrapper && darray_size(*out) > size_before) {
+      ScopedRule* wrapper = _next_wrapper(cl, parent_rule_name, multiplier_num_ptr);
+      _attach_wrapper(&(*out)[darray_size(*out) - 1], cl, wrapper, is_last);
     }
   }
 }
@@ -671,21 +661,18 @@ static void _build_node_fields(PegAnalyzeInput* input, RuleLookup* lu, ScopeClos
                               (int32_t)darray_size(branch->children), &fd, orig_name, &multiplier_num, &sr->node_fields,
                               (int32_t)j);
         } else if (branch->kind == PEG_TERM) {
-          darray_push(sr->node_fields, _build_term_node_field(input, cl, all_closures, n_closures, &fd, branch->id,
-                                                              false, true, orig_name, &multiplier_num, (int32_t)j));
+          darray_push(sr->node_fields, _build_term_node_field(input, all_closures, n_closures, &fd, branch->id, false,
+                                                              true, (int32_t)j));
         } else if (branch->kind == PEG_CALL) {
-          darray_push(sr->node_fields, _build_call_node_field(input, cl, &fd, branch->id, false, true, NULL, orig_name,
-                                                              &multiplier_num, (int32_t)j));
+          darray_push(sr->node_fields,
+                      _build_call_node_field(input, cl, &fd, branch->id, false, true, NULL, (int32_t)j));
         }
       }
-    } else if (orig->body.kind == PEG_TERM) {
-      bool is_link = (orig->body.multiplier == '*' || orig->body.multiplier == '+');
-      darray_push(sr->node_fields, _build_term_node_field(input, cl, all_closures, n_closures, &fd, orig->body.id,
-                                                          is_link, false, orig_name, &multiplier_num, -1));
-    } else if (orig->body.kind == PEG_CALL) {
-      bool is_link = (orig->body.multiplier == '*' || orig->body.multiplier == '+');
-      darray_push(sr->node_fields, _build_call_node_field(input, cl, &fd, orig->body.id, is_link, false, &orig->body,
-                                                          orig_name, &multiplier_num, -1));
+    } else if (orig->body.kind == PEG_TERM || orig->body.kind == PEG_CALL) {
+      // Treat a bare `rule = e` body as a single-child seq so quantifier/wrapper accounting is
+      // shared with the seq path.
+      _build_child_fields(input, cl, all_closures, n_closures, &orig->body, 1, &fd, orig_name, &multiplier_num,
+                          &sr->node_fields, -1);
     }
     _field_dedup_free(&fd);
   }

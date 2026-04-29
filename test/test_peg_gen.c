@@ -1728,6 +1728,128 @@ TEST(test_naive_branch_sequence_alternation_regression) {
   remove(BUILD_DIR "/test_peg_branch_seq_alt_bin");
 }
 
+TEST(test_naive_loader_optional_absent_oob_regression) {
+  // Minimal reproducer for an out-of-bounds read in the generated loader for
+  // naive mode. opt1? and opt2? are both absent; the loader advances by opt1's
+  // failed size (-1), then reads opt2 before the memo table base.
+  const char* nest_path = BUILD_DIR "/test_peg_naive_opt_oob.nest";
+  FILE* nf = fopen(nest_path, "w");
+  assert(nf);
+  fprintf(nf, "[[vpa]]\n"
+              "%%ignore @space\n"
+              "main = {\n"
+              "  /a/ @a\n"
+              "  /b/ @b\n"
+              "  /c/ @c\n"
+              "  /d/ @d\n"
+              "  /[ \\t\\r\\n]+/ @space\n"
+              "}\n"
+              "[[peg]]\n"
+              "main = item\n"
+              "item = @a opt1? opt2? @c\n"
+              "opt1 = @b\n"
+              "opt2 = @d\n");
+  fclose(nf);
+
+  const char* input_path = BUILD_DIR "/test_peg_naive_opt_oob.input";
+  FILE* inf = fopen(input_path, "w");
+  assert(inf);
+  fprintf(inf, "ac");
+  fclose(inf);
+
+  char cmd[2048];
+  snprintf(cmd, sizeof(cmd), BUILD_DIR "/nest c %s -p test_noob -m naive", nest_path);
+  assert(_run_cmd(cmd) == 0);
+  snprintf(cmd, sizeof(cmd),
+           "%s -O0 -g -fsanitize=address,undefined test_noob.c test_noob.ll -o " BUILD_DIR
+           "/test_peg_naive_opt_oob_bin",
+           compat_llvm_cc());
+  assert(_run_cmd(cmd) == 0);
+
+  char out[8192];
+  snprintf(cmd, sizeof(cmd), BUILD_DIR "/test_peg_naive_opt_oob_bin %s", input_path);
+  int ret = _run_cmd_capture(cmd, out, sizeof(out));
+  assert(ret == 0);
+  assert(strstr(out, "heap-buffer-overflow") == NULL);
+
+  remove("test_noob.c");
+  remove("test_noob.h");
+  remove("test_noob.ll");
+  remove(nest_path);
+  remove(input_path);
+  remove(BUILD_DIR "/test_peg_naive_opt_oob_bin");
+}
+
+TEST(test_shared_loader_optional_colored_slot_regression) {
+  // Minimal reproducer for a naive/shared loader inconsistency.
+  // opt1 and opt2 are mutually exclusive at the same column and shared mode colors
+  // them onto the same physical slot row. The generated loader must still use
+  // the correct rule presence bit when deciding whether opt2 exists.
+  const char* nest_path = BUILD_DIR "/test_peg_shared_opt_slot.nest";
+  FILE* nf = fopen(nest_path, "w");
+  assert(nf);
+  fprintf(nf, "[[vpa]]\n"
+              "%%ignore @space\n"
+              "main = {\n"
+              "  /a/ @a\n"
+              "  /b/ @b\n"
+              "  /c/ @c\n"
+              "  /d/ @d\n"
+              "  /e/ @e\n"
+              "  /[ \\t\\r\\n]+/ @space\n"
+              "}\n"
+              "[[peg]]\n"
+              "main = item\n"
+              "item = @a opt1? opt2? @c _\n"
+              "opt1 = @b\n"
+              "opt2 = @d\n"
+              "_ = @e*\n");
+  fclose(nf);
+
+  const char* input_path = BUILD_DIR "/test_peg_shared_opt_slot.input";
+  FILE* inf = fopen(input_path, "w");
+  assert(inf);
+  fprintf(inf, "aceee");
+  fclose(inf);
+
+  char cmd[2048];
+  char naive_out[8192];
+  char shared_out[8192];
+
+  snprintf(cmd, sizeof(cmd), BUILD_DIR "/nest c %s -p test_sopt -m naive", nest_path);
+  assert(_run_cmd(cmd) == 0);
+  snprintf(cmd, sizeof(cmd),
+           "%s -O0 -fno-sanitize=all test_sopt.c test_sopt.ll -o " BUILD_DIR "/test_peg_sopt_naive_bin",
+           compat_llvm_cc());
+  assert(_run_cmd(cmd) == 0);
+  snprintf(cmd, sizeof(cmd), BUILD_DIR "/test_peg_sopt_naive_bin %s", input_path);
+  assert(_run_cmd_capture(cmd, naive_out, sizeof(naive_out)) == 0);
+
+  remove("test_sopt.c");
+  remove("test_sopt.h");
+  remove("test_sopt.ll");
+
+  snprintf(cmd, sizeof(cmd), BUILD_DIR "/nest c %s -p test_sopt -m shared", nest_path);
+  assert(_run_cmd(cmd) == 0);
+  snprintf(cmd, sizeof(cmd),
+           "%s -O0 -fno-sanitize=all test_sopt.c test_sopt.ll -o " BUILD_DIR "/test_peg_sopt_shared_bin",
+           compat_llvm_cc());
+  assert(_run_cmd(cmd) == 0);
+  snprintf(cmd, sizeof(cmd), BUILD_DIR "/test_peg_sopt_shared_bin %s", input_path);
+  assert(_run_cmd_capture(cmd, shared_out, sizeof(shared_out)) == 0);
+
+  assert(strcmp(naive_out, shared_out) == 0);
+  assert(strstr(shared_out, "opt2") == NULL);
+
+  remove("test_sopt.c");
+  remove("test_sopt.h");
+  remove("test_sopt.ll");
+  remove(nest_path);
+  remove(input_path);
+  remove(BUILD_DIR "/test_peg_sopt_naive_bin");
+  remove(BUILD_DIR "/test_peg_sopt_shared_bin");
+}
+
 int main(void) {
   printf("test_peg_gen:\n");
   RUN(test_ir_has_parse_function);
@@ -1761,6 +1883,8 @@ int main(void) {
   RUN(test_shared_memoize_alternation);
   RUN(test_naive_nested_rule);
   RUN(test_naive_branch_sequence_alternation_regression);
+  RUN(test_naive_loader_optional_absent_oob_regression);
+  RUN(test_shared_loader_optional_colored_slot_regression);
   printf("test_peg_gen: OK\n");
   return 0;
 }
