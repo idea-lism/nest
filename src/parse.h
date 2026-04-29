@@ -62,6 +62,7 @@ typedef enum {
   LIT_RPAREN,
   LIT_AND,
   LIT_NOT,
+  LIT_TODO, // TODO keyword in [[peg]] for stub rules
 
   LIT_COUNT
 } LitId;

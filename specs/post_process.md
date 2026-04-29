@@ -121,6 +121,7 @@ _Thread_local (C11)(deprecated in C23)
 - for interlace rule `lhs*<rhs>` / `lhs+<rhs>`, if both `lhs` and `rhs` are nullable, report error.
 - if a rule being called is not defined, report error
 - report orphan rules (unreachable from `main`) error
+- this check skips `TODO` rules
 
 ### vpa scope validity
 
@@ -138,13 +139,14 @@ _Thread_local (C11)(deprecated in C23)
 `bool pp_validate_peg_rules(ParseState* ps)`:
 - `main` must exist.
 - no repeated peg rule names.
+- if a rule `= TODO`, it must match a scope.
 
 ### vpa & peg
 
 `bool pp_match_scopes(ParseState* ps)`:
 - Check if VPA scope has a corresponding PEG parser in the same name, if found, update VPA scope's attr `VpaRule.has_parser = true`.
 - For `main` scope, validate `has_parser` must be true.
-- for every PEG scope, `used_set` must be the same as `emit_set` in the related VPA scope
+- for every PEG scope that is not a `TODO`, `used_set` must be the same as `emit_set` in the related VPA scope
   - emit_set including tokens and scopes, but if the scope doesn't have a mapping peg parser, expand it.
     - exclude ignore tokens in emit_set
     - if scope leader has token emits after `.begin` hook, include it

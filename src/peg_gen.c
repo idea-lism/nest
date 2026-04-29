@@ -582,6 +582,33 @@ static MemoizeDenyFn _memoize_deny_fns[] = {
     [MEMOIZE_SHARED] = _memoize_deny_shared,
 };
 
+// Emit a minimal `parse_{scope_name}` stub for `= TODO` scopes.
+// It allocates an 8-byte-per-column memoize table so downstream code that
+// expects `tc->value` to be non-NULL keeps working, then returns
+// `{chunk_size, chunk_size}` — i.e., "successfully consumed every token".
+static void _gen_todo_scope_ir(IrWriter* w, ScopeClosure* cl) {
+  irwriter_declare(w, "ptr", "tt_current", "ptr");
+  irwriter_declare(w, "ptr", "tt_alloc_memoize_table", "ptr, i64");
+  irwriter_declare(w, "i64", "tt_current_size", "ptr");
+
+  int64_t sizeof_col = cl->bits_bucket_size * 8 + _aligned_slots_size(cl->slots_size) * 4;
+
+  char* fn_name = _asprintf("parse_%s", cl->scope_name);
+  irwriter_define_startf(w, fn_name, "{i64, i64} @%s(ptr %%tt, ptr %%stack_ptr_in) sspreq", fn_name);
+  irwriter_bb(w);
+  irwriter_dbg(w, cl->source_line, cl->source_col);
+
+  (void)irwriter_imm(w, "%stack_ptr_in"); // unused but part of signature
+  IrVal tc = irwriter_call_retf(w, "ptr", "tt_current", "ptr %%tt");
+  (void)irwriter_call_retf(w, "ptr", "tt_alloc_memoize_table", "ptr %%r%d, i64 %lld", (int)tc, (long long)sizeof_col);
+  IrVal sz = irwriter_call_retf(w, "i64", "tt_current_size", "ptr %%tt");
+  IrVal r0 = irwriter_insertvalue(w, "{i64, i64}", -1, "i64", sz, 0);
+  IrVal r1 = irwriter_insertvalue(w, "{i64, i64}", r0, "i64", sz, 1);
+  irwriter_ret(w, "{i64, i64}", r1);
+  irwriter_define_end(w);
+  XFREE(fn_name);
+}
+
 // ============================================================
 // _gen_scope_ir — main IR generation per scope
 // ============================================================
@@ -789,9 +816,14 @@ void peg_gen(PegGenInput* input, HeaderWriter* hw, IrWriter* w) {
   }
   for (int32_t c = 0; c < closure_size; c++) {
     if (input->verbose) {
-      fprintf(stderr, "  [peg] generating IR for scope '%s'\n", closures[c].scope_name);
+      fprintf(stderr, "  [peg] generating IR for scope '%s'%s\n", closures[c].scope_name,
+              closures[c].is_todo ? " (TODO stub)" : "");
     }
-    _gen_scope_ir(w, &closures[c], input->memoize_mode);
+    if (closures[c].is_todo) {
+      _gen_todo_scope_ir(w, &closures[c]);
+    } else {
+      _gen_scope_ir(w, &closures[c], input->memoize_mode);
+    }
   }
 
   RuleScopeMap scope_map = _build_scope_map(input);

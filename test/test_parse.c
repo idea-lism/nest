@@ -898,6 +898,39 @@ TEST(test_bootstrap_structure) {
   ustr_del(ustr);
 }
 
+// --- PEG `= TODO` stub rule ---
+
+static const char TODO_NEST[] = "[[vpa]]\n"
+                                "%ignore @space\n"
+                                "main = { inner /\\s+/ @space }\n"
+                                "inner = /\\(/ .begin { /\\)/ .end /\\s+/ @space /x/ @x }\n"
+                                "[[peg]]\n"
+                                "main = inner\n"
+                                "inner = TODO\n";
+
+TEST(test_peg_todo_rule_parses) {
+  ParseState* ps = parse_state_new();
+  bool ok = _parse(ps, TODO_NEST);
+  if (!ok) {
+    fprintf(stderr, "error: %s\n", parse_get_error(ps));
+  }
+  assert(ok);
+  // find the `inner` peg rule and check is_todo
+  bool found = false;
+  for (size_t i = 0; i < darray_size(ps->peg_rules); i++) {
+    const char* rn = symtab_get(&ps->rule_names, ps->peg_rules[i].global_id);
+    if (rn && strcmp(rn, "inner") == 0) {
+      assert(ps->peg_rules[i].is_todo);
+      found = true;
+    }
+    if (rn && strcmp(rn, "main") == 0) {
+      assert(!ps->peg_rules[i].is_todo);
+    }
+  }
+  assert(found);
+  parse_state_del(ps);
+}
+
 int main(void) {
   printf("test_parse:\n");
 
@@ -933,6 +966,9 @@ int main(void) {
 
   // bootstrap
   RUN(test_bootstrap_nest);
+
+  // PEG TODO stub rule
+  RUN(test_peg_todo_rule_parses);
 
   // VPA directives (ok-only, but test distinct grammar features)
   RUN(test_directives_state);

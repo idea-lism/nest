@@ -185,6 +185,8 @@ static ReLex* _build_peg_scope(void) {
 
   // "=" @peg_assign
   re_lex_add(l, "=", __LINE__, 15, LIT_EQ);
+  // "TODO" @peg_todo — stub marker for incremental grammar building
+  re_lex_add(l, "TODO", __LINE__, 15, LIT_TODO);
   // *peg_commons
   re_lex_add(l, "[a-z_][a-zA-Z0-9_]*", __LINE__, 15, TOK_PEG_ID);
   re_lex_add(l, "@[a-z_][a-zA-Z0-9_]*", __LINE__, 15, TOK_PEG_TOK_ID);

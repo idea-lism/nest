@@ -967,6 +967,145 @@ TEST(test_validate_peg_duplicate_rule) {
   parse_state_del(ps);
 }
 
+TEST(test_validate_peg_todo_non_scope) {
+  ParseState* ps = parse_state_new();
+  _init_symtabs(ps);
+  ps->peg_rules = darray_new(sizeof(PegRule), 0);
+
+  // main rule exists (satisfies "main must exist")
+  PegRule main_r = {.global_id = symtab_intern(&ps->rule_names, "main"), .scope_id = -1, .body = {.kind = PEG_SEQ}};
+  main_r.body.children = darray_new(sizeof(PegUnit), 0);
+  darray_push(ps->peg_rules, main_r);
+
+  // helper = TODO, but `helper` is not a scope
+  PegRule helper = {.global_id = symtab_intern(&ps->rule_names, "helper"),
+                    .scope_id = -1,
+                    .body = {.kind = PEG_SEQ},
+                    .is_todo = true};
+  helper.body.children = darray_new(sizeof(PegUnit), 0);
+  darray_push(ps->peg_rules, helper);
+
+  bool ok = pp_validate_peg_rules(ps);
+  assert(!ok);
+  assert(strstr(parse_get_error(ps), "TODO") != NULL);
+  assert(strstr(parse_get_error(ps), "helper") != NULL);
+
+  parse_state_del(ps);
+}
+
+TEST(test_validate_peg_todo_scope_ok) {
+  ParseState* ps = parse_state_new();
+  _init_symtabs(ps);
+  ps->vpa_scopes = darray_new(sizeof(VpaScope), 0);
+  ps->peg_rules = darray_new(sizeof(PegRule), 0);
+
+  // Register `foo` as a scope so `foo = TODO` is legal.
+  symtab_intern(&ps->scope_names, "main");
+  symtab_intern(&ps->scope_names, "foo");
+  VpaScope main_s = _make_scope("main", 0, false);
+  darray_push(ps->vpa_scopes, main_s);
+  VpaScope foo_s = _make_scope("foo", 1, false);
+  darray_push(ps->vpa_scopes, foo_s);
+
+  PegRule main_r = {.global_id = symtab_intern(&ps->rule_names, "main"), .scope_id = -1, .body = {.kind = PEG_SEQ}};
+  main_r.body.children = darray_new(sizeof(PegUnit), 0);
+  darray_push(ps->peg_rules, main_r);
+
+  PegRule foo = {
+      .global_id = symtab_intern(&ps->rule_names, "foo"), .scope_id = -1, .body = {.kind = PEG_SEQ}, .is_todo = true};
+  foo.body.children = darray_new(sizeof(PegUnit), 0);
+  darray_push(ps->peg_rules, foo);
+
+  bool ok = pp_validate_peg_rules(ps);
+  assert(ok);
+
+  parse_state_del(ps);
+}
+
+TEST(test_detect_left_recursions_skips_todo) {
+  ParseState* ps = parse_state_new();
+  _init_symtabs(ps);
+  ps->vpa_scopes = darray_new(sizeof(VpaScope), 0);
+  ps->peg_rules = darray_new(sizeof(PegRule), 0);
+
+  symtab_intern(&ps->scope_names, "main");
+  symtab_intern(&ps->scope_names, "foo");
+  VpaScope foo_s = _make_scope("foo", 1, false);
+  darray_push(ps->vpa_scopes, foo_s);
+
+  // main = foo
+  int32_t main_id = symtab_intern(&ps->rule_names, "main");
+  int32_t foo_id = symtab_intern(&ps->rule_names, "foo");
+  PegRule main_r = {.global_id = main_id, .scope_id = -1, .body = {.kind = PEG_SEQ}};
+  main_r.body.children = darray_new(sizeof(PegUnit), 0);
+  PegUnit call_foo = {.kind = PEG_CALL, .id = foo_id};
+  darray_push(main_r.body.children, call_foo);
+  darray_push(ps->peg_rules, main_r);
+
+  // foo = TODO — the empty body must not trigger undefined-call, left-rec,
+  // or orphan errors that ordinarily apply to non-TODO rules.
+  PegRule foo = {.global_id = foo_id, .scope_id = -1, .body = {.kind = PEG_SEQ}, .is_todo = true};
+  foo.body.children = darray_new(sizeof(PegUnit), 0);
+  darray_push(ps->peg_rules, foo);
+
+  bool ok = pp_detect_left_recursions(ps);
+  if (!ok) {
+    fprintf(stderr, "unexpected error: %s\n", parse_get_error(ps));
+  }
+  assert(ok);
+
+  parse_state_del(ps);
+}
+
+TEST(test_match_scopes_todo_skips_set_check) {
+  ParseState* ps = parse_state_new();
+  _init_symtabs(ps);
+  ps->vpa_scopes = darray_new(sizeof(VpaScope), 0);
+  ps->peg_rules = darray_new(sizeof(PegRule), 0);
+  ps->effect_decls = darray_new(sizeof(EffectDecl), 0);
+  symtab_init(&ps->ignores.names, 0);
+
+  // VPA `main` emits @id and invokes scope `foo` which emits @num.
+  symtab_intern(&ps->scope_names, "foo"); // scope id 0
+  VpaScope main_vr = _make_scope("main", 1, false);
+  VpaUnit main_id_tok = _make_re_unit('a', "id", &ps->tokens);
+  darray_push(main_vr.children, main_id_tok);
+  VpaUnit foo_call = _make_call_unit(0);
+  darray_push(main_vr.children, foo_call);
+  darray_push(ps->vpa_scopes, main_vr);
+
+  VpaUnit foo_leader = _make_re_unit_hook('(', HOOK_ID_BEGIN);
+  VpaScope foo_vr = _make_scoped("foo", 0, foo_leader);
+  VpaUnit foo_num = _make_re_unit('0', "num", &ps->tokens);
+  darray_push(foo_vr.children, foo_num);
+  VpaUnit foo_end = _make_re_unit_hook(')', HOOK_ID_END);
+  darray_push(foo_vr.children, foo_end);
+  darray_push(ps->vpa_scopes, foo_vr);
+
+  // PEG main uses @id and scope `foo`. PEG foo = TODO — its used/emit set is
+  // not checked, so the @num emit is tolerated.
+  PegRule main_pr = {.global_id = symtab_intern(&ps->rule_names, "main"), .scope_id = -1, .body = {.kind = PEG_SEQ}};
+  main_pr.body.children = darray_new(sizeof(PegUnit), 0);
+  PegUnit uid = {.kind = PEG_TERM, .id = symtab_intern(&ps->tokens, "id")};
+  darray_push(main_pr.body.children, uid);
+  PegUnit ufoo = {.kind = PEG_TERM, .id = symtab_find(&ps->scope_names, "foo")};
+  darray_push(main_pr.body.children, ufoo);
+  darray_push(ps->peg_rules, main_pr);
+
+  PegRule foo_pr = {
+      .global_id = symtab_intern(&ps->rule_names, "foo"), .scope_id = -1, .body = {.kind = PEG_SEQ}, .is_todo = true};
+  foo_pr.body.children = darray_new(sizeof(PegUnit), 0);
+  darray_push(ps->peg_rules, foo_pr);
+
+  bool ok = pp_match_scopes(ps);
+  if (!ok) {
+    fprintf(stderr, "unexpected error: %s\n", parse_get_error(ps));
+  }
+  assert(ok);
+
+  parse_state_del(ps);
+}
+
 // ============================================================================
 // pp_match_scopes (token set validation)
 // ============================================================================
@@ -1325,6 +1464,10 @@ int main(void) {
   RUN(test_validate_vpa_two_empty_re);
   RUN(test_validate_peg_missing_main);
   RUN(test_validate_peg_duplicate_rule);
+  RUN(test_validate_peg_todo_non_scope);
+  RUN(test_validate_peg_todo_scope_ok);
+  RUN(test_detect_left_recursions_skips_todo);
+  RUN(test_match_scopes_todo_skips_set_check);
   RUN(test_match_scopes_token_mismatch);
   RUN(test_match_scopes_ok);
   RUN(test_match_scopes_scope_ref_in_sets);

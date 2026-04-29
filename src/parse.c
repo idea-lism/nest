@@ -1358,7 +1358,7 @@ static bool _parse_branches(ParseState* ps, TokenChunk* chunk) {
   return true;
 }
 
-// peg_rule = @peg_id @peg_assign seq
+// peg_rule = @peg_id @peg_assign [ @peg_todo | seq ]
 static bool _parse_peg_rule(ParseState* ps, TokenChunk* chunk, int32_t* p) {
   if (T(p).term_id != TOK_PEG_ID) {
     _error_at(ps, &T(p), "expected peg rule name");
@@ -1380,7 +1380,13 @@ static bool _parse_peg_rule(ParseState* ps, TokenChunk* chunk, int32_t* p) {
                                         .source_line = loc.line,
                                         .source_col = loc.col,
                                         .body = {.kind = PEG_SEQ}}));
-  return _parse_seq(ps, chunk, p, &ps->peg_rules[darray_size(ps->peg_rules) - 1].body);
+  PegRule* rule = &ps->peg_rules[darray_size(ps->peg_rules) - 1];
+  if (T(p).term_id == LIT_TODO) {
+    (*p)++;
+    rule->is_todo = true;
+    return true;
+  }
+  return _parse_seq(ps, chunk, p, &rule->body);
 }
 
 // peg = @nl* peg_rule+<@nl> @nl*

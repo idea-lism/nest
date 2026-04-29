@@ -21,6 +21,13 @@ create function `void peg_gen(PegGenInput* input, HeaderWriter* hw, IrWriter* w)
 See [peg_analyze](peg_analyze.md) for how `PegGenInput` is produced.
 
 # Code gen
+
+## `TODO` rule
+
+It is stubbed rule so grammar building can work incrementally, the col size will be always 8 bytes and tag bits takes 0.
+
+Generated parser just returns success. Signature identical. Still registered for the VPA paring (VPA won't know it).
+
 ## Per-scope context
 
 The IR generation uses a `PegIrScopeCtx` to hold per-scope constants, avoiding repeated computation:

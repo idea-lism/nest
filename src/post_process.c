@@ -406,6 +406,10 @@ static bool _validate_token_sets(ParseState* ps) {
     if (!entry) {
       continue;
     }
+    // TODO stub rules bypass the emit/used set match (grammar-in-progress).
+    if (entry->is_todo) {
+      continue;
+    }
 
     int32_t* emit_set = darray_new(sizeof(int32_t), 0);
     _collect_emit_set(scope->children, &emit_set, ps, true);
@@ -642,6 +646,9 @@ static void _visit_rule(ParseState* ps, PegUnit* unit) {
 bool pp_detect_left_recursions(ParseState* ps) {
   for (size_t r = 0; r < darray_size(ps->peg_rules); r++) {
     PegRule* rule = &ps->peg_rules[r];
+    if (rule->is_todo) {
+      continue;
+    }
     const char* rn = _rule_name(ps, rule->global_id);
     if (!rn) {
       continue;
@@ -653,6 +660,9 @@ bool pp_detect_left_recursions(ParseState* ps) {
 
   for (size_t r = 0; r < darray_size(ps->peg_rules); r++) {
     PegRule* rule = &ps->peg_rules[r];
+    if (rule->is_todo) {
+      continue;
+    }
     const char* rn = _rule_name(ps, rule->global_id);
     if (!rn) {
       continue;
@@ -669,6 +679,9 @@ bool pp_detect_left_recursions(ParseState* ps) {
 
   for (size_t r = 0; r < darray_size(ps->peg_rules); r++) {
     PegRule* rule = &ps->peg_rules[r];
+    if (rule->is_todo) {
+      continue;
+    }
     const char* rn = _rule_name(ps, rule->global_id);
     if (!rn) {
       continue;
@@ -1077,6 +1090,18 @@ bool pp_validate_peg_rules(ParseState* ps) {
   if (!has_main) {
     parse_error(ps, "'main' rule must exist in [[peg]]");
     return false;
+  }
+  // `= TODO` rules must correspond to a scope (non-scope rules can't be stubbed).
+  for (size_t i = 0; i < darray_size(ps->peg_rules); i++) {
+    PegRule* rule = &ps->peg_rules[i];
+    if (!rule->is_todo) {
+      continue;
+    }
+    const char* rn = _rule_name(ps, rule->global_id);
+    if (!rn || !_find_scope(ps, rn)) {
+      parse_error(ps, "rule '%s' is '= TODO' but is not a scope; only scope rules can be TODO stubs", rn ? rn : "?");
+      return false;
+    }
   }
   return true;
 }

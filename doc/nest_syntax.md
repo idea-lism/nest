@@ -143,10 +143,38 @@ Delimited by `"` or `'`. Support the same escape sequences as regexes.
 
 ```
 name = seq
+name = TODO      # stub: see "Stub rules" below
 ```
 
 - `name` — lowercase identifier
 - `seq` — sequence of units
+
+### Stub rules (`= TODO`)
+
+Writing `name = TODO` marks a rule as a stub, letting you grow a grammar
+incrementally: the VPA lexer is wired up end-to-end, but the PEG body is left
+for later.
+
+```
+class_body = TODO
+```
+
+Rules for `TODO`:
+
+- Only **scope** rules (PEG rules whose name matches a VPA scope) may be
+  `TODO`. Stubbing a plain helper rule is rejected with an error — stubs exist
+  to defer parsing an entire scope, not to skip helpers.
+- Left-recursion, undefined-call, orphan, and used/emit-set checks are all
+  skipped for `TODO` rules.
+- The generated parser for a `TODO` scope always succeeds, consuming whatever
+  token span the lexer produced for that scope. No `Node_{name}` struct or
+  `{prefix}_load_{name}` function is emitted — you add them by replacing the
+  `TODO` with a real body.
+- The memoize column for a `TODO` scope is a minimal 8 bytes (no slots, no tag
+  bits).
+
+Typical workflow: get `[[vpa]]` accepting your input, stub every scope with
+`= TODO` in `[[peg]]`, then replace the stubs one scope at a time.
 
 ### Units
 

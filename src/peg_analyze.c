@@ -301,8 +301,15 @@ static ScopeClosure _gather_scope_closures(RuleLookup* lu, PegRule* scope_rule) 
   cl.scope_id = scope_rule->scope_id;
   cl.source_line = scope_rule->source_line;
   cl.source_col = scope_rule->source_col;
+  cl.is_todo = scope_rule->is_todo;
   symtab_init(&cl.scoped_rule_names, 0);
   cl.scoped_rules = darray_new(sizeof(ScopedRule), 0);
+
+  // `= TODO` stub: no rules walked; peg_alloc_scope below will assign the
+  // minimal 8-byte column layout and peg_gen emits a success-returning stub.
+  if (cl.is_todo) {
+    return cl;
+  }
 
   GatherCtx gctx = {.lu = lu, .closure = &cl, .multiplier_num = 0};
 
@@ -847,11 +854,17 @@ PegGenInput peg_analyze(PegAnalyzeInput* input, int memoize_mode, const char* pr
   int32_t closure_size = (int32_t)darray_size(closures);
 
   for (int32_t c = 0; c < closure_size; c++) {
+    if (closures[c].is_todo) {
+      continue;
+    }
     _alloc_tags(&lu, &closures[c]);
   }
 
   // Force tag_bit_local_offset = -1 inside lookahead subtrees
   for (int32_t c = 0; c < closure_size; c++) {
+    if (closures[c].is_todo) {
+      continue;
+    }
     for (size_t i = 0; i < darray_size(closures[c].scoped_rules); i++) {
       _strip_lookahead_tags(&closures[c].scoped_rules[i].body);
     }
@@ -865,6 +878,15 @@ PegGenInput peg_analyze(PegAnalyzeInput* input, int memoize_mode, const char* pr
   }
 
   for (int32_t c = 0; c < closure_size; c++) {
+    if (closures[c].is_todo) {
+      // Minimal 8-byte column layout (1 bits bucket, 0 slots) — no analysis.
+      closures[c].bits_bucket_size = 1;
+      closures[c].slots_size = 0;
+      if (input->verbose_level) {
+        fprintf(stderr, "  [peg] scope '%s' is TODO stub, skipping analysis\n", closures[c].scope_name);
+      }
+      continue;
+    }
     if (input->verbose_level) {
       fprintf(stderr, "  [peg] analyzing scope '%s'\n", closures[c].scope_name);
     }
@@ -896,10 +918,16 @@ PegGenInput peg_analyze(PegAnalyzeInput* input, int memoize_mode, const char* pr
   }
 
   for (int32_t c = 0; c < closure_size; c++) {
+    if (closures[c].is_todo) {
+      continue;
+    }
     _build_node_fields(input, &lu, &closures[c], closures, closure_size);
   }
 
   for (int32_t c = 0; c < closure_size; c++) {
+    if (closures[c].is_todo) {
+      continue;
+    }
     _compute_call_sites(&closures[c]);
   }
 

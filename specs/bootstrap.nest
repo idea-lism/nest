@@ -82,7 +82,8 @@ lit_scope = "@{" .begin {
 
 peg = /\s*\[\[peg\]\]\n/ .begin {
   "=" @peg_assign
-  peg_commons
+  "TODO" @peg_todo
+  *peg_commons
   branches
   *noise
   EOF .end
@@ -283,7 +284,10 @@ str_char = [
 
 peg = @nl* peg_rule+<@nl> @nl*
 
-peg_rule = @peg_id @peg_assign seq
+peg_rule = @peg_id @peg_assign [
+  @peg_todo
+  seq
+]
 
 seq = peg_unit+
 

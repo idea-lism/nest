@@ -46,6 +46,7 @@ typedef struct {
   int32_t source_col;
   PegUnit body;
   bool visited; // post-process: orphan detection
+  bool is_todo; // `= TODO` stub rule (must match a scope)
 } PegRule;
 
 typedef PegRule* PegRules; // darray
@@ -168,6 +169,7 @@ typedef struct {
 
   int64_t bits_bucket_size;
   int64_t slots_size;
+  bool is_todo; // stub rule (`= TODO`): minimal 8-byte col, no parsing
 
   // coloring stats (populated by peg_alloc_scope in shared mode)
   int32_t coloring_n_vertices;

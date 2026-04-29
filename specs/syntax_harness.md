@@ -18,7 +18,7 @@ Create script `nest-compose`, when run with a folder `nest-compose foo`, it star
 
 It will first check what files are defined in the folder, read them and create prompt, loop the harness, print progress in stdout, and notify results to front-end.
 
-The harness stops when agent called `break`, or all examples are parsed.
+The harness stops when agent called `break`, or all examples are parsed and no `TODO` rules remaining.
 
 # The Web
 
@@ -67,6 +67,10 @@ Nest is a parser generator. compose a syntax that parses examples with `nest`.
 <%= file content of ex %>
 ```
 <% end %>
+
+# Incremental Work
+
+Focus on VPA lexing first, after lexer passed, for each scope, assign `= TODO` in `[[peg]]`. Then work on each scope, one by one.
 `````
 
 Provided tools:

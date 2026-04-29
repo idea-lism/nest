@@ -70,6 +70,10 @@ typedef struct {
 } PegAnalyzeInput;
 ```
 
+### Special rule `TODO`
+
+If there is scope with PEG rule `= TODO` (post_process already ensure that non-scoped PEG rule can't be `TODO`), the PEG parsing is skipped so the analysis should be skipped on this kind of rule.
+
 ### Scope closures
 
 Create function `_gather_scope_closures()`, which gather rules for each scope:
@@ -164,6 +168,7 @@ struct ScopeClosure {
   ScopedRules scoped_rules; // defined rules
   int32_t source_line; // line in .nest file (from PegRule), for LLVM IR debug info
   int32_t source_col;
+  bool is_todo; // stub rule (`= TODO`), it will have stub parsing function and a minimal col_size of 8 bytes
 
   // after analysis below
   int64_t bits_bucket_size;
