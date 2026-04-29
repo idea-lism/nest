@@ -732,12 +732,24 @@ static void _gen_parse_entry(VpaGenInput* input, IrWriter* w, const char* prefix
   IrVal lex_error_col =
       irwriter_call_retf(w, "i64", "vpa_lex", "ptr %%r%d, i64 %%r%d, ptr %%r%d, ptr null, ptr %%r%d, ptr %%r%d",
                          (int)iter_ptr, (int)len64, (int)tt, (int)ctx_alloca, (int)stack_buf);
-  // vpa_lex sets root chunk scope_id; now call parse_main
+  IrVal has_nested_error = irwriter_icmp(w, "sge", "i64", lex_error_col, irwriter_imm_int(w, 0));
+  IrLabel nested_error_bb = irwriter_label(w);
+  IrLabel parse_main_bb = irwriter_label(w);
+  IrLabel after_parse_bb = irwriter_label(w);
+  irwriter_br_cond(w, has_nested_error, nested_error_bb, parse_main_bb);
+
+  irwriter_bb_at(w, nested_error_bb);
+  irwriter_br(w, after_parse_bb);
+
+  // vpa_lex sets root chunk scope_id; now call parse_main if no nested scope failed
+  irwriter_bb_at(w, parse_main_bb);
   IrVal parse_ret = irwriter_call_retf(w, "{i64, i64}", "parse_main", "ptr %%r%d, ptr %%r%d", (int)tt, (int)stack_buf);
   IrVal main_parse_end_col = irwriter_extractvalue(w, "{i64, i64}", parse_ret, 0);
-  IrVal has_nested_error = irwriter_icmp(w, "sge", "i64", lex_error_col, irwriter_imm_int(w, 0));
-  irwriter_rawf(w, "  %%r%d = select i1 %%r%d, i64 %%r%d, i64 %%r%d\n", irwriter_next_reg(w), (int)has_nested_error,
-                (int)lex_error_col, (int)main_parse_end_col);
+  irwriter_br(w, after_parse_bb);
+
+  irwriter_bb_at(w, after_parse_bb);
+  irwriter_rawf(w, "  %%r%d = phi i64 [%%r%d, %%L%d], [%%r%d, %%L%d]\n", irwriter_next_reg(w), (int)lex_error_col,
+                (int)nested_error_bb, (int)main_parse_end_col, (int)parse_main_bb);
   IrVal parse_end_col = (IrVal)(irwriter_next_reg(w) - 1);
   IrVal tc = irwriter_call_retf(w, "ptr", "tt_current", "ptr %%r%d", (int)tt);
 
