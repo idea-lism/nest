@@ -1,6 +1,6 @@
 The hook system is very extendable.
 
-# Parsing without PEG
+### Parsing without PEG
 
 Consider parsing a number / string, in traditional lexer we'd associate a value to it to speed up parsing:
 
@@ -90,6 +90,6 @@ static int str_try_end(void* state, size_t size, const char* str) {
 
 The caveat is the resulting text range is set to the last token instead of the whole scope.
 
-# Custom lexing
+### Custom lexing
 
 There is no such thing actually. In PEG we can load the token's string range and use custom converter instead.
