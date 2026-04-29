@@ -5,6 +5,11 @@ mode="${1:-debug}"
 ruby config.rb "$mode"
 ninja
 
+for d in build/"$mode"/*.dSYM; do
+  [ -d "$d" ] || continue
+  rm -rf "$d"
+done
+
 for t in build/"$mode"/test_*; do
   [ -x "$t" ] || continue
   echo "--- $t ---"
