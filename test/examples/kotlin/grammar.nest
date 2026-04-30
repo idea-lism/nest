@@ -553,7 +553,8 @@ quest = [
   @quest
 ]
 user_type = simple_user_type+<@dot>
-simple_user_type = simple_id _ type_args?
+simple_user_type = simple_id nl_type_args?
+nl_type_args = _ type_args
 type_args = @langle _ type_projection+<comma_sep> _ @rangle
 type_projection = [
   type_projection_modifier* type
@@ -843,7 +844,8 @@ nl_control_body = _ control_body
 nl_else_branch = _ else_branch
 else_branch = "else" _ control_body
 when_expr = "when" _ when_subject? _ block
-when_subject = @lparen _ expression _ @rparen
+when_subject = @lparen _ when_subject_val? expression _ @rparen
+when_subject_val = annotation* "val" _ variable_decl _ @assign _
 when_entry = [
   when_cond+<comma_sep> _ @arrow _ control_body
   "else" _ @arrow _ control_body
