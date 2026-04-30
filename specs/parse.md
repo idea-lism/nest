@@ -81,6 +81,7 @@ More on the semantics (see also validations in [post_process](post_process.md)):
   - both peg & vpa -- create sub-stream and invoke parsing on sub-stream
   - non-peg vpa -- don't create sub-stream (see example below)
   - non-vpa peg -- just a peg sub-rule, no special handling
+  - PEG parse failure is recoverable: record a syntax `ParseError`, close the sub-stream, emit the scope token in the parent stream, and continue VPA lexing. Lexer failures remain fatal and stop lexing immediately.
 
 in addition, the `re` scope has interpolation syntax:
 - `#{UPPER_CASED_ID}` references a predefined regexp fragment

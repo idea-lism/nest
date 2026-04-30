@@ -146,10 +146,11 @@ extern void {prefix}_parse_splat(const char* src,
 // user interface
 static inline ParseResult {prefix}_parse(ParseContext* ctx, const char* input) {
   ParseResult res = {0};
-  {prefix}_parse_splat(ctx, input,
+  {prefix}_parse_splat(input,
     ctx->user_data, ctx->source_file_name, ctx->foo, ctx->bar,
     &res.main, &res.tt, &res.errors, &res.parse_end_col
   );
+  ... // Error reporting logic, see below
   return res;
 }
 
@@ -206,8 +207,10 @@ In LLVM-IR: define the main function `{prefix}_parse_splat`. Args depend on nest
 
 On top of main function malloc a fixed 1M stack for peg parser's backtracking. All scoped parsers share the same stack ptr (they don't call each other, so just pass the ptr, no arithmetics).
 
-For each scope, PEG parsers generates an internal `parse_{scope_name}` function, the visibly pushdown machine just invoke the parsing function when a scope ends (`.end` action).
-- Main scope doesn't have `.end` action, so after all input is consumed in {main_parse_fn_name}, call `parse_main()`
+For each scope, PEG parsers generates an internal `parse_{scope_name}` function. The visibly pushdown machine invokes the parsing function when a scope ends (`.end` action).
+- Main scope doesn't have `.end` action, so after all input is consumed in {main_parse_fn_name}, call `parse_main()`.
+- A PEG failure is **not** a lexer failure. If it fails, set the tree and current chunk's `has_parse_error = 1` before `tt_pop`.
+- A lexer failure is still fatal. If no VPA action can be dispatched, a hook returns `.fail`, or a hook returns an invalid `%effect`, lexing stops immediately and no more input is consumed.
 
 Since the VPA and the PEG share a same LLVM-IR writer, in PEG the parsing functions should be defined as internal, in VPA we can call them directly.
 
@@ -219,6 +222,35 @@ Similar to the `_lex_scope` in the [parse spec][parse.md].
   - Inlines child scope's leader regexp
 - Greedy match, and trigger `last_action_id` on no match / eof
 - Manages scoping stack / token_tree / parser invocation
+
+### Error reporting
+
+The error data structure is defined in parse_result.inc and will be emit by common_header_gen.
+
+```c
+typedef enum {
+  PARSE_ERROR_INVALID_HOOK,
+  PARSE_ERROR_REQUIRE_MORE_INPUT,
+  PARSE_ERROR_TOKEN_ERR,
+  PARSE_ERROR_INVALID_SYNTAX,
+} ParseErrorType;
+
+typedef struct __attribute__((packed, aligned(8))) {
+  char* message; // always dynamic allocated, cleanup frees them
+  ParseErrorType type;
+  int32_t cp_offset;
+  int32_t cp_size;
+} ParseError;
+```
+
+After parse loop
+- if there is token error, just report token error, no need to report parse error. error kinds are:
+  - PARSE_ERROR_INVALID_HOOK
+  - PARSE_ERROR_REQUIRE_MORE_INPUT
+  - PARSE_ERROR_TOKEN_ERR
+- if there is no token error, check if there is any parse error by `token_tree->has_parse_error`
+  - if there is parse error, collect error messages by `tt_collect_parse_errors(token_tree, {prefix}_parse_error_collect, (void*)&parse_errors)`
+    - each error kind is PARSE_ERROR_INVALID_SYNTAX
 
 ### Header generating
 

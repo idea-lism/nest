@@ -27,7 +27,7 @@ typedef enum {
 } ParseErrorType;
 
 typedef struct __attribute__((packed, aligned(8))) {
-  const char* message;
+  char* message;
   ParseErrorType type;
   int32_t cp_offset;
   int32_t cp_size;
