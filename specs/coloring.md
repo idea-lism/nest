@@ -41,6 +41,10 @@ We have LB (max clique) and UB (DSatur) in the beginning, we wan't to find out t
 
 We do a binary search for `LB <= k <= UB` to find the minimal coloring number that: SAT can give an answer in our limited time step settings.
 
+UB is usually more precise, so we search `UB * 2/3 + LB * 1/3` instead of averaging.
+
+When reaching UB, there's no need to run a SAT though, we can just use the existing UB result.
+
 ## Graph helpers (src/graph.c)
 
 For testing, src/graph.c provides:

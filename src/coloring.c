@@ -295,19 +295,20 @@ static int32_t* _solve_sat(int32_t n_vertices, int32_t* edges, int32_t n_edges, 
 }
 
 // Binary search for the minimal k between lb and ub that SAT can solve.
-// Returns a ColoringResult on success, NULL if no k in [lb, ub] works.
+// initial_best is a known valid coloring (ownership transferred); returned as-is if no better k is found.
 static ColoringResult* _binary_search_color(int32_t n_vertices, int32_t* edges, int32_t n_edges, int32_t lb, int32_t ub,
-                                            int32_t max_steps, int32_t seed, bool use_product_encoding, FILE* log) {
+                                            int32_t max_steps, int32_t seed, bool use_product_encoding, FILE* log,
+                                            ColoringResult* best) {
   if (lb > ub) {
-    return NULL;
+    return best;
   }
 
   int32_t lo = lb, hi = ub;
-  ColoringResult* best = NULL;
   int32_t iter = 0;
 
   while (lo <= hi) {
-    int32_t mid = lo + (hi - lo) / 2;
+    // Bias toward UB (likely SAT region). When hi-lo==1 this gives mid=lo, still progresses.
+    int32_t mid = lo + (hi - lo) * 2 / 3;
     bool timeout = false;
     int32_t* colors = _solve_sat(n_vertices, edges, n_edges, mid, max_steps, seed, use_product_encoding, &timeout);
     if (log) {
@@ -343,6 +344,7 @@ ColoringResult* coloring_solve(int32_t n_vertices, int32_t* edges, int32_t n_edg
 
   int32_t* dsatur_colors = _solve_dsatur(n_vertices, edges, n_edges, n_vertices);
   int32_t ub;
+  ColoringResult* dsatur_cr = NULL;
   if (dsatur_colors) {
     // Find the max color used by DSatur to get a tight UB.
     ub = 0;
@@ -352,7 +354,13 @@ ColoringResult* coloring_solve(int32_t n_vertices, int32_t* edges, int32_t n_edg
       }
     }
     ub++;
-    XFREE(dsatur_colors);
+    // Build the DSatur result now — it is a valid ub-coloring and serves as the
+    // initial best so SAT never needs to probe k = ub.
+    dsatur_cr = XMALLOC(sizeof(ColoringResult));
+    dsatur_cr->n_vertices = n_vertices;
+    dsatur_cr->vertex_info = XMALLOC(n_vertices * sizeof(VertexInfo));
+    _build_segments(dsatur_cr, dsatur_colors, ub);
+    dsatur_cr->colors = dsatur_colors; // transfer ownership
   } else {
     // DSatur failed (shouldn't happen with n_vertices colors, but be safe).
     ub = n_vertices;
@@ -362,9 +370,10 @@ ColoringResult* coloring_solve(int32_t n_vertices, int32_t* edges, int32_t n_edg
     fprintf(log, "  [coloring] n=%d edges=%d lb=%d (max clique) ub=%d (DSatur)\n", n_vertices, n_edges, lb, ub);
   }
 
-  // Binary search between lb and ub for the minimal k.
+  // Binary search between lb and ub-1: DSatur already covers ub.
+  // dsatur_cr ownership is transferred to _binary_search_color.
   ColoringResult* cr =
-      _binary_search_color(n_vertices, edges, n_edges, lb, ub, max_steps, seed, use_product_encoding, log);
+      _binary_search_color(n_vertices, edges, n_edges, lb, ub - 1, max_steps, seed, use_product_encoding, log, dsatur_cr);
   if (log && cr) {
     fprintf(log, "  [coloring] result: %d colors\n", coloring_get_sg_size(cr));
   }

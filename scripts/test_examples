@@ -1,43 +1,80 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-MODE="${1:-debug}"
-NEST="build/${MODE}/nest"
+MODE="debug"
+PEG_MODE=""
+for arg in "$@"; do
+  case "$arg" in
+    debug|release) MODE="$arg" ;;
+    naive|shared) PEG_MODE="$arg" ;;
+    *) echo "error: unknown argument: $arg" >&2; exit 1 ;;
+  esac
+done
+
+if [ -n "$PEG_MODE" ]; then
+  PEG_MODES=("$PEG_MODE")
+else
+  PEG_MODES=(naive shared)
+fi
+
+ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+NEST="$ROOT/build/${MODE}/nest"
 CC="${CC:-clang}"
 # Note: -mllvm --enable-gvn-memdep=false works around a clang crash on large
 # PEG grammars at -O2. See README.md "Known issues".
 CFLAGS="${CFLAGS:--std=c23 -O2 -mllvm --enable-gvn-memdep=false}"
-TMPDIR=$(mktemp -d)
-trap 'rm -rf "$TMPDIR"' EXIT
+WORKDIR="$ROOT/build/test_examples"
+rm -rf "$WORKDIR"
+mkdir -p "$WORKDIR"
 
 if [ ! -x "$NEST" ]; then
   echo "error: $NEST not found, run: ruby config.rb $MODE && ninja" >&2
   exit 1
 fi
 
+# ANSI colors (disabled if stdout is not a tty or NO_COLOR is set)
+if [ -t 1 ] && [ -z "${NO_COLOR:-}" ]; then
+  C_CMD=$'\033[36m'    # cyan for executed commands
+  C_INPUT=$'\033[33m'  # yellow for input files
+  C_RESET=$'\033[0m'
+else
+  C_CMD=""
+  C_INPUT=""
+  C_RESET=""
+fi
+
+# run: echo and execute a command
+run() {
+  echo "${C_CMD}$*${C_RESET}"
+  "$@"
+}
+
 pass=0
 fail=0
 
-for dir in test/examples/*/; do
+for dir in "$ROOT"/test/examples/*/; do
+  dir="${dir%/}"
   name=$(basename "$dir")
   grammar="$dir/grammar.nest"
   [ -f "$grammar" ] || continue
 
-  for mode in naive shared; do
-    # Compile grammar
-    if ! "$NEST" c "$grammar" -p "$name" -m "$mode" 2>"$TMPDIR/nest_err" ; then
+  for mode in "${PEG_MODES[@]}"; do
+    case_dir="$WORKDIR/${name}_${mode}"
+    mkdir -p "$case_dir"
+
+    # Compile grammar (cd into case_dir so outputs land there)
+    if ! (cd "$case_dir" && run "$NEST" c "$grammar" -p "$name" -m "$mode") 2>"$case_dir/nest_err"; then
       echo "FAIL $name ($mode): nest c failed"
-      cat "$TMPDIR/nest_err" >&2
+      cat "$case_dir/nest_err" >&2
       fail=$((fail + 1))
       continue
     fi
 
-    # Move generated files to tmpdir
-    mv "${name}.c" "${name}.h" "${name}.ll" "$TMPDIR/" 2>/dev/null
     # Compile (use mode-specific binary name to avoid macOS dyld caching issues)
-    if ! $CC $CFLAGS "$TMPDIR/${name}.c" "$TMPDIR/${name}.ll" -o "$TMPDIR/${name}_${mode}" 2>"$TMPDIR/cc_err"; then
+    bin="$case_dir/${name}_${mode}"
+    if ! run $CC $CFLAGS "$case_dir/${name}.c" "$case_dir/${name}.ll" -o "$bin" 2>"$case_dir/cc_err"; then
       echo "FAIL $name ($mode): compile failed"
-      cat "$TMPDIR/cc_err" >&2
+      cat "$case_dir/cc_err" >&2
       fail=$((fail + 1))
       continue
     fi
@@ -49,13 +86,15 @@ for dir in test/examples/*/; do
       expected="$dir/${case_name}.expected"
       [ -f "$expected" ] || continue
 
-      actual=$("$TMPDIR/${name}_${mode}" "$input_file" 2>&1 || true)
+      rel_input="${input_file#$ROOT/}"
+      echo "${C_INPUT}${rel_input}${C_RESET}"
+      actual=$("$bin" "$input_file" 2>&1 || true)
 
-      if diff -u "$expected" - <<<"$actual" >"$TMPDIR/diff" 2>&1; then
+      if diff -u "$expected" - <<<"$actual" >"$case_dir/${case_name}.diff" 2>&1; then
         pass=$((pass + 1))
       else
         echo "FAIL $name/$case_name ($mode):"
-        cat "$TMPDIR/diff"
+        cat "$case_dir/${case_name}.diff"
         fail=$((fail + 1))
       fi
     done
