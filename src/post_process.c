@@ -1004,31 +1004,49 @@ bool pp_validate_vpa_scopes(ParseState* ps) {
     }
 
     if (!is_main) {
-      bool has_begin = false, has_end = false;
+      bool has_begin = false;
       if (_unit_has_hook(&scope->leader, HOOK_ID_BEGIN, ps)) {
         has_begin = true;
-      }
-      if (_unit_has_hook(&scope->leader, HOOK_ID_END, ps)) {
-        has_end = true;
       }
       for (size_t j = 0; j < darray_size(scope->children); j++) {
         if (_unit_has_hook(&scope->children[j], HOOK_ID_BEGIN, ps)) {
           has_begin = true;
         }
+      }
+      if (!has_begin) {
+        parse_error(ps, "scope '%s' missing .begin", scope->name);
+        return false;
+      }
+    }
+
+    // every scope must have .end
+    {
+      bool has_end = false;
+      if (_unit_has_hook(&scope->leader, HOOK_ID_END, ps)) {
+        has_end = true;
+      }
+      for (size_t j = 0; j < darray_size(scope->children); j++) {
         if (_unit_has_hook(&scope->children[j], HOOK_ID_END, ps)) {
           has_end = true;
         }
       }
-      if (has_begin && !has_end) {
+      if (!has_end) {
         parse_error(ps, "scope '%s' missing .end", scope->name);
         return false;
       }
-      if (!has_begin && has_end) {
-        parse_error(ps, "scope '%s' missing .begin", scope->name);
-        return false;
+    }
+
+    // main must contain an EOF line
+    if (is_main) {
+      bool has_eof = false;
+      for (size_t j = 0; j < darray_size(scope->children); j++) {
+        if (scope->children[j].kind == VPA_EOF) {
+          has_eof = true;
+          break;
+        }
       }
-      if (!has_begin && !has_end) {
-        parse_error(ps, "scope '%s' missing .begin and .end", scope->name);
+      if (!has_eof) {
+        parse_error(ps, "'main' scope must contain an EOF line");
         return false;
       }
     }

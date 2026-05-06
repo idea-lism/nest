@@ -9,6 +9,7 @@ main = {
   /\(/ @lparen
   /\)/ @rparen
   /\s+/ @space
+  EOF .end
 }
 [[peg]]
 main = expr

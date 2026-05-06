@@ -5,6 +5,7 @@ main = {
   /[a-zA-Z_]\w*/ @ident
   /\s+/ @space
   *kw
+  EOF .end
 }
 *kw = @{
   "end"

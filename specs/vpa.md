@@ -208,7 +208,6 @@ In LLVM-IR: define the main function `{prefix}_parse_splat`. Args depend on nest
 On top of main function malloc a fixed 1M stack for peg parser's backtracking. All scoped parsers share the same stack ptr (they don't call each other, so just pass the ptr, no arithmetics).
 
 For each scope, PEG parsers generates an internal `parse_{scope_name}` function. The visibly pushdown machine invokes the parsing function when a scope ends (`.end` action).
-- Main scope doesn't have `.end` action, so after all input is consumed in {main_parse_fn_name}, call `parse_main()`.
 - A PEG failure is **not** a lexer failure. If it fails, set the tree and current chunk's `has_parse_error = 1` before `tt_pop`.
 - A lexer failure is still fatal. If no VPA action can be dispatched, a hook returns `.fail`, or a hook returns an invalid `%effect`, lexing stops immediately and no more input is consumed.
 

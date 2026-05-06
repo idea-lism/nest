@@ -6,6 +6,7 @@ main = {
   /[0-9]+/ @number
   /\s+/ @space
   str
+  EOF .end
 }
 
 str = /"/ .begin @dquote {

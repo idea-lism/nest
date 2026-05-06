@@ -103,9 +103,14 @@ TokenChunk* tt_push_assoc(TokenTree* tree, int32_t scope_id) {
 }
 
 TokenChunk* tt_pop(TokenTree* tree, int32_t cp_end) {
-  if (tree->current->parent_id == -1) {
-    fprintf(stderr, "Error: Attempting to pop root chunk, which is not allowed.\n");
+  if (!tree->current) {
+    fprintf(stderr, "Error: tt_pop called with no current chunk (already popped).\n");
     abort();
+  }
+  if (tree->current->parent_id == -1) {
+    // popping root: set current to NULL, no scope-ref to add
+    tree->current = NULL;
+    return NULL;
   }
   TokenChunk* child = tree->current;
   int32_t child_idx = (int32_t)(child - tree->table);

@@ -1011,6 +1011,7 @@ TEST(test_none_memoize_O2_exec) {
               "main = {\n"
               "  /[a-zA-Z]+/ @word\n"
               "  /\\s+/ @space\n"
+              "  EOF .end\n"
               "}\n"
               "[[peg]]\n"
               "main = @word*\n");
@@ -1067,6 +1068,7 @@ TEST(test_none_memoize_alternation_crash) {
               "  /\\]/ @rbracket\n"
               "  /,/ @comma\n"
               "  /[0-9]+/ @number\n"
+              "  EOF .end\n"
               "}\n"
               "[[peg]]\n"
               "main = value\n"
@@ -1266,6 +1268,7 @@ TEST(test_multi_bucket_tags_exec) {
     char c2 = (char)('a' + i % 26);
     fprintf(nf, "  /%c%c/ @t%02d\n", c1, c2, i);
   }
+  fprintf(nf, "  EOF .end\n");
   fprintf(nf, "}\n");
 
   // PEG: item = [ @t00 : tag0, @t01 : tag1, ..., @t69 : tag69 ]
@@ -1358,6 +1361,7 @@ TEST(test_naive_memoize_exec) {
               "main = {\n"
               "  /[a-zA-Z]+/ @word\n"
               "  /\\s+/ @space\n"
+              "  EOF .end\n"
               "}\n"
               "[[peg]]\n"
               "main = @word*\n");
@@ -1407,6 +1411,7 @@ TEST(test_shared_memoize_exec) {
               "main = {\n"
               "  /[a-zA-Z]+/ @word\n"
               "  /\\s+/ @space\n"
+              "  EOF .end\n"
               "}\n"
               "[[peg]]\n"
               "main = @word*\n");
@@ -1459,6 +1464,7 @@ TEST(test_naive_memoize_alternation) {
               "  /\\]/ @rbracket\n"
               "  /,/ @comma\n"
               "  /[0-9]+/ @number\n"
+              "  EOF .end\n"
               "}\n"
               "[[peg]]\n"
               "main = value\n"
@@ -1536,6 +1542,7 @@ TEST(test_shared_memoize_alternation) {
               "  /\\]/ @rbracket\n"
               "  /,/ @comma\n"
               "  /[0-9]+/ @number\n"
+              "  EOF .end\n"
               "}\n"
               "[[peg]]\n"
               "main = value\n"
@@ -1612,6 +1619,7 @@ TEST(test_naive_nested_rule) {
               "  /[a-z]+/ @word\n"
               "  /[0-9]+/ @number\n"
               "  /;/ @semi\n"
+              "  EOF .end\n"
               "}\n"
               "[[peg]]\n"
               "main = stmt+\n"
@@ -1673,6 +1681,7 @@ TEST(test_naive_branch_sequence_alternation_regression) {
               "  /[0-9]+/ @number\n"
               "  /\\(/ @lparen\n"
               "  /\\)/ @rparen\n"
+              "  EOF .end\n"
               "}\n"
               "[[peg]]\n"
               "main = factor\n"
@@ -1743,6 +1752,7 @@ TEST(test_naive_loader_optional_absent_oob_regression) {
               "  /c/ @c\n"
               "  /d/ @d\n"
               "  /[ \\t\\r\\n]+/ @space\n"
+              "  EOF .end\n"
               "}\n"
               "[[peg]]\n"
               "main = item\n"
@@ -1797,6 +1807,7 @@ TEST(test_shared_loader_optional_colored_slot_regression) {
               "  /d/ @d\n"
               "  /e/ @e\n"
               "  /[ \\t\\r\\n]+/ @space\n"
+              "  EOF .end\n"
               "}\n"
               "[[peg]]\n"
               "main = item\n"

@@ -146,6 +146,7 @@ main = {
   /%/ @mod
   /\// @slash
   /@/ @at
+  EOF .end
 }
 
 block = /[{]/ .begin @lbrace {

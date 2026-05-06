@@ -3,6 +3,7 @@
 main = {
   /[a-zA-Z]+/ @word
   /\s+/ @space
+  EOF .end
 }
 [[peg]]
 main = @word*

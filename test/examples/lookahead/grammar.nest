@@ -4,6 +4,7 @@ main = {
   /[0-9]+/ @number
   /[a-zA-Z_]\w*/ @ident
   /\s+/ @space
+  EOF .end
 }
 [[peg]]
 main = item+

@@ -391,21 +391,6 @@ static void _gen_vpa_lex(VpaGenInput* input, IrWriter* w, const char* prefix) {
   irwriter_store(w, "i32", irwriter_imm_int(w, 0), last_action_ptr);
   irwriter_store(w, "i32", irwriter_imm_int(w, 0), last_match_off_ptr);
   irwriter_store(w, "i32", irwriter_imm_int(w, 0), token_start_ptr);
-  // --- set root chunk scope_id to main scope ---
-  if (n_scopes > 0) {
-    // tt->current is at byte offset 24 in TokenTree struct (after src, newline_map, root)
-    // Actually: TokenTree = {src(ptr), newline_map(ptr), root(ptr), current(ptr), table(ptr)}
-    // On 64-bit: current is at offset 24 bytes
-    irwriter_rawf(w, "  %%r%d = getelementptr i8, ptr %%tt, i64 24\n", irwriter_next_reg(w));
-    IrVal current_ptr_ptr = (IrVal)(irwriter_next_reg(w) - 1);
-    IrVal current_chunk = irwriter_load(w, "ptr", current_ptr_ptr);
-    irwriter_store(w, "i32", irwriter_imm_int(w, input->scopes[0].scope_id), current_chunk);
-    irwriter_comment(w, "root scope_id = %d", input->scopes[0].scope_id);
-    // set root chunk aux_value = tt (for PEG loaders to find TokenTree)
-    irwriter_rawf(w, "  %%r%d = getelementptr i8, ptr %%r%d, i64 16\n", irwriter_next_reg(w), (int)current_chunk);
-    IrVal aux_ptr = (IrVal)(irwriter_next_reg(w) - 1);
-    irwriter_store(w, "ptr", irwriter_imm(w, "%tt"), aux_ptr);
-  }
   IrLabel loop_bb = irwriter_label(w);
   IrLabel read_bb = irwriter_label(w);
   IrLabel dispatch_bb = irwriter_label(w);
@@ -534,9 +519,10 @@ static void _gen_vpa_lex(VpaGenInput* input, IrWriter* w, const char* prefix) {
     }
   }
 
+  IrLabel eof_check_bb = (IrLabel)0;
   IrVal has_last = irwriter_icmp(w, "sgt", "i32", last_action, irwriter_imm_int(w, 0));
   if (any_eof) {
-    IrLabel eof_check_bb = irwriter_label(w);
+    eof_check_bb = irwriter_label(w);
     irwriter_br_cond(w, has_last, dispatch_action_bb, eof_check_bb);
 
     // --- eof check: if at end of input and scope has eof_action, invoke it ---
@@ -545,7 +531,12 @@ static void _gen_vpa_lex(VpaGenInput* input, IrWriter* w, const char* prefix) {
     IrVal eof_cp_off = irwriter_load(w, "i32", cp_off_ptr);
     IrVal is_eof = irwriter_icmp(w, "sge", "i32", eof_cp_off, irwriter_imm(w, "%len"));
     IrLabel eof_scope_sw_bb = irwriter_label(w);
-    irwriter_br_cond(w, is_eof, eof_scope_sw_bb, done_bb);
+    IrLabel eof_stuck_bb = irwriter_label(w);
+    irwriter_br_cond(w, is_eof, eof_scope_sw_bb, eof_stuck_bb);
+    // stuck: can't match, not at EOF — return error position
+    irwriter_bb_at(w, eof_stuck_bb);
+    IrVal stuck_col = irwriter_sext(w, "i32", eof_cp_off, "i64");
+    irwriter_ret(w, "i64", stuck_col);
     irwriter_bb_at(w, eof_scope_sw_bb);
 
     // read scope_id to switch on
@@ -627,7 +618,7 @@ static void _gen_vpa_lex(VpaGenInput* input, IrWriter* w, const char* prefix) {
   irwriter_call_void_fmtf(w, "ustr_iter_seek", "i8* %%src, i32 %%r%d", (int)match_off);
 
   IrVal still_going = irwriter_icmp(w, "slt", "i32", match_off, irwriter_imm(w, "%len"));
-  irwriter_br_cond(w, still_going, loop_bb, done_bb);
+  irwriter_br_cond(w, still_going, loop_bb, any_eof ? eof_check_bb : done_bb);
 
   // --- done ---
   irwriter_bb_at(w, done_bb);
@@ -643,8 +634,6 @@ static void _gen_parse_entry(VpaGenInput* input, IrWriter* w, const char* prefix
   // vpa_lex is already defined in this module; no declare needed
   irwriter_declare(w, "i8*", "tt_tree_new", "i8*");
   irwriter_declare(w, "i32", "ustr_size", "i8*");
-  irwriter_declare(w, "{i64, i64}", "parse_main", "ptr, ptr");
-  irwriter_declare(w, "ptr", "tt_current", "ptr");
   irwriter_declare(w, "void", "tt_tree_del", "ptr, i1");
 #ifdef XMALLOC_TRACE
   irwriter_declare(w, "void", "darray_del_traced", "ptr, ptr, i32");
@@ -692,6 +681,20 @@ static void _gen_parse_entry(VpaGenInput* input, IrWriter* w, const char* prefix
   IrVal len = irwriter_call_retf(w, "i32", "ustr_size", "ptr %%src");
   IrVal len64 = irwriter_sext(w, "i32", len, "i64");
   IrVal tt = irwriter_call_retf(w, "ptr", "tt_tree_new", "ptr %%src");
+  // set root chunk scope_id and aux_value
+  {
+    int32_t n_scopes = (int32_t)darray_size(input->scopes);
+    if (n_scopes > 0) {
+      // tt->root is at offset 16 in TokenTree
+      irwriter_rawf(w, "  %%r%d = getelementptr i8, ptr %%r%d, i64 16\n", irwriter_next_reg(w), (int)tt);
+      IrVal root_chunk = irwriter_load(w, "ptr", (IrVal)(irwriter_next_reg(w) - 1));
+      // root_chunk->scope_id is at offset 0 in TokenChunk
+      irwriter_store(w, "i32", irwriter_imm_int(w, input->scopes[0].scope_id), root_chunk);
+      // root_chunk->aux_value is at offset 16 in TokenChunk (after scope_id(4) + parent_id(4) + tokens(8))
+      irwriter_rawf(w, "  %%r%d = getelementptr i8, ptr %%r%d, i64 16\n", irwriter_next_reg(w), (int)root_chunk);
+      irwriter_store(w, "ptr", tt, (IrVal)(irwriter_next_reg(w) - 1));
+    }
+  }
   // Build ctx struct on stack: {void* user_data, const char* source_file_name, LexHook...}
   // Ctx has 2 + n_user_hooks pointer-sized fields
   // Build ctx type string: {ptr, ptr, ptr, ...} with 2 + n_user_hooks fields
@@ -729,29 +732,12 @@ static void _gen_parse_entry(VpaGenInput* input, IrWriter* w, const char* prefix
 #else
   IrVal stack_buf = irwriter_call_retf(w, "ptr", "malloc", "i64 1048576");
 #endif
-  IrVal lex_error_col =
+  IrVal lex_result =
       irwriter_call_retf(w, "i64", "vpa_lex", "ptr %%r%d, i64 %%r%d, ptr %%r%d, ptr null, ptr %%r%d, ptr %%r%d",
                          (int)iter_ptr, (int)len64, (int)tt, (int)ctx_alloca, (int)stack_buf);
-  IrVal has_nested_error = irwriter_icmp(w, "sge", "i64", lex_error_col, irwriter_imm_int(w, 0));
-  IrLabel nested_error_bb = irwriter_label(w);
-  IrLabel parse_main_bb = irwriter_label(w);
-  IrLabel after_parse_bb = irwriter_label(w);
-  irwriter_br_cond(w, has_nested_error, nested_error_bb, parse_main_bb);
-
-  irwriter_bb_at(w, nested_error_bb);
-  irwriter_br(w, after_parse_bb);
-
-  // vpa_lex sets root chunk scope_id; now call parse_main if no nested scope failed
-  irwriter_bb_at(w, parse_main_bb);
-  IrVal parse_ret = irwriter_call_retf(w, "{i64, i64}", "parse_main", "ptr %%r%d, ptr %%r%d", (int)tt, (int)stack_buf);
-  IrVal main_parse_end_col = irwriter_extractvalue(w, "{i64, i64}", parse_ret, 0);
-  irwriter_br(w, after_parse_bb);
-
-  irwriter_bb_at(w, after_parse_bb);
-  irwriter_rawf(w, "  %%r%d = phi i64 [%%r%d, %%L%d], [%%r%d, %%L%d]\n", irwriter_next_reg(w), (int)lex_error_col,
-                (int)nested_error_bb, (int)main_parse_end_col, (int)parse_main_bb);
-  IrVal parse_end_col = (IrVal)(irwriter_next_reg(w) - 1);
-  IrVal tc = irwriter_call_retf(w, "ptr", "tt_current", "ptr %%r%d", (int)tt);
+  // load tt->root (offset 16 in TokenTree struct)
+  irwriter_rawf(w, "  %%r%d = getelementptr i8, ptr %%r%d, i64 16\n", irwriter_next_reg(w), (int)tt);
+  IrVal tc = irwriter_load(w, "ptr", (IrVal)(irwriter_next_reg(w) - 1));
 
   // Store results via out-params
   // out_main: PegRef = {ptr tc, i64 0, i64 main_rule_row}
@@ -770,7 +756,7 @@ static void _gen_parse_entry(VpaGenInput* input, IrWriter* w, const char* prefix
   // out_errors: ParseErrors* (null)
   irwriter_store(w, "ptr", irwriter_imm(w, "null"), irwriter_imm(w, "%out_errors"));
   // out_parse_end_col: i64*
-  irwriter_store(w, "i64", parse_end_col, irwriter_imm(w, "%out_parse_end_col"));
+  irwriter_store(w, "i64", lex_result, irwriter_imm(w, "%out_parse_end_col"));
 
 #ifdef XMALLOC_TRACE
   irwriter_call_void_fmtf(w, "xfree_traced", "ptr %%r%d, ptr @.xmalloc_caller.parse, i32 0", (int)stack_buf);

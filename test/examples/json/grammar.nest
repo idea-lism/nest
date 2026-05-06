@@ -10,6 +10,7 @@ main = {
   /\]/ @rbracket
   /[{]/ @lbrace
   /[}]/ @rbrace
+  EOF .end
 }
 [[peg]]
 main = value

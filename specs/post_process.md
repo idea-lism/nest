@@ -127,8 +127,10 @@ _Thread_local (C11)(deprecated in C23)
 
 `bool pp_validate_vpa_scopes(ParseState* ps)`:
 - a `main` must exist.
+  - the `main` scope must contain an `EOF` line
 - no repeated scope names.
-- scopes except `main` must have a `.begin` (or user hook that produces the `.begin` effect) and one or more `.end` (or user hook that produces the `end` effect)
+- scopes except `main` must have a `.begin` (or user hook that produces the `.begin` effect)
+- every scope must have one or more `.end` (or user hook that produces the `end` effect)
 - a leading `re`/`re_str`/``re_frag_id` (before scope bracket) must contain at least 1 char in it
 - inside a scope bracket `{ ... }`, after macro expansion, there can only be 1 `re`/`re_str`/``re_frag_id` that is empty
   - if the branch is empty, it means a fallback action, the following action must have one of `.end`/`.fail`

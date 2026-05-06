@@ -80,6 +80,14 @@ static VpaUnit _make_call_unit(int32_t scope_id) {
   return u;
 }
 
+static VpaUnit _make_eof_end(void) {
+  VpaUnit u = {.kind = VPA_EOF};
+  u.action_units = darray_new(sizeof(int32_t), 0);
+  int32_t end_hook = -HOOK_ID_END;
+  darray_push(u.action_units, end_hook);
+  return u;
+}
+
 // Helper: make a scope (no leader, children provided externally)
 static VpaScope _make_scope(const char* name, int32_t scope_id, bool is_macro) {
   VpaScope s = {.scope_id = scope_id,
@@ -87,6 +95,14 @@ static VpaScope _make_scope(const char* name, int32_t scope_id, bool is_macro) {
                 .leader = {0},
                 .children = darray_new(sizeof(VpaUnit), 0),
                 .is_macro = is_macro};
+  return s;
+}
+
+// Helper: make a main scope with mandatory EOF .end
+static VpaScope _make_main_scope(void) {
+  VpaScope s = _make_scope("main", 0, false);
+  VpaUnit eof = _make_eof_end();
+  darray_push(s.children, eof);
   return s;
 }
 
@@ -107,7 +123,7 @@ TEST(test_inline_macros) {
   ps->vpa_scopes = darray_new(sizeof(VpaScope), 0);
 
   // main = { /a/ @word *ws }
-  VpaScope main_s = _make_scope("main", 0, false);
+  VpaScope main_s = _make_main_scope();
   VpaUnit word_u = _make_re_unit('a', "word", &ps->tokens);
   darray_push(main_s.children, word_u);
   VpaUnit ws_ref = _make_macro_ref("ws");
@@ -151,7 +167,7 @@ TEST(test_inline_macros_missing) {
   _init_symtabs(ps);
   ps->vpa_scopes = darray_new(sizeof(VpaScope), 0);
 
-  VpaScope main_s = _make_scope("main", 0, false);
+  VpaScope main_s = _make_main_scope();
   VpaUnit ref = _make_macro_ref("nonexistent");
   darray_push(main_s.children, ref);
   darray_push(ps->vpa_scopes, main_s);
@@ -584,7 +600,7 @@ TEST(test_orphan_scope) {
   ps->vpa_scopes = darray_new(sizeof(VpaScope), 0);
   ps->effect_decls = darray_new(sizeof(EffectDecl), 0);
 
-  VpaScope main_s = _make_scope("main", 0, false);
+  VpaScope main_s = _make_main_scope();
   darray_push(ps->vpa_scopes, main_s);
 
   // str scope: has .begin/.end, but main doesn't call it
@@ -609,7 +625,7 @@ TEST(test_orphan_scope_reachable) {
   ps->effect_decls = darray_new(sizeof(EffectDecl), 0);
 
   // main calls str
-  VpaScope main_s = _make_scope("main", 0, false);
+  VpaScope main_s = _make_main_scope();
   VpaUnit call_str = _make_call_unit(1);
   darray_push(main_s.children, call_str);
   darray_push(ps->vpa_scopes, main_s);
@@ -637,7 +653,7 @@ TEST(test_inline_macros_literals) {
   ps->vpa_scopes = darray_new(sizeof(VpaScope), 0);
 
   // main = { /a/ @word *kw }
-  VpaScope main_s = _make_scope("main", 0, false);
+  VpaScope main_s = _make_main_scope();
   VpaUnit word_u = _make_re_unit('a', "word", &ps->tokens);
   darray_push(main_s.children, word_u);
   VpaUnit kw_ref = _make_macro_ref("kw");
@@ -696,7 +712,7 @@ TEST(test_inline_macros_recursive_error) {
   ps->vpa_scopes = darray_new(sizeof(VpaScope), 0);
 
   // main = { *a }
-  VpaScope main_s = _make_scope("main", 0, false);
+  VpaScope main_s = _make_main_scope();
   VpaUnit a_ref = _make_macro_ref("a");
   darray_push(main_s.children, a_ref);
   darray_push(ps->vpa_scopes, main_s);
@@ -735,7 +751,7 @@ TEST(test_inline_macros_cascaded) {
   ps->vpa_scopes = darray_new(sizeof(VpaScope), 0);
 
   // main = { /z/ @tok_z *outer }
-  VpaScope main_s = _make_scope("main", 0, false);
+  VpaScope main_s = _make_main_scope();
   VpaUnit mz = _make_re_unit('z', "tok_z", &ps->tokens);
   darray_push(main_s.children, mz);
   VpaUnit outer_ref = _make_macro_ref("outer");
@@ -810,12 +826,30 @@ TEST(test_validate_vpa_missing_main) {
   parse_state_del(ps);
 }
 
+TEST(test_validate_vpa_main_missing_eof) {
+  ParseState* ps = parse_state_new();
+  ps->vpa_scopes = darray_new(sizeof(VpaScope), 0);
+  ps->effect_decls = darray_new(sizeof(EffectDecl), 0);
+
+  // main scope without EOF — should fail
+  VpaScope main_s = _make_scope("main", 0, false);
+  VpaUnit tok = _make_re_unit_hook('a', HOOK_ID_END);
+  darray_push(main_s.children, tok);
+  darray_push(ps->vpa_scopes, main_s);
+
+  bool ok = pp_validate_vpa_scopes(ps);
+  assert(!ok);
+  assert(strstr(parse_get_error(ps), "EOF") != NULL);
+
+  parse_state_del(ps);
+}
+
 TEST(test_validate_vpa_duplicate_scope) {
   ParseState* ps = parse_state_new();
   ps->vpa_scopes = darray_new(sizeof(VpaScope), 0);
   ps->effect_decls = darray_new(sizeof(EffectDecl), 0);
 
-  VpaScope main_s = _make_scope("main", 0, false);
+  VpaScope main_s = _make_main_scope();
   darray_push(ps->vpa_scopes, main_s);
 
   // foo: scoped with leader='(' .begin, children: ')' .end
@@ -844,7 +878,7 @@ TEST(test_validate_vpa_leading_re_empty) {
   ps->vpa_scopes = darray_new(sizeof(VpaScope), 0);
   ps->effect_decls = darray_new(sizeof(EffectDecl), 0);
 
-  VpaScope main_s = _make_scope("main", 0, false);
+  VpaScope main_s = _make_main_scope();
   darray_push(ps->vpa_scopes, main_s);
 
   // scope with empty leading re (no char emitted)
@@ -869,7 +903,7 @@ TEST(test_validate_vpa_empty_re_needs_hook) {
   ps->effect_decls = darray_new(sizeof(EffectDecl), 0);
 
   // main with an empty fallback RE that has no .end or .fail
-  VpaScope main_s = _make_scope("main", 0, false);
+  VpaScope main_s = _make_main_scope();
   VpaUnit fallback = _make_re_unit(-1, "bad", &ps->tokens); // empty re, named "bad", no hook
   darray_push(main_s.children, fallback);
   darray_push(ps->vpa_scopes, main_s);
@@ -888,7 +922,7 @@ TEST(test_validate_vpa_empty_re_with_end_ok) {
   ps->vpa_scopes = darray_new(sizeof(VpaScope), 0);
   ps->effect_decls = darray_new(sizeof(EffectDecl), 0);
 
-  VpaScope main_s = _make_scope("main", 0, false);
+  VpaScope main_s = _make_main_scope();
   VpaUnit tok = _make_re_unit('a', "id", &ps->tokens);
   darray_push(main_s.children, tok);
   darray_push(ps->vpa_scopes, main_s);
@@ -904,7 +938,7 @@ TEST(test_validate_vpa_two_empty_re) {
   ps->vpa_scopes = darray_new(sizeof(VpaScope), 0);
   ps->effect_decls = darray_new(sizeof(EffectDecl), 0);
 
-  VpaScope main_s = _make_scope("main", 0, false);
+  VpaScope main_s = _make_main_scope();
   VpaUnit e1 = _make_re_unit_hook(-1, HOOK_ID_END);
   darray_push(main_s.children, e1);
   VpaUnit e2 = _make_re_unit_hook(-1, HOOK_ID_FAIL);
@@ -1002,7 +1036,7 @@ TEST(test_validate_peg_todo_scope_ok) {
   // Register `foo` as a scope so `foo = TODO` is legal.
   symtab_intern(&ps->scope_names, "main");
   symtab_intern(&ps->scope_names, "foo");
-  VpaScope main_s = _make_scope("main", 0, false);
+  VpaScope main_s = _make_main_scope();
   darray_push(ps->vpa_scopes, main_s);
   VpaScope foo_s = _make_scope("foo", 1, false);
   darray_push(ps->vpa_scopes, foo_s);
@@ -1068,6 +1102,8 @@ TEST(test_match_scopes_todo_skips_set_check) {
   // VPA `main` emits @id and invokes scope `foo` which emits @num.
   symtab_intern(&ps->scope_names, "foo"); // scope id 0
   VpaScope main_vr = _make_scope("main", 1, false);
+  VpaUnit main_eof = _make_eof_end();
+  darray_push(main_vr.children, main_eof);
   VpaUnit main_id_tok = _make_re_unit('a', "id", &ps->tokens);
   darray_push(main_vr.children, main_id_tok);
   VpaUnit foo_call = _make_call_unit(0);
@@ -1119,7 +1155,7 @@ TEST(test_match_scopes_token_mismatch) {
   symtab_init(&ps->ignores.names, 0);
 
   // VPA main emits @id only
-  VpaScope vr = _make_scope("main", 0, false);
+  VpaScope vr = _make_main_scope();
   VpaUnit u = _make_re_unit('a', "id", &ps->tokens);
   darray_push(vr.children, u);
   darray_push(ps->vpa_scopes, vr);
@@ -1149,7 +1185,7 @@ TEST(test_match_scopes_ok) {
   symtab_init(&ps->ignores.names, 0);
 
   // VPA main emits @id, @num, @space; %ignore @space
-  VpaScope vr = _make_scope("main", 0, false);
+  VpaScope vr = _make_main_scope();
   VpaUnit u1 = _make_re_unit('a', "id", &ps->tokens);
   darray_push(vr.children, u1);
   VpaUnit u2 = _make_re_unit('0', "num", &ps->tokens);
@@ -1200,7 +1236,7 @@ TEST(test_match_scopes_scope_ref_in_sets) {
   darray_push(ps->vpa_scopes, foo_vr);
 
   // VPA: main = { @b foo }  (emit_set = {@b, foo})
-  VpaScope main_vr = _make_scope("main", 0, false);
+  VpaScope main_vr = _make_main_scope();
   VpaUnit main_b = _make_re_unit('b', "b", &ps->tokens);
   darray_push(main_vr.children, main_b);
   VpaUnit main_foo_ref = _make_call_unit(1);
@@ -1249,7 +1285,7 @@ TEST(test_match_scopes_scope_ref_mismatch) {
   darray_push(ps->vpa_scopes, foo_vr);
 
   // VPA: main = { @b foo }  (emit_set = {@b, foo})
-  VpaScope main_vr = _make_scope("main", 0, false);
+  VpaScope main_vr = _make_main_scope();
   VpaUnit main_b = _make_re_unit('b', "b", &ps->tokens);
   darray_push(main_vr.children, main_b);
   VpaUnit main_foo_ref = _make_call_unit(1);
@@ -1290,7 +1326,7 @@ TEST(test_match_scopes_expand_non_parser_scope) {
   darray_push(ps->vpa_scopes, inner_vr);
 
   // VPA: main = { @b inner }  (emit_set should expand to {@b, @c})
-  VpaScope main_vr = _make_scope("main", 0, false);
+  VpaScope main_vr = _make_main_scope();
   VpaUnit main_b = _make_re_unit('b', "b", &ps->tokens);
   darray_push(main_vr.children, main_b);
   VpaUnit main_inner_ref = _make_call_unit(1);
@@ -1352,7 +1388,7 @@ TEST(test_match_scopes_no_expand_parser_scope) {
   darray_push(ps->vpa_scopes, np_vr);
 
   // VPA: main = { @b parser_scope no_parser_scope }
-  VpaScope main_vr = _make_scope("main", 0, false);
+  VpaScope main_vr = _make_main_scope();
   VpaUnit main_b = _make_re_unit('b', "b", &ps->tokens);
   darray_push(main_vr.children, main_b);
   VpaUnit main_ps_ref = _make_call_unit(1);
@@ -1410,7 +1446,7 @@ TEST(test_match_scopes_expand_recursive_no_loop) {
   darray_push(ps->vpa_scopes, rec_vr);
 
   // VPA: main = { @b rec }
-  VpaScope main_vr = _make_scope("main", 0, false);
+  VpaScope main_vr = _make_main_scope();
   VpaUnit main_b = _make_re_unit('b', "b", &ps->tokens);
   darray_push(main_vr.children, main_b);
   VpaUnit main_rec_ref = _make_call_unit(1);
@@ -1457,6 +1493,7 @@ int main(void) {
   RUN(test_orphan_scope);
   RUN(test_orphan_scope_reachable);
   RUN(test_validate_vpa_missing_main);
+  RUN(test_validate_vpa_main_missing_eof);
   RUN(test_validate_vpa_duplicate_scope);
   RUN(test_validate_vpa_leading_re_empty);
   RUN(test_validate_vpa_empty_re_needs_hook);

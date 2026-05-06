@@ -17,6 +17,7 @@ main = {
   vpa
   peg
   *noise
+  EOF .end
 }
 
 *noise = {

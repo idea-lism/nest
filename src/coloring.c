@@ -393,7 +393,8 @@ void coloring_result_del(ColoringResult* cr) {
 
 int32_t coloring_get_color(ColoringResult* cr, int32_t vertex_id) { return cr->colors[vertex_id]; }
 
-void coloring_get_segment_info(ColoringResult* cr, int32_t vertex_id, int32_t* out_seg_group_id, int64_t* out_seg_mask) {
+void coloring_get_segment_info(ColoringResult* cr, int32_t vertex_id, int32_t* out_seg_group_id,
+                               int64_t* out_seg_mask) {
   *out_seg_group_id = cr->vertex_info[vertex_id].seg_group_id;
   *out_seg_mask = cr->vertex_info[vertex_id].seg_mask;
 }

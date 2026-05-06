@@ -26,6 +26,7 @@ main = {
   /=/ @assign
   /\(/ @lparen
   /\)/ @rparen
+  EOF .end
 }
 
 [[peg]]
