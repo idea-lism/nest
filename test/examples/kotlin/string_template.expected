@@ -1,0 +1,111 @@
+------
+@fun "fun"
+@identifier "main"
+  @lparen "("
+  @rparen ")"
+  @lcurl "{"
+  @nl "
+"
+  @val "val"
+  @identifier "s"
+  @assignment "="
+    @quote_open """
+    @line_str_text "a "
+    @line_str_ref "$foo"
+    @line_str_text " b"
+    @quote_close """
+  @nl "
+"
+  @val "val"
+  @identifier "t"
+  @assignment "="
+    @quote_open """
+    @line_str_text "raw "
+    @line_str_ref "$bar"
+    @line_str_text " text"
+    @quote_close """
+  @nl "
+"
+  @rcurl "}"
+@nl "
+"
+------
+main
+  file
+    file_rest
+      nl_star
+      top_decl
+        declaration
+          fun_decl
+            @fun
+            simple_id
+              @identifier
+            value_params
+              parens
+                @lparen
+                @rparen
+            fun_body
+              block
+                @lcurl
+                block_content
+                  statement_content
+                    block_item
+                      nl
+                        @nl
+                    block_item
+                      statement
+                        declaration
+                          prop_decl
+                            val_var
+                              @val
+                            simple_id
+                              @identifier
+                            prop_init
+                              op_assignment
+                                @assignment
+                              expr
+                                postfix_expr
+                                  primary_expr
+                                    line_string
+                                      @quote_open
+                                      line_part
+                                        @line_str_text
+                                      line_part
+                                        @line_str_ref
+                                      line_part
+                                        @line_str_text
+                                      @quote_close
+                    block_item
+                      nl
+                        @nl
+                    block_item
+                      statement
+                        declaration
+                          prop_decl
+                            val_var
+                              @val
+                            simple_id
+                              @identifier
+                            prop_init
+                              op_assignment
+                                @assignment
+                              expr
+                                postfix_expr
+                                  primary_expr
+                                    line_string
+                                      @quote_open
+                                      line_part
+                                        @line_str_text
+                                      line_part
+                                        @line_str_ref
+                                      line_part
+                                        @line_str_text
+                                      @quote_close
+                    block_item
+                      nl
+                        @nl
+                @rcurl
+      top_decl
+        nl
+          @nl
+      nl_star

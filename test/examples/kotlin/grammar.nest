@@ -1,1155 +1,1011 @@
-# Kotlin grammar in nest syntax
-# Based on the official Kotlin grammar specification
-# https://kotlinlang.org/grammar/
+# Kotlin lexer/scoped-token proof grammar in nest syntax.
+# The VPA mirrors KotlinLexer.g4 modes as TokenTree scopes.  The PEG is still
+# deliberately shallow: each lexical scope has its own private list/item/token
+# grammar so rule closures cannot leak across scopes while the real Kotlin PEG is
+# rebuilt scope-by-scope.
 
 [[vpa]]
-%ignore @space @comment
+%ignore @delimited_comment @line_comment @ws @inside_nl
 
-# Keywords (order matters for VPA: longer matches first by the DFA)
-*keywords = @{
-  "package"
-  "import"
-  "class"
-  "interface"
-  "fun"
-  "object"
-  "val"
-  "var"
-  "typealias"
-  "constructor"
-  "by"
-  "companion"
-  "init"
-  "this"
-  "super"
-  "typeof"
-  "where"
-  "if"
-  "else"
-  "when"
-  "try"
-  "catch"
-  "finally"
-  "for"
-  "do"
-  "while"
-  "throw"
-  "return"
-  "continue"
-  "break"
-  "as"
-  "is"
-  "in"
-  "out"
-  "dynamic"
-  "public"
-  "private"
-  "protected"
-  "internal"
-  "enum"
-  "sealed"
-  "annotation"
-  "data"
-  "inner"
-  "tailrec"
-  "operator"
-  "infix"
-  "inline"
-  "external"
-  "suspend"
-  "override"
-  "abstract"
-  "final"
-  "open"
-  "const"
-  "lateinit"
-  "vararg"
-  "noinline"
-  "crossinline"
-  "reified"
-  "expect"
-  "actual"
-  "true"
-  "false"
-  "null"
-  "get"
-  "set"
-  "field"
-  "property"
-  "receiver"
-  "param"
-  "setparam"
-  "delegate"
-  "file"
+*hidden = {
+  delimited_comment
+  /\/\/[^\r\n]*/ @line_comment
+  /[ \t\f]+/ @ws
+}
+
+*layout_sensitive_ops = {
+  /([ \t\f]|\r?\n)+@([ \t\f]|\r?\n)+/ @at_both_ws
+  /([ \t\f]|\r?\n)+@/ @at_pre_ws
+  /@([ \t\f]|\r?\n)+/ @at_post_ws
+  /\?([ \t\f]|\r?\n)+/ @quest_ws
+  /!in([ \t\f]|\r?\n)+/ @not_in
+  /!is([ \t\f]|\r?\n)+/ @not_is
+  /!([ \t\f]|\r?\n)+/ @excl_ws
+}
+
+*separators_and_operations = {
+  *layout_sensitive_ops
+  /\.\.\./ @reserved
+  /\.\.</ @range_until
+  /\.\./ @range
+  /\./ @dot
+  /,/ @comma
+  /\+\+/ @incr
+  /--/ @decr
+  /&&/ @conj
+  /\|\|/ @disj
+  /!==/ @excl_eqeq
+  /!=/ @excl_eq
+  /!/ @excl_no_ws
+  /::/ @coloncolon
+  /:/ @colon
+  /;;/ @double_semicolon
+  /;/ @semicolon
+  /\+=/ @add_assignment
+  /-=/ @sub_assignment
+  /\*=/ @mult_assignment
+  /\/=/ @div_assignment
+  /%=/ @mod_assignment
+  /=>/ @double_arrow
+  /->/ @arrow
+  /===/ @eqeqeq
+  /==/ @eqeq
+  /=/ @assignment
+  /<=/ @le
+  />=/ @ge
+  /</ @langle
+  />/ @rangle
+  /as\?/ @as_safe
+  /\?/ @quest_no_ws
+  /#/ @hash
+  /@/ @at_no_ws
+  /\*/ @mult
+  /%/ @mod
+  /\// @div
+  /\+/ @add
+  /-/ @sub
+  /'/ @single_quote
+  /&/ @amp
+}
+
+*keywords = {
+  /return@[A-Za-z_][A-Za-z_0-9]*/ @return_at
+  /continue@[A-Za-z_][A-Za-z_0-9]*/ @continue_at
+  /break@[A-Za-z_][A-Za-z_0-9]*/ @break_at
+  /this@[A-Za-z_][A-Za-z_0-9]*/ @this_at
+  /super@[A-Za-z_][A-Za-z_0-9]*/ @super_at
+  "typealias" @type_alias
+  "constructor" @constructor
+  "companion" @companion
+  "crossinline" @crossinline
+  "annotation" @annotation
+  "protected" @protected
+  "continue" @continue
+  "internal" @internal
+  "operator" @operator
+  "override" @override
+  "lateinit" @lateinit
+  "noinline" @noinline
+  "property" @property
+  "setparam" @setparam
+  "package" @package
+  "interface" @interface
+  "dynamic" @dynamic
+  "private" @private
+  "tailrec" @tailrec
+  "external" @external
+  "suspend" @suspend
+  "reified" @reified
+  "receiver" @receiver
+  "delegate" @delegate
+  "import" @import
+  "object" @object
+  "typeof" @typeof
+  "where" @where
+  "catch" @catch
+  "finally" @finally
+  "while" @while
+  "throw" @throw
+  "return" @return
+  "break" @break
+  "public" @public
+  "sealed" @sealed
+  "abstract" @abstract
+  "actual" @actual
+  "class" @class
+  "init" @init
+  "this" @this
+  "super" @super
+  "when" @when
+  "else" @else
+  "true" @boolean_literal
+  "false" @boolean_literal
+  "null" @null_literal
+  "enum" @enum
+  "data" @data
+  "inner" @inner
+  "value" @value
+  "inline" @inline
+  "infix" @infix
+  "final" @final
+  "open" @open
+  "const" @const
+  "vararg" @vararg
+  "expect" @expect
+  "field" @field
+  "file" @file
+  "param" @param
+  "fun" @fun
+  "val" @val
+  "var" @var
+  "try" @try
+  "for" @for
+  "do" @do
+  "as" @as
+  "is" @is
+  "in" @in
+  "out" @out
+  "get" @get
+  "set" @set
+  "by" @by
+  "if" @if
+}
+
+*inside_keywords = {
+  /return@[A-Za-z_][A-Za-z_0-9]*/ @return_at
+  /continue@[A-Za-z_][A-Za-z_0-9]*/ @continue_at
+  /break@[A-Za-z_][A-Za-z_0-9]*/ @break_at
+  "continue" @continue
+  "protected" @protected
+  "internal" @internal
+  "operator" @operator
+  "override" @override
+  "lateinit" @lateinit
+  "noinline" @noinline
+  "property" @property
+  "setparam" @setparam
+  "crossinline" @crossinline
+  "annotation" @annotation
+  "abstract" @abstract
+  "private" @private
+  "tailrec" @tailrec
+  "external" @external
+  "suspend" @suspend
+  "reified" @reified
+  "receiver" @receiver
+  "delegate" @delegate
+  "object" @object
+  "super" @super
+  "when" @when
+  "throw" @throw
+  "return" @return
+  "break" @break
+  "public" @public
+  "sealed" @sealed
+  "actual" @actual
+  "else" @else
+  "true" @boolean_literal
+  "false" @boolean_literal
+  "null" @null_literal
+  "enum" @enum
+  "data" @data
+  "inner" @inner
+  "value" @value
+  "inline" @inline
+  "infix" @infix
+  "final" @final
+  "open" @open
+  "const" @const
+  "vararg" @vararg
+  "expect" @expect
+  "field" @field
+  "file" @file
+  "param" @param
+  "fun" @fun
+  "val" @val
+  "var" @var
+  "try" @try
+  "for" @for
+  "do" @do
+  "as" @as
+  "is" @is
+  "in" @in
+  "out" @out
+  "get" @get
+  "set" @set
+  "if" @if
+}
+
+*literals_and_identifiers = {
+  /0[xX][0-9a-fA-F][0-9a-fA-F_]*[uU][lL]?/ @unsigned_literal
+  /0[bB][01][01_]*[uU][lL]?/ @unsigned_literal
+  /[1-9][0-9_]*[0-9][uU][lL]?/ @unsigned_literal
+  /[0-9][uU][lL]?/ @unsigned_literal
+  /0[xX][0-9a-fA-F][0-9a-fA-F_]*[lL]/ @long_literal
+  /0[bB][01][01_]*[lL]/ @long_literal
+  /[1-9][0-9_]*[0-9][lL]/ @long_literal
+  /[0-9][lL]/ @long_literal
+  /([0-9][0-9_]*)?\.[0-9][0-9_]*([eE][+\-]?[0-9][0-9_]*)?[fF]?/ @real_literal
+  /[0-9][0-9_]*[eE][+\-]?[0-9][0-9_]*[fF]?/ @real_literal
+  /[0-9][0-9_]*[fF]/ @real_literal
+  /0[xX][0-9a-fA-F][0-9a-fA-F_]*/ @hex_literal
+  /0[bB][01][01_]*/ @bin_literal
+  /[1-9][0-9_]*[0-9]/ @integer_literal
+  /[0-9]/ @integer_literal
+  /'(\\u[0-9a-fA-F][0-9a-fA-F][0-9a-fA-F][0-9a-fA-F]|\\[tbrn'"\\$]|[^\n\r'\\])'/ @character_literal
+  /[A-Za-z_][A-Za-z_0-9]*/ @identifier
+  /`[^`\r\n]+`/ @identifier
+}
+
+*default_units = {
+  /#![^\r\n]*/ @shebang_line
+  line_string
+  multiline_string
+  delimited_comment
+  /\/\/[^\r\n]*/ @line_comment
+  parens
+  brackets
+  block
+  *keywords
+  *literals_and_identifiers
+  *separators_and_operations
+  /\r\n?/ @nl
+  /\n/ @nl
+  /[ \t\f]+/ @ws
+}
+
+*inside_units = {
+  line_string
+  multiline_string
+  delimited_comment
+  /\/\/[^\r\n]*/ @line_comment
+  parens
+  brackets
+  block
+  *inside_keywords
+  *literals_and_identifiers
+  *separators_and_operations
+  /\r\n?/ @inside_nl
+  /\n/ @inside_nl
+  /[ \t\f]+/ @ws
 }
 
 main = {
-  /#![^\r\n]*/ @shebang_line
-  /return@[A-Za-z_]\w*/ @return_at
-  /continue@[A-Za-z_]\w*/ @continue_at
-  /break@[A-Za-z_]\w*/ @break_at
-  /this@[A-Za-z_]\w*/ @this_at
-  /super@[A-Za-z_]\w*/ @super_at
-  *keywords
-  comment
-  /\/\/[^\r\n]*/ @comment
-  str
-  multiline_str
-  char_lit
-  /0[xX]\h+[uU]?[lL]?/ @hex_lit
-  /0[bB][01][01_]*[uU]?[lL]?/ @bin_lit
-  /(\d[\d_]*)?\.[\d][\d_]*([eE][+\-]?\d[\d_]*)?[fF]?/ @float_lit
-  /\d[\d_]*[eE][+\-]?\d[\d_]*[fF]?/ @float_lit
-  /\d[\d_]*[fF]/ @float_lit
-  /\d[\d_]*[uU]?[lL]/ @long_lit
-  /\d[\d_]*[uU]/ @unsigned_lit
-  /\d[\d_]*/ @int_lit
-  /[A-Za-z_]\w*@/ @label_ref
-  /[A-Za-z_]\w*/ @ident
-  /`[^`\r\n]+`/ @ident
-  /[\r]?\n/ @nl
-  /[ \t\f]+/ @space
-  /=>/
-  /->/ @arrow
-  /::/ @coloncolon
-  /===/ @eqeqeq
-  /!==/ @noteqeq
-  /==/ @eqeq
-  /!=/ @noteq
-  /<=/ @le
-  />=/ @ge
-  /&&/ @conj
-  /&/ @amp
-  /\|\|/ @disj
-  /\.\.</ @range_until
-  /\.\./ @range
-  /\+\+/ @incr
-  /--/ @decr
-  /\+=/ @plus_assign
-  /-=/ @minus_assign
-  /\*=/ @star_assign
-  /\/=/ @slash_assign
-  /%=/ @mod_assign
-  /\?\./ @safe_dot
-  /\?\:/ @elvis
-  /as\?/ @as_safe
-  /!in\b/ @not_in
-  /!is\b/ @not_is
-  /\(/ @lparen
-  /\)/ @rparen
-  /\[/ @lbracket
-  /\]/ @rbracket
-  block
-  /,/ @comma
-  /:/ @colon
-  /;;/ @double_semi
-  /;/ @semi
-  /\./ @dot
-  /\?[ \t\f]+/ @quest_ws
-  /\?/ @quest_no_ws
-  /![ \t\f]+/ @excl_ws
-  /!/ @excl_no_ws
-  /=/ @assign
-  /</ @langle
-  />/ @rangle
-  /\+/ @plus
-  /-/ @minus
-  /\*/ @star
-  /%/ @mod
-  /#/
-  /\.\.\./
-  /\// @slash
-  /@[ \t\f\r\n]+/ @at_post_ws
-  /@/ @at_no_ws
+  *default_units
   EOF .end
 }
 
-comment = /\/\*/ .begin @comment {
-  comment
+delimited_comment = /\/\*/ .begin @delimited_comment {
+  delimited_comment
   /\*\// .end
   /[^*\/]+/
   /\*/
   /\//
 }
 
-block = /[{]/ .begin @lbrace {
-  /#![^\r\n]*/
-  /return@[A-Za-z_]\w*/ @return_at
-  /continue@[A-Za-z_]\w*/ @continue_at
-  /break@[A-Za-z_]\w*/ @break_at
-  /this@[A-Za-z_]\w*/ @this_at
-  /super@[A-Za-z_]\w*/ @super_at
-  *keywords
-  comment
-  /\/\/[^\r\n]*/ @comment
-  str
-  multiline_str
-  char_lit
-  /0[xX]\h+[uU]?[lL]?/ @hex_lit
-  /0[bB][01][01_]*[uU]?[lL]?/ @bin_lit
-  /(\d[\d_]*)?\.[\d][\d_]*([eE][+\-]?\d[\d_]*)?[fF]?/ @float_lit
-  /\d[\d_]*[eE][+\-]?\d[\d_]*[fF]?/ @float_lit
-  /\d[\d_]*[fF]/ @float_lit
-  /\d[\d_]*[uU]?[lL]/ @long_lit
-  /\d[\d_]*[uU]/ @unsigned_lit
-  /\d[\d_]*/ @int_lit
-  /[A-Za-z_]\w*@/ @label_ref
-  /[A-Za-z_]\w*/ @ident
-  /`[^`\r\n]+`/ @ident
-  /[\r]?\n/ @nl
-  /[ \t\f]+/ @space
-  /=>/
-  /->/ @arrow
-  /::/ @coloncolon
-  /===/ @eqeqeq
-  /!==/ @noteqeq
-  /==/ @eqeq
-  /!=/ @noteq
-  /<=/ @le
-  />=/ @ge
-  /&&/ @conj
-  /&/ @amp
-  /\|\|/ @disj
-  /\.\.</ @range_until
-  /\.\./ @range
-  /\+\+/ @incr
-  /--/ @decr
-  /\+=/ @plus_assign
-  /-=/ @minus_assign
-  /\*=/ @star_assign
-  /\/=/ @slash_assign
-  /%=/ @mod_assign
-  /\?\./ @safe_dot
-  /\?\:/ @elvis
-  /as\?/ @as_safe
-  /!in\b/ @not_in
-  /!is\b/ @not_is
-  /\(/ @lparen
-  /\)/ @rparen
-  /\[/ @lbracket
-  /\]/ @rbracket
-  block
-  /[}]/ @rbrace .end
-  /,/ @comma
-  /:/ @colon
-  /;;/ @double_semi
-  /;/ @semi
-  /\./ @dot
-  /\?[ \t\f]+/ @quest_ws
-  /\?/ @quest_no_ws
-  /![ \t\f]+/ @excl_ws
-  /!/ @excl_no_ws
-  /=/ @assign
-  /</ @langle
-  />/ @rangle
-  /\+/ @plus
-  /-/ @minus
-  /\*/ @star
-  /%/ @mod
-  /#/
-  /\.\.\./
-  /\// @slash
-  /@[ \t\f\r\n]+/ @at_post_ws
-  /@/ @at_no_ws
+block = /[{]/ .begin @lcurl {
+  *default_units
+  /[}]/ @rcurl .end
 }
 
-str = /"/ .begin @str_open {
-  /"/ @str_close .end
-  str_interp
-  /\\[tbnr'"\\$]/ @str_escape
-  /\\u\h\h\h\h/ @str_unicode
-  /\$[A-Za-z_]\w*/ @str_ref
-  /[^"\\$\r\n]+/ @str_text
-  /\$/ @str_text
+parens = /\(/ .begin @lparen {
+  *inside_units
+  /\)/ @rparen .end
 }
 
-str_interp = /\$[{]/ .begin @str_expr_open {
-  /#![^\r\n]*/
-  /return@[A-Za-z_]\w*/ @return_at
-  /continue@[A-Za-z_]\w*/ @continue_at
-  /break@[A-Za-z_]\w*/ @break_at
-  /this@[A-Za-z_]\w*/ @this_at
-  /super@[A-Za-z_]\w*/ @super_at
-  *keywords
-  comment
-  /\/\/[^\r\n]*/ @comment
-  str
-  multiline_str
-  char_lit
-  /0[xX]\h+[uU]?[lL]?/ @hex_lit
-  /0[bB][01][01_]*[uU]?[lL]?/ @bin_lit
-  /(\d[\d_]*)?\.[\d][\d_]*([eE][+\-]?\d[\d_]*)?[fF]?/ @float_lit
-  /\d[\d_]*[eE][+\-]?\d[\d_]*[fF]?/ @float_lit
-  /\d[\d_]*[fF]/ @float_lit
-  /\d[\d_]*[uU]?[lL]/ @long_lit
-  /\d[\d_]*[uU]/ @unsigned_lit
-  /\d[\d_]*/ @int_lit
-  /[A-Za-z_]\w*@/ @label_ref
-  /[A-Za-z_]\w*/ @ident
-  /`[^`\r\n]+`/ @ident
-  /[\r]?\n/ @nl
-  /[ \t\f]+/ @space
-  /=>/
-  /->/ @arrow
-  /::/ @coloncolon
-  /===/ @eqeqeq
-  /!==/ @noteqeq
-  /==/ @eqeq
-  /!=/ @noteq
-  /<=/ @le
-  />=/ @ge
-  /&&/ @conj
-  /&/ @amp
-  /\|\|/ @disj
-  /\.\.</ @range_until
-  /\.\./ @range
-  /\+\+/ @incr
-  /--/ @decr
-  /\+=/ @plus_assign
-  /-=/ @minus_assign
-  /\*=/ @star_assign
-  /\/=/ @slash_assign
-  /%=/ @mod_assign
-  /\?\./ @safe_dot
-  /\?\:/ @elvis
-  /as\?/ @as_safe
-  /!in\b/ @not_in
-  /!is\b/ @not_is
-  /\(/ @lparen
-  /\)/ @rparen
-  /\[/ @lbracket
-  /\]/ @rbracket
-  block
-  /[}]/ @str_expr_close .end
-  /,/ @comma
-  /:/ @colon
-  /;;/ @double_semi
-  /;/ @semi
-  /\./ @dot
-  /\?[ \t\f]+/ @quest_ws
-  /\?/ @quest_no_ws
-  /![ \t\f]+/ @excl_ws
-  /!/ @excl_no_ws
-  /=/ @assign
-  /</ @langle
-  />/ @rangle
-  /\+/ @plus
-  /-/ @minus
-  /\*/ @star
-  /%/ @mod
-  /#/
-  /\.\.\./
-  /\// @slash
-  /@[ \t\f\r\n]+/ @at_post_ws
-  /@/ @at_no_ws
+brackets = /\[/ .begin @lsquare {
+  *inside_units
+  /\]/ @rsquare .end
 }
 
-multiline_str = /"""/ .begin @ml_str_open {
-  /"{0,2}"""/ @ml_str_close .end
-  ml_str_interp
-  /\$[A-Za-z_]\w*/ @str_ref
-  /"{1,2}/ @str_text
-  /[^"$]+/ @str_text
-  /\$/ @str_text
+line_string = /"/ .begin @quote_open {
+  /"/ @quote_close .end
+  line_str_expr
+  /\$[A-Za-z_][A-Za-z_0-9]*/ @line_str_ref
+  /\\u[0-9a-fA-F][0-9a-fA-F][0-9a-fA-F][0-9a-fA-F]/ @line_str_escaped_char
+  /\\[tbrn'"\\$]/ @line_str_escaped_char
+  /[^"\\$]+/ @line_str_text
+  /\$/ @line_str_text
 }
 
-ml_str_interp = /\$[{]/ .begin @str_expr_open {
-  /#![^\r\n]*/
-  /return@[A-Za-z_]\w*/ @return_at
-  /continue@[A-Za-z_]\w*/ @continue_at
-  /break@[A-Za-z_]\w*/ @break_at
-  /this@[A-Za-z_]\w*/ @this_at
-  /super@[A-Za-z_]\w*/ @super_at
-  *keywords
-  comment
-  /\/\/[^\r\n]*/ @comment
-  str
-  multiline_str
-  char_lit
-  /0[xX]\h+[uU]?[lL]?/ @hex_lit
-  /0[bB][01][01_]*[uU]?[lL]?/ @bin_lit
-  /(\d[\d_]*)?\.[\d][\d_]*([eE][+\-]?\d[\d_]*)?[fF]?/ @float_lit
-  /\d[\d_]*[eE][+\-]?\d[\d_]*[fF]?/ @float_lit
-  /\d[\d_]*[fF]/ @float_lit
-  /\d[\d_]*[uU]?[lL]/ @long_lit
-  /\d[\d_]*[uU]/ @unsigned_lit
-  /\d[\d_]*/ @int_lit
-  /[A-Za-z_]\w*@/ @label_ref
-  /[A-Za-z_]\w*/ @ident
-  /`[^`\r\n]+`/ @ident
-  /[\r]?\n/ @nl
-  /[ \t\f]+/ @space
-  /=>/
-  /->/ @arrow
-  /::/ @coloncolon
-  /===/ @eqeqeq
-  /!==/ @noteqeq
-  /==/ @eqeq
-  /!=/ @noteq
-  /<=/ @le
-  />=/ @ge
-  /&&/ @conj
-  /&/ @amp
-  /\|\|/ @disj
-  /\.\.</ @range_until
-  /\.\./ @range
-  /\+\+/ @incr
-  /--/ @decr
-  /\+=/ @plus_assign
-  /-=/ @minus_assign
-  /\*=/ @star_assign
-  /\/=/ @slash_assign
-  /%=/ @mod_assign
-  /\?\./ @safe_dot
-  /\?\:/ @elvis
-  /as\?/ @as_safe
-  /!in\b/ @not_in
-  /!is\b/ @not_is
-  /\(/ @lparen
-  /\)/ @rparen
-  /\[/ @lbracket
-  /\]/ @rbracket
-  block
-  /[}]/ @str_expr_close .end
-  /,/ @comma
-  /:/ @colon
-  /;;/ @double_semi
-  /;/ @semi
-  /\./ @dot
-  /\?[ \t\f]+/ @quest_ws
-  /\?/ @quest_no_ws
-  /![ \t\f]+/ @excl_ws
-  /!/ @excl_no_ws
-  /=/ @assign
-  /</ @langle
-  />/ @rangle
-  /\+/ @plus
-  /-/ @minus
-  /\*/ @star
-  /%/ @mod
-  /#/
-  /\.\.\./
-  /\// @slash
-  /@[ \t\f\r\n]+/ @at_post_ws
-  /@/ @at_no_ws
+line_str_expr = /\$[{]/ .begin @line_str_expr_start {
+  *default_units
+  /[}]/ @rcurl .end
 }
 
-char_lit = /'/ .begin @char_open {
-  /'/ @char_close .end
-  /\\[tbnr'"\\$]/ @str_escape
-  /\\u\h\h\h\h/ @str_unicode
-  /[^'\\\r\n]/ @str_text
+multiline_string = /"""/ .begin @triple_quote_open {
+  /"{3,}/ @triple_quote_close .end
+  multi_line_str_expr
+  /\$[A-Za-z_][A-Za-z_0-9]*/ @multi_line_str_ref
+  /"{1,2}/ @multi_line_str_text
+  /[^"$]+/ @multi_line_str_text
+  /\$/ @multi_line_str_text
+}
+
+multi_line_str_expr = /\$[{]/ .begin @multi_line_str_expr_start {
+  *default_units
+  /[}]/ @rcurl .end
 }
 
 [[peg]]
 
-# Kotlin parser grammar, shaped after KotlinParser.g4.
-# Lexer-hidden tokens: @space and @comment. Significant whitespace: @nl.
-
-semi = semi_item @nl*
-semis = semi_item+
-semi_item = [
-  @semi
-  @double_semi
-  @nl
+main = file
+file = [
+  shebang_file : shebang
+  file_rest : no_shebang
 ]
-comma_sep = @nl* @comma @nl*
-trailing_comma = @nl* @comma
+shebang_file = shebang_line file_rest
+file_rest = nl_star file_annotation* package_decl? import_decl* top_decl* nl_star
+shebang_line = @shebang_line nl nl_star
+nl = @nl
+nl_star = nl*
+semi = [
+  @semicolon nl_star : semicolon
+  @nl nl_star : newline
+]
 
-# Interlaced separators. Nest requires these to be named rules.
-disj_sep = @nl* @disj @nl*
-conj_sep = @nl* @conj @nl*
-elvis_sep = @nl* elvis @nl*
-range_sep = @nl* range_op @nl*
-eq_sep = equality_op @nl*
-cmp_sep = comparison_op @nl*
-add_sep = additive_operator @nl*
-mul_sep = multiplicative_op @nl*
+file_annotation = annotation_site @file op_colon annotation_payload nl_star
+annotation_site = [
+  @at_no_ws : at_no_ws
+  @at_pre_ws : at_pre_ws
+]
+annotation_payload = [
+  brackets : brackets
+  annotation : annotation
+]
 
-# SECTION: general
-main = shebang_line? @nl* file_annotation* package_header import_list top_level_object* @nl*
-shebang_line = @shebang_line @nl+
-file_annotation = annotation
-package_header = package_header_body?
-package_header_body = "package" identifier semi?
-import_list = import_header*
-import_header = "import" identifier import_suffix? semi?
+package_decl = @package qualified_name semi?
+import_decl = @import qualified_name import_suffix? semi?
 import_suffix = [
-  @dot @star
-  "as" simple_id
+  op_dot op_mult : all
+  @as simple_id : alias
 ]
-top_level_object = declaration semis?
+qualified_name = simple_id+<op_dot>
 
-# SECTION: declarations
+top_decl = [
+  declaration : declaration
+  statement : statement
+  nl : nl
+]
 declaration = [
-  class_declaration
-  object_declaration
-  function_declaration
-  property_declaration
-  type_alias
+  class_decl : class_decl
+  fun_decl : fun_decl
+  prop_decl : prop_decl
+  type_alias_decl : type_alias_decl
 ]
-type_alias = modifier* "typealias" @nl* simple_id nl_type_parameters? @nl* @assign @nl* type
 
-# SECTION: classes
-class_declaration = modifier* class_kind @nl* simple_id nl_type_parameters? nl_primary_constructor? nl_delegation_specifiers? nl_type_constraints? nl_class_body?
+class_decl = modifiers? class_kind simple_id type_params? value_params? delegation? type_constraints? class_body?
 class_kind = [
-  "class"
-  "fun" @nl* "interface"
-  "interface"
+  @class : class_kw
+  @interface : interface_kw
 ]
-nl_type_parameters = @nl* type_parameters
-nl_primary_constructor = @nl* primary_constructor
-nl_delegation_specifiers = @nl* @colon @nl* delegation_specifiers
-nl_type_constraints = @nl* type_constraints
-nl_class_body = @nl* class_body_variant
-class_body_variant = [
-  class_body
-  enum_class_body
-]
-primary_constructor = primary_constructor_head? class_parameters
-primary_constructor_head = modifier* "constructor" @nl*
 class_body = block
-class_parameters = @lparen @nl* class_parameter*<comma_sep> trailing_comma? @nl* @rparen
-class_parameter = modifier* val_or_var? @nl* simple_id @nl* @colon @nl* type default_value?
-val_or_var = [
-  "val"
-  "var"
-]
-default_value = @nl* @assign @nl* expression
-delegation_specifiers = annotated_delegation_specifier+<comma_sep>
-annotated_delegation_specifier = annotation* @nl* delegation_specifier
-delegation_specifier = [
-  constructor_invocation
-  explicit_delegation
-  user_type
-  function_type
-  "suspend" @nl* function_type
-]
-constructor_invocation = user_type @nl* value_arguments
-explicit_delegation = explicit_delegation_lhs @nl* "by" @nl* expression
-explicit_delegation_lhs = [
-  user_type
-  function_type
+delegation = op_colon expr
+type_alias_decl = modifiers? @type_alias simple_id type_params? op_assignment type_ref
+
+fun_decl = modifiers? @fun type_params? simple_id value_params type_constraints? fun_body?
+value_params = parens
+fun_body = [
+  op_assignment expr : expr_body
+  block : block_body
 ]
 
-# SECTION: class members
-class_member_declarations = class_member_declaration_list?
-class_member_declaration_list = class_member_declaration+<semis> semis?
-class_member_declaration = [
-  declaration
-  companion_object
-  anonymous_initializer
-  secondary_constructor
+prop_decl = modifiers? val_var simple_id type_ann? prop_init?
+val_var = [
+  @val : val_kw
+  @var : var_kw
 ]
-anonymous_initializer = "init" @nl* block
-companion_object = modifier* "companion" @nl* data_modifier? @nl* "object" nl_simple_id? nl_delegation_specifiers? nl_class_body?
-data_modifier = "data"
-nl_simple_id = @nl* simple_id
-secondary_constructor = modifier* "constructor" @nl* function_value_parameters nl_constructor_delegation_call? nl_block?
-nl_constructor_delegation_call = @nl* @colon @nl* constructor_delegation_call
-nl_block = @nl* block
-constructor_delegation_call = [
-  "this" @nl* value_arguments
-  "super" @nl* value_arguments
+prop_init = op_assignment expr
+type_ann = op_colon type_ref
+type_constraints = @where type_constraint*<op_comma>
+type_constraint = simple_id op_colon type_ref
+type_params = op_langle type_param*<op_comma> op_comma? op_rangle
+type_param = modifiers? simple_id type_ann?
+type_ref = type_atom+
+type_atom = [
+  simple_id : simple_id
+  parens : parens
+  brackets : brackets
+  type_op : type_op
 ]
-
-# SECTION: functions and properties
-function_value_parameters = @lparen @nl* function_value_parameter*<comma_sep> trailing_comma? @nl* @rparen
-function_value_parameter = parameter_modifier* parameter default_value?
-parameter = simple_id @nl* @colon @nl* type
-parameter_with_optional_type = simple_id @nl* type_annotation?
-function_value_parameter_with_optional_type = parameter_modifier* parameter_with_optional_type default_value?
-parameters_with_optional_type = @lparen @nl* function_value_parameter_with_optional_type*<comma_sep> trailing_comma? @nl* @rparen
-
-function_declaration = modifier* "fun" nl_type_parameters? nl_receiver_type_dot? @nl* simple_id @nl* function_value_parameters nl_return_type? nl_type_constraints? nl_function_body?
-nl_receiver_type_dot = @nl* receiver_type @nl* @dot
-nl_return_type = @nl* @colon @nl* type
-nl_function_body = @nl* function_body
-function_body = [
-  block
-  @assign @nl* expression
+type_op = [
+  op_dot : dot
+  op_quest_no_ws : nullable
+  op_quest_ws : nullable_ws
+  op_langle : langle
+  op_rangle : rangle
+  op_comma : comma
+  op_mult : mult
+  @in : in_kw
+  @out : out_kw
 ]
 
-property_declaration = modifier* val_or_var nl_type_parameters? nl_receiver_type_dot? nl_property_variable nl_type_constraints? nl_property_initializer? nl_property_accessors?
-nl_property_variable = @nl* property_variable
-property_variable = [
-  multi_variable_declaration
-  variable_declaration
+block = @lcurl block_content @rcurl
+block_content = [
+  lambda_content : lambda
+  statement_content : statements
 ]
-variable_declaration = annotation* @nl* simple_id type_annotation?
-type_annotation = @nl* @colon @nl* type
-multi_variable_declaration = @lparen @nl* variable_declaration+<comma_sep> trailing_comma? @nl* @rparen
-nl_property_initializer = @nl* property_initializer
-property_initializer = [
-  @assign @nl* expression
-  property_delegate
+lambda_content = lambda_header statement_content?
+lambda_header = lambda_param*<op_comma> op_arrow
+lambda_param = simple_id type_ann?
+statement_content = block_item*
+block_item = [
+  nl : nl
+  shebang_line : shebang
+  statement : statement
 ]
-property_delegate = "by" @nl* expression
-nl_property_accessors = @nl* property_accessors
-property_accessors = [
-  getter nl_setter?
-  setter nl_getter?
+statement = [
+  declaration : declaration
+  assignment : assignment
+  loop_stmt : loop_stmt
+  expr : expr
 ]
-nl_getter = @nl* semi? getter
-nl_setter = @nl* semi? setter
-getter = modifier* "get" getter_body?
-getter_body = @nl* @lparen @nl* @rparen nl_return_type? @nl* function_body
-setter = modifier* "set" setter_body?
-setter_body = @nl* @lparen @nl* function_value_parameter_with_optional_type trailing_comma? @nl* @rparen nl_return_type? @nl* function_body
-
-object_declaration = modifier* "object" @nl* simple_id nl_delegation_specifiers? nl_class_body?
-
-# SECTION: enum classes
-enum_class_body = enum_entries enum_members?
-enum_entries = enum_entry+<comma_sep> trailing_comma?
-enum_entry = modifier* @nl* simple_id enum_entry_args? nl_class_body?
-enum_entry_args = @nl* value_arguments
-enum_members = @nl* @semi @nl* class_member_declarations
-
-# SECTION: types
-type = type_modifier* type_body
-type_body = [
-  function_type
-  parenthesized_type
-  definitely_non_nullable_type
-  nullable_type
-  type_reference
+assignment = assignable assign_op expr
+assignable = [
+  simple_id : id
+  parens : parens
+  brackets : brackets
 ]
-type_reference = [
-  user_type
-  "dynamic"
+assign_op = [
+  op_assignment : assign
+  op_add_assignment : add_assign
+  op_sub_assignment : sub_assign
+  op_mult_assignment : mult_assign
+  op_div_assignment : div_assign
+  op_mod_assignment : mod_assign
 ]
-nullable_type = nullable_type_base @nl* quest+
-nullable_type_base = [
-  type_reference
-  parenthesized_type
+loop_stmt = [
+  @for parens control_body? : for_stmt
+  @while parens while_body : while_stmt
+  @do control_body? @while parens : do_while_stmt
 ]
-quest = [
-  @quest_no_ws
-  @quest_ws
-]
-user_type = simple_user_type+<user_type_dot_sep>
-user_type_dot_sep = @nl* @dot @nl*
-simple_user_type = simple_id nl_type_arguments?
-nl_type_arguments = @nl* type_arguments
-type_arguments = @langle @nl* type_projection+<comma_sep> trailing_comma? @nl* @rangle
-type_projection = [
-  type_projection_modifier* type
-  @star
-]
-type_projection_modifier = [
-  variance_modifier @nl*
-  annotation
-]
-function_type = receiver_type_prefix? function_type_parameters @nl* @arrow @nl* type
-receiver_type_prefix = receiver_type @nl* @dot @nl*
-function_type_parameters = @lparen @nl* function_type_parameter*<comma_sep> trailing_comma? @nl* @rparen
-function_type_parameter = [
-  parameter
-  type
-]
-parenthesized_type = @lparen @nl* type @nl* @rparen
-receiver_type = type_modifier* receiver_type_body
-receiver_type_body = [
-  parenthesized_type
-  nullable_type
-  type_reference
-]
-definitely_non_nullable_type = definitely_non_nullable_lhs @nl* @amp @nl* type_modifier* definitely_non_nullable_rhs
-definitely_non_nullable_lhs = [
-  user_type
-  parenthesized_user_type
-]
-definitely_non_nullable_rhs = [
-  user_type
-  parenthesized_user_type
-]
-parenthesized_user_type = @lparen @nl* parenthesized_user_type_body @nl* @rparen
-parenthesized_user_type_body = [
-  user_type
-  parenthesized_user_type
-]
-type_modifier = [
-  annotation
-  "suspend" @nl*
-]
-type_parameters = @langle @nl* type_parameter+<comma_sep> trailing_comma? @nl* @rangle
-type_parameter = type_parameter_modifier* @nl* simple_id type_bound?
-type_bound = @nl* @colon @nl* type
-type_constraints = "where" @nl* type_constraint+<comma_sep>
-type_constraint = annotation* simple_id @nl* @colon @nl* type
-variance_modifier = [
-  "in"
-  "out"
-]
-type_parameter_modifier = [
-  "reified"
-  variance_modifier
-  annotation
-]
-
-# SECTION: statements
-statements = statement_list? semis?
-statement_list = statement+<semis>
-statement = statement_prefix* statement_body
-statement_prefix = [
-  label
-  annotation
-]
-statement_body = [
-  declaration
-  assignment
-  loop_statement
-  expression
-]
-control_structure_body = [
-  block
-  statement
-]
-block = @lbrace @nl* statements @nl* @rbrace
-loop_statement = [
-  for_statement
-  while_statement
-  do_while_statement
-]
-for_statement = "for" @nl* @lparen annotation* for_variable "in" expression @rparen @nl* control_structure_body?
-for_variable = [
-  variable_declaration
-  multi_variable_declaration
-]
-while_statement = "while" @nl* @lparen expression @rparen @nl* while_body
 while_body = [
-  control_structure_body
-  @semi
+  control_body : body
+  op_semicolon : semi
 ]
-do_while_statement = "do" @nl* control_structure_body? @nl* "while" @nl* @lparen expression @rparen
-assignment = [
-  directly_assignable_expression @assign @nl* expression
-  assignable_expression assignment_and_operator @nl* expression
-]
-assignment_and_operator = [
-  @plus_assign
-  @minus_assign
-  @star_assign
-  @slash_assign
-  @mod_assign
+control_body = [
+  block : block
+  statement : statement
 ]
 
-# SECTION: expressions
-expression = disjunction
-disjunction = conjunction+<disj_sep>
-conjunction = equality+<conj_sep>
-equality = comparison+<eq_sep>
-equality_op = [
-  @eqeqeq
-  @eqeq
-  @noteqeq
-  @noteq
+expr = prefix* postfix_expr expr_tail*
+expr_tail = nl_star operator nl_star prefix* postfix_expr
+postfix_expr = primary_expr postfix_part*
+postfix_part = [
+  parens : call
+  brackets : index
 ]
-comparison = generic_call_like_comparison+<cmp_sep>
-comparison_op = [
-  @le
-  @ge
-  @langle
-  @rangle
+primary_expr = [
+  literal : literal
+  simple_id : simple_id
+  keyword_atom : keyword
+  block : block
+  parens : parens
+  brackets : brackets
+  line_string : line_string
+  multiline_string : multiline_string
 ]
-generic_call_like_comparison = infix_operation call_suffix*
-infix_operation = elvis_expression infix_operation_tail*
-infix_operation_tail = [
-  in_operator @nl* elvis_expression
-  is_operator @nl* type
-]
-in_operator = [
-  "in"
-  @not_in
-]
-is_operator = [
-  "is"
-  @not_is
-]
-elvis_expression = infix_function_call+<elvis_sep>
-elvis = @elvis
-infix_function_call = range_expression infix_function_call_tail*
-infix_function_call_tail = simple_id @nl* range_expression
-range_expression = additive_expression+<range_sep>
-range_op = [
-  @range
-  @range_until
-]
-additive_expression = multiplicative_expression+<add_sep>
-additive_operator = [
-  @plus
-  @minus
-]
-multiplicative_expression = as_expression+<mul_sep>
-multiplicative_op = [
-  @star
-  @slash
-  @mod
-]
-as_expression = prefix_unary_expression as_expression_tail*
-as_expression_tail = @nl* as_operator @nl* type
-as_operator = [
-  @as_safe
-  "as"
-]
-prefix_unary_expression = unary_prefix* postfix_unary_expression
-unary_prefix = [
-  annotation
-  label
-  prefix_unary_operator @nl*
-]
-prefix_unary_operator = [
-  @incr
-  @decr
-  @minus
-  @plus
-  excl
-]
-excl = [
-  @excl_no_ws
-  @excl_ws
-]
-postfix_unary_expression = primary_expression postfix_unary_suffix*
-postfix_unary_suffix = [
-  postfix_unary_operator
-  type_arguments
-  call_suffix
-  indexing_suffix
-  navigation_suffix
-]
-postfix_unary_operator = [
-  @incr
-  @decr
-  @excl_no_ws excl
-]
-directly_assignable_expression = [
-  postfix_unary_expression assignable_suffix
-  simple_id
-  parenthesized_directly_assignable_expression
-]
-parenthesized_directly_assignable_expression = @lparen @nl* directly_assignable_expression @nl* @rparen
-assignable_expression = [
-  prefix_unary_expression
-  parenthesized_assignable_expression
-]
-parenthesized_assignable_expression = @lparen @nl* assignable_expression @nl* @rparen
-assignable_suffix = [
-  type_arguments
-  indexing_suffix
-  navigation_suffix
-]
-indexing_suffix = @lbracket @nl* expression+<comma_sep> trailing_comma? @nl* @rbracket
-navigation_suffix = member_access_operator @nl* navigation_target
-member_access_operator = [
-  @safe_dot
-  @dot
-  @coloncolon
-]
-navigation_target = [
-  simple_id
-  parenthesized_expression
-  "class"
-]
-call_suffix = [
-  type_arguments? value_arguments? annotated_lambda : lambda_call
-  type_arguments? value_arguments : value_call
-]
-annotated_lambda = annotation* label? @nl* lambda_literal
-value_arguments = @lparen @nl* value_argument*<comma_sep> trailing_comma? @nl* @rparen
-value_argument = annotation? @nl* named_argument? @star? @nl* expression
-named_argument = simple_id @nl* @assign @nl*
-
-# SECTION: primary expressions
-primary_expression = [
-  parenthesized_expression
-  simple_id
-  literal_constant
-  string_literal
-  callable_reference
-  function_literal
-  object_literal
-  collection_literal
-  this_expression
-  super_expression
-  if_expression
-  when_expression
-  try_expression
-  jump_expression
-]
-parenthesized_expression = @lparen @nl* expression @nl* @rparen
-collection_literal = @lbracket @nl* collection_elements? @nl* @rbracket
-collection_elements = expression+<comma_sep> trailing_comma?
-literal_constant = [
-  "true"
-  "false"
-  @int_lit
-  @hex_lit
-  @bin_lit
-  char_lit
-  @float_lit
-  "null"
-  @long_lit
-  @unsigned_lit
-]
-char_lit = @char_open char_content* @char_close
-char_content = [
-  @str_escape
-  @str_unicode
-  @str_text
-]
-string_literal = [
-  line_string_literal
-  multi_line_string_literal
-]
-line_string_literal = str
-str = @str_open line_string_element* @str_close
-line_string_element = [
-  line_string_content
-  line_string_expression
-]
-line_string_content = [
-  @str_text
-  @str_escape
-  @str_unicode
-  @str_ref
-]
-line_string_expression = str_interp
-str_interp = @str_expr_open @nl* expression @nl* @str_expr_close
-multi_line_string_literal = multiline_str
-multiline_str = @ml_str_open multi_line_string_element* @ml_str_close
-multi_line_string_element = [
-  multi_line_string_content
-  multi_line_string_expression
-]
-multi_line_string_content = [
-  @str_text
-  @str_ref
-]
-multi_line_string_expression = ml_str_interp
-ml_str_interp = @str_expr_open @nl* expression @nl* @str_expr_close
-lambda_literal = block
-anonymous_function = "suspend"? @nl* "fun" anonymous_function_receiver? @nl* parameters_with_optional_type nl_return_type? nl_type_constraints? nl_function_body?
-anonymous_function_receiver = @nl* type @nl* @dot
-function_literal = [
-  lambda_literal
-  anonymous_function
-]
-object_literal = "object" object_literal_delegation? nl_class_body?
-object_literal_delegation = @nl* @colon @nl* delegation_specifiers @nl*
-this_expression = [
-  @this_at
-  "this"
-]
-super_expression = [
-  @super_at
-  "super" type_arguments?
-]
-if_expression = "if" @nl* @lparen @nl* expression @nl* @rparen @nl* if_body
-if_body = [
-  control_structure_body nl_else?
-  @semi
-]
-nl_else = @nl* else_branch
-else_branch = "else" @nl* else_body
-else_body = [
-  control_structure_body
-  @semi
-]
-when_subject = @lparen when_subject_variable? expression @rparen
-when_subject_variable = annotation* @nl* "val" @nl* variable_declaration @nl* @assign @nl*
-when_expression = "when" @nl* when_subject? @nl* block
-try_expression = "try" @nl* block try_tail
-try_tail = [
-  catch_block_with_nl+ nl_finally_block?
-  nl_finally_block
-]
-catch_block_with_nl = @nl* catch_block
-nl_finally_block = @nl* finally_block
-catch_block = "catch" @nl* @lparen annotation* simple_id @colon type trailing_comma? @rparen @nl* block
-finally_block = "finally" @nl* block
-jump_expression = [
-  "throw" @nl* expression
-  @return_at expression?
-  "return" expression?
-  @continue_at
-  "continue"
-  @break_at
-  "break"
-]
-callable_reference = receiver_type? @coloncolon @nl* callable_reference_target
-callable_reference_target = [
-  simple_id
-  "class"
+prefix = [
+  operator : operator
+  modifier_kw : modifier
 ]
 
-# SECTION: annotations and labels
-annotation = [
-  single_annotation
-  multi_annotation
+parens = @lparen parens_body? @rparen
+parens_body = parens_item*<iop_comma> iop_comma?
+parens_item = inside_expr
+brackets = @lsquare brackets_body? @rsquare
+brackets_body = inside_expr*<iop_comma> iop_comma?
+inside_expr = inside_prefix* inside_postfix_expr inside_expr_tail*
+inside_expr_tail = i_operator inside_prefix* inside_postfix_expr
+inside_postfix_expr = inside_primary_expr inside_postfix_part*
+inside_postfix_part = [
+  parens : call
+  brackets : index
 ]
-single_annotation = annotation_prefix unescaped_annotation @nl*
-multi_annotation = annotation_prefix @lbracket unescaped_annotation+ @rbracket @nl*
-annotation_prefix = [
-  annotation_use_site @nl*
-  at
+inside_primary_expr = [
+  i_literal : literal
+  i_simple_id : simple_id
+  i_keyword_atom : keyword
+  block : block
+  parens : parens
+  brackets : brackets
+  line_string : line_string
+  multiline_string : multiline_string
 ]
-annotation_use_site = at annotation_target @nl* @colon
-at = [
-  @at_no_ws
-  @at_post_ws
+inside_prefix = [
+  i_operator : operator
+  i_modifier_kw : modifier
 ]
-annotation_target = [
-  "field"
-  "property"
-  "get"
-  "set"
-  "receiver"
-  "param"
-  "setparam"
-  "delegate"
-  "file"
-]
-unescaped_annotation = [
-  user_type @nl* value_arguments : with_args
-  user_type : type_only
-]
-label = @label_ref @nl*
 
-# SECTION: modifiers
+line_string = @quote_open line_part* @quote_close
+line_part = [
+  line_str_expr : expr
+  @line_str_ref : ref
+  @line_str_text : text
+  @line_str_escaped_char : escaped
+]
+line_str_expr = @line_str_expr_start block_item* @rcurl
+multiline_string = @triple_quote_open multiline_part* @triple_quote_close
+multiline_part = [
+  multi_line_str_expr : expr
+  @multi_line_str_ref : ref
+  @multi_line_str_text : text
+]
+multi_line_str_expr = @multi_line_str_expr_start block_item* @rcurl
+
+modifiers = modifier+
 modifier = [
-  class_modifier @nl*
-  member_modifier @nl*
-  visibility_modifier @nl*
-  function_modifier @nl*
-  property_modifier @nl*
-  inheritance_modifier @nl*
-  parameter_modifier @nl*
-  platform_modifier @nl*
-  annotation
+  annotation : annotation
+  modifier_kw : modifier_kw
 ]
-class_modifier = [
-  "enum"
-  "sealed"
-  "annotation"
-  "data"
-  "inner"
-]
-member_modifier = [
-  "override"
-  "lateinit"
-]
-visibility_modifier = [
-  "public"
-  "private"
-  "internal"
-  "protected"
-]
-function_modifier = [
-  "tailrec"
-  "operator"
-  "infix"
-  "inline"
-  "external"
-  "suspend"
-]
-property_modifier = "const"
-inheritance_modifier = [
-  "abstract"
-  "final"
-  "open"
-]
-parameter_modifier = [
-  "vararg"
-  "noinline"
-  "crossinline"
-]
-platform_modifier = [
-  "expect"
-  "actual"
+annotation = annotation_site? simple_id annotation_args?
+annotation_args = [
+  parens : parens
+  brackets : brackets
 ]
 
-# SECTION: identifiers
+op_reserved = @reserved
+op_dot = @dot
+op_comma = @comma
+op_mult = @mult
+op_mod = @mod
+op_div = @div
+op_add = @add
+op_sub = @sub
+op_incr = @incr
+op_decr = @decr
+op_conj = @conj
+op_disj = @disj
+op_excl_ws = @excl_ws
+op_excl_no_ws = @excl_no_ws
+op_colon = @colon
+op_semicolon = @semicolon
+op_assignment = @assignment
+op_add_assignment = @add_assignment
+op_sub_assignment = @sub_assignment
+op_mult_assignment = @mult_assignment
+op_div_assignment = @div_assignment
+op_mod_assignment = @mod_assignment
+op_arrow = @arrow
+op_double_arrow = @double_arrow
+op_range = @range
+op_range_until = @range_until
+op_coloncolon = @coloncolon
+op_double_semicolon = @double_semicolon
+op_hash = @hash
+op_at_no_ws = @at_no_ws
+op_at_post_ws = @at_post_ws
+op_at_pre_ws = @at_pre_ws
+op_at_both_ws = @at_both_ws
+op_quest_ws = @quest_ws
+op_quest_no_ws = @quest_no_ws
+op_langle = @langle
+op_rangle = @rangle
+op_le = @le
+op_ge = @ge
+op_excl_eq = @excl_eq
+op_excl_eqeq = @excl_eqeq
+op_as_safe = @as_safe
+op_eqeq = @eqeq
+op_eqeqeq = @eqeqeq
+op_single_quote = @single_quote
+op_amp = @amp
+op_not_is = @not_is
+op_not_in = @not_in
+
+iop_reserved = @reserved
+iop_dot = @dot
+iop_comma = @comma
+iop_mult = @mult
+iop_mod = @mod
+iop_div = @div
+iop_add = @add
+iop_sub = @sub
+iop_incr = @incr
+iop_decr = @decr
+iop_conj = @conj
+iop_disj = @disj
+iop_excl_ws = @excl_ws
+iop_excl_no_ws = @excl_no_ws
+iop_colon = @colon
+iop_semicolon = @semicolon
+iop_assignment = @assignment
+iop_add_assignment = @add_assignment
+iop_sub_assignment = @sub_assignment
+iop_mult_assignment = @mult_assignment
+iop_div_assignment = @div_assignment
+iop_mod_assignment = @mod_assignment
+iop_arrow = @arrow
+iop_double_arrow = @double_arrow
+iop_range = @range
+iop_range_until = @range_until
+iop_coloncolon = @coloncolon
+iop_double_semicolon = @double_semicolon
+iop_hash = @hash
+iop_at_no_ws = @at_no_ws
+iop_at_post_ws = @at_post_ws
+iop_at_pre_ws = @at_pre_ws
+iop_at_both_ws = @at_both_ws
+iop_quest_ws = @quest_ws
+iop_quest_no_ws = @quest_no_ws
+iop_langle = @langle
+iop_rangle = @rangle
+iop_le = @le
+iop_ge = @ge
+iop_excl_eq = @excl_eq
+iop_excl_eqeq = @excl_eqeq
+iop_as_safe = @as_safe
+iop_eqeq = @eqeq
+iop_eqeqeq = @eqeqeq
+iop_single_quote = @single_quote
+iop_amp = @amp
+iop_not_is = @not_is
+iop_not_in = @not_in
+
 simple_id = [
-  !hard_keyword @ident
-  soft_keyword
+  @identifier : id_identifier
+  @abstract : id_abstract
+  @annotation : id_annotation
+  @by : id_by
+  @catch : id_catch
+  @companion : id_companion
+  @constructor : id_constructor
+  @crossinline : id_crossinline
+  @data : id_data
+  @dynamic : id_dynamic
+  @enum : id_enum
+  @external : id_external
+  @final : id_final
+  @finally : id_finally
+  @import : id_import
+  @infix : id_infix
+  @init : id_init
+  @inline : id_inline
+  @inner : id_inner
+  @internal : id_internal
+  @lateinit : id_lateinit
+  @noinline : id_noinline
+  @open : id_open
+  @operator : id_operator
+  @out : id_out
+  @override : id_override
+  @private : id_private
+  @protected : id_protected
+  @public : id_public
+  @reified : id_reified
+  @sealed : id_sealed
+  @tailrec : id_tailrec
+  @vararg : id_vararg
+  @where : id_where
+  @get : id_get
+  @set : id_set
+  @field : id_field
+  @property : id_property
+  @receiver : id_receiver
+  @param : id_param
+  @setparam : id_setparam
+  @delegate : id_delegate
+  @file : id_file
+  @expect : id_expect
+  @actual : id_actual
+  @value : id_value
+  @const : id_const
+  @suspend : id_suspend
 ]
-hard_keyword = [
-  "as"
-  "break"
-  "class"
-  "continue"
-  "do"
-  "else"
-  "for"
-  "fun"
-  "if"
-  "in"
-  "interface"
-  "is"
-  "null"
-  "object"
-  "package"
-  "return"
-  "super"
-  "this"
-  "throw"
-  "try"
-  "typealias"
-  "typeof"
-  "val"
-  "var"
-  "when"
-  "while"
-  "true"
-  "false"
+
+literal = [
+  @boolean_literal : lit_boolean_literal
+  @null_literal : lit_null_literal
+  @real_literal : lit_real_literal
+  @integer_literal : lit_integer_literal
+  @hex_literal : lit_hex_literal
+  @bin_literal : lit_bin_literal
+  @character_literal : lit_character_literal
+  @long_literal : lit_long_literal
+  @unsigned_literal : lit_unsigned_literal
 ]
-soft_keyword = [
-  "abstract"
-  "annotation"
-  "by"
-  "catch"
-  "companion"
-  "constructor"
-  "crossinline"
-  "data"
-  "dynamic"
-  "enum"
-  "external"
-  "final"
-  "finally"
-  "get"
-  "import"
-  "infix"
-  "init"
-  "inline"
-  "inner"
-  "internal"
-  "lateinit"
-  "noinline"
-  "open"
-  "operator"
-  "out"
-  "override"
-  "private"
-  "protected"
-  "public"
-  "reified"
-  "sealed"
-  "tailrec"
-  "set"
-  "vararg"
-  "where"
-  "field"
-  "property"
-  "receiver"
-  "param"
-  "setparam"
-  "delegate"
-  "file"
-  "expect"
-  "actual"
-  "const"
-  "suspend"
+
+modifier_kw = [
+  @public : mod_public
+  @private : mod_private
+  @protected : mod_protected
+  @internal : mod_internal
+  @enum : mod_enum
+  @sealed : mod_sealed
+  @annotation : mod_annotation
+  @data : mod_data
+  @inner : mod_inner
+  @value : mod_value
+  @tailrec : mod_tailrec
+  @operator : mod_operator
+  @inline : mod_inline
+  @infix : mod_infix
+  @external : mod_external
+  @suspend : mod_suspend
+  @override : mod_override
+  @abstract : mod_abstract
+  @final : mod_final
+  @open : mod_open
+  @const : mod_const
+  @lateinit : mod_lateinit
+  @vararg : mod_vararg
+  @noinline : mod_noinline
+  @crossinline : mod_crossinline
+  @reified : mod_reified
+  @expect : mod_expect
+  @actual : mod_actual
 ]
-identifier = simple_id+<user_type_dot_sep>
+
+keyword_atom = [
+  @return_at : kw_return_at
+  @continue_at : kw_continue_at
+  @break_at : kw_break_at
+  @this_at : kw_this_at
+  @super_at : kw_super_at
+  @file : kw_file
+  @field : kw_field
+  @property : kw_property
+  @get : kw_get
+  @set : kw_set
+  @receiver : kw_receiver
+  @param : kw_param
+  @setparam : kw_setparam
+  @delegate : kw_delegate
+  @package : kw_package
+  @import : kw_import
+  @class : kw_class
+  @interface : kw_interface
+  @fun : kw_fun
+  @object : kw_object
+  @val : kw_val
+  @var : kw_var
+  @type_alias : kw_typealias
+  @constructor : kw_constructor
+  @by : kw_by
+  @companion : kw_companion
+  @init : kw_init
+  @this : kw_this
+  @super : kw_super
+  @typeof : kw_typeof
+  @where : kw_where
+  @if : kw_if
+  @else : kw_else
+  @when : kw_when
+  @try : kw_try
+  @catch : kw_catch
+  @finally : kw_finally
+  @for : kw_for
+  @do : kw_do
+  @while : kw_while
+  @throw : kw_throw
+  @return : kw_return
+  @continue : kw_continue
+  @break : kw_break
+  @as : kw_as
+  @is : kw_is
+  @in : kw_in
+  @out : kw_out
+  @dynamic : kw_dynamic
+]
+
+operator = [
+  op_reserved : op_p_reserved
+  op_dot : op_p_dot
+  op_comma : op_p_comma
+  op_mult : op_p_mult
+  op_mod : op_p_mod
+  op_div : op_p_div
+  op_add : op_p_add
+  op_sub : op_p_sub
+  op_incr : op_p_incr
+  op_decr : op_p_decr
+  op_conj : op_p_conj
+  op_disj : op_p_disj
+  op_excl_ws : op_p_excl_ws
+  op_excl_no_ws : op_p_excl_no_ws
+  op_colon : op_p_colon
+  op_semicolon : op_p_semicolon
+  op_assignment : op_p_assignment
+  op_add_assignment : op_p_add_assignment
+  op_sub_assignment : op_p_sub_assignment
+  op_mult_assignment : op_p_mult_assignment
+  op_div_assignment : op_p_div_assignment
+  op_mod_assignment : op_p_mod_assignment
+  op_arrow : op_p_arrow
+  op_double_arrow : op_p_double_arrow
+  op_range : op_p_range
+  op_range_until : op_p_range_until
+  op_coloncolon : op_p_coloncolon
+  op_double_semicolon : op_p_dsemi
+  op_hash : op_p_hash
+  op_at_no_ws : op_p_at_no_ws
+  op_at_post_ws : op_p_at_post_ws
+  op_at_pre_ws : op_p_at_pre_ws
+  op_at_both_ws : op_p_at_both_ws
+  op_quest_ws : op_p_quest_ws
+  op_quest_no_ws : op_p_quest_no_ws
+  op_langle : op_p_langle
+  op_rangle : op_p_rangle
+  op_le : op_p_le
+  op_ge : op_p_ge
+  op_excl_eq : op_p_excl_eq
+  op_excl_eqeq : op_p_excl_eqeq
+  op_as_safe : op_p_as_safe
+  op_eqeq : op_p_eqeq
+  op_eqeqeq : op_p_eqeqeq
+  op_single_quote : op_p_single_quote
+  op_amp : op_p_amp
+  op_not_is : op_p_not_is
+  op_not_in : op_p_not_in
+]
+
+i_simple_id = [
+  @identifier : iid_identifier
+  @abstract : iid_abstract
+  @annotation : iid_annotation
+  @crossinline : iid_crossinline
+  @data : iid_data
+  @enum : iid_enum
+  @external : iid_external
+  @final : iid_final
+  @infix : iid_infix
+  @inline : iid_inline
+  @inner : iid_inner
+  @internal : iid_internal
+  @lateinit : iid_lateinit
+  @noinline : iid_noinline
+  @open : iid_open
+  @operator : iid_operator
+  @out : iid_out
+  @override : iid_override
+  @private : iid_private
+  @protected : iid_protected
+  @public : iid_public
+  @reified : iid_reified
+  @sealed : iid_sealed
+  @tailrec : iid_tailrec
+  @vararg : iid_vararg
+  @get : iid_get
+  @set : iid_set
+  @field : iid_field
+  @property : iid_property
+  @receiver : iid_receiver
+  @param : iid_param
+  @setparam : iid_setparam
+  @delegate : iid_delegate
+  @file : iid_file
+  @expect : iid_expect
+  @actual : iid_actual
+  @value : iid_value
+  @const : iid_const
+  @suspend : iid_suspend
+]
+
+i_literal = [
+  @boolean_literal : ilit_boolean_literal
+  @null_literal : ilit_null_literal
+  @real_literal : ilit_real_literal
+  @integer_literal : ilit_integer_literal
+  @hex_literal : ilit_hex_literal
+  @bin_literal : ilit_bin_literal
+  @character_literal : ilit_character_literal
+  @long_literal : ilit_long_literal
+  @unsigned_literal : ilit_unsigned_literal
+]
+
+i_modifier_kw = [
+  @public : imod_public
+  @private : imod_private
+  @protected : imod_protected
+  @internal : imod_internal
+  @enum : imod_enum
+  @sealed : imod_sealed
+  @annotation : imod_annotation
+  @data : imod_data
+  @inner : imod_inner
+  @value : imod_value
+  @tailrec : imod_tailrec
+  @operator : imod_operator
+  @inline : imod_inline
+  @infix : imod_infix
+  @external : imod_external
+  @suspend : imod_suspend
+  @override : imod_override
+  @abstract : imod_abstract
+  @final : imod_final
+  @open : imod_open
+  @const : imod_const
+  @lateinit : imod_lateinit
+  @vararg : imod_vararg
+  @noinline : imod_noinline
+  @crossinline : imod_crossinline
+  @reified : imod_reified
+  @expect : imod_expect
+  @actual : imod_actual
+]
+
+i_keyword_atom = [
+  @return_at : ikw_return_at
+  @continue_at : ikw_continue_at
+  @break_at : ikw_break_at
+  @file : ikw_file
+  @field : ikw_field
+  @property : ikw_property
+  @get : ikw_get
+  @set : ikw_set
+  @receiver : ikw_receiver
+  @param : ikw_param
+  @setparam : ikw_setparam
+  @delegate : ikw_delegate
+  @fun : ikw_fun
+  @object : ikw_object
+  @val : ikw_val
+  @var : ikw_var
+  @super : ikw_super
+  @if : ikw_if
+  @else : ikw_else
+  @when : ikw_when
+  @try : ikw_try
+  @for : ikw_for
+  @do : ikw_do
+  @throw : ikw_throw
+  @return : ikw_return
+  @continue : ikw_continue
+  @break : ikw_break
+  @as : ikw_as
+  @is : ikw_is
+  @in : ikw_in
+  @out : ikw_out
+]
+
+i_operator = [
+  iop_reserved : iop_op_reserved
+  iop_dot : iop_op_dot
+  iop_comma : iop_op_comma
+  iop_mult : iop_op_mult
+  iop_mod : iop_op_mod
+  iop_div : iop_op_div
+  iop_add : iop_op_add
+  iop_sub : iop_op_sub
+  iop_incr : iop_op_incr
+  iop_decr : iop_op_decr
+  iop_conj : iop_op_conj
+  iop_disj : iop_op_disj
+  iop_excl_ws : iop_op_excl_ws
+  iop_excl_no_ws : iop_op_excl_no_ws
+  iop_colon : iop_op_colon
+  iop_semicolon : iop_op_semicolon
+  iop_assignment : iop_op_assignment
+  iop_add_assignment : iop_op_add_assignment
+  iop_sub_assignment : iop_op_sub_assignment
+  iop_mult_assignment : iop_op_mult_assignment
+  iop_div_assignment : iop_op_div_assignment
+  iop_mod_assignment : iop_op_mod_assignment
+  iop_arrow : iop_op_arrow
+  iop_double_arrow : iop_op_double_arrow
+  iop_range : iop_op_range
+  iop_range_until : iop_op_range_until
+  iop_coloncolon : iop_op_coloncolon
+  iop_double_semicolon : iop_op_dsemi
+  iop_hash : iop_op_hash
+  iop_at_no_ws : iop_op_at_no_ws
+  iop_at_post_ws : iop_op_at_post_ws
+  iop_at_pre_ws : iop_op_at_pre_ws
+  iop_at_both_ws : iop_op_at_both_ws
+  iop_quest_ws : iop_op_quest_ws
+  iop_quest_no_ws : iop_op_quest_no_ws
+  iop_langle : iop_op_langle
+  iop_rangle : iop_op_rangle
+  iop_le : iop_op_le
+  iop_ge : iop_op_ge
+  iop_excl_eq : iop_op_excl_eq
+  iop_excl_eqeq : iop_op_excl_eqeq
+  iop_as_safe : iop_op_as_safe
+  iop_eqeq : iop_op_eqeq
+  iop_eqeqeq : iop_op_eqeqeq
+  iop_single_quote : iop_op_single_quote
+  iop_amp : iop_op_amp
+  iop_not_is : iop_op_not_is
+  iop_not_in : iop_op_not_in
+]
+

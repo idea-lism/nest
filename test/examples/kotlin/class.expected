@@ -2,94 +2,88 @@
 @shebang_line "#!/usr/bin/env kotlin"
 @nl "
 "
-@lit.package "package"
-@ident "demo"
+@package "package"
+@identifier "demo"
 @nl "
 "
 @nl "
 "
-@lit.class "class"
-@ident "Box"
-  @lbrace "{"
+@class "class"
+@identifier "Box"
+  @lcurl "{"
   @nl "
 "
-  @lit.fun "fun"
-  @ident "value"
-  @lparen "("
-  @rparen ")"
-  @assign "="
-  @int_lit "1"
+  @fun "fun"
+  @value "value"
+    @lparen "("
+    @rparen ")"
+  @assignment "="
+  @integer_literal "1"
   @nl "
 "
-  @rbrace "}"
+  @rcurl "}"
 @nl "
 "
 ------
 main
-  shebang_line
-    @shebang_line
-    @nl
-  package_header
-    package_header_body
-      @lit.package
-      identifier
-        simple_id
-          @ident
-      semi
-        semi_item
+  file
+    shebang_file
+      shebang_line
+        @shebang_line
+        nl
           @nl
-        @nl
-  import_list
-  top_level_object
-    declaration
-      class_declaration
-        class_kind
-          @lit.class
-        simple_id
-          @ident
-        nl_class_body
-          class_body_variant
-            class_body
-              block
-                @lbrace
+        nl_star
+      file_rest
+        nl_star
+        package_decl
+          @package
+          qualified_name
+            simple_id
+              @identifier
+          semi
+            @nl
+            nl_star
+              nl
                 @nl
-                statements
-                  statement_list
-                    statement
-                      statement_body
-                        declaration
-                          function_declaration
-                            @lit.fun
-                            simple_id
-                              @ident
-                            function_value_parameters
-                              @lparen
-                              @rparen
-                            nl_function_body
-                              function_body
-                                @assign
-                                expression
-                                  disjunction
-                                    conjunction
-                                      equality
-                                        comparison
-                                          generic_call_like_comparison
-                                            infix_operation
-                                              elvis_expression
-                                                infix_function_call
-                                                  range_expression
-                                                    additive_expression
-                                                      multiplicative_expression
-                                                        as_expression
-                                                          prefix_unary_expression
-                                                            postfix_unary_expression
-                                                              primary_expression
-                                                                literal_constant
-                                                                  @int_lit
-                  semis
-                    semi_item
-                      @nl
-                @rbrace
-    semis
-      semi_item
-        @nl
+        top_decl
+          declaration
+            class_decl
+              class_kind
+                @class
+              simple_id
+                @identifier
+              class_body
+                block
+                  @lcurl
+                  block_content
+                    statement_content
+                      block_item
+                        nl
+                          @nl
+                      block_item
+                        statement
+                          declaration
+                            fun_decl
+                              @fun
+                              simple_id
+                                @value
+                              value_params
+                                parens
+                                  @lparen
+                                  @rparen
+                              fun_body
+                                op_assignment
+                                  @assignment
+                                expr
+                                  postfix_expr
+                                    primary_expr
+                                      literal
+                                        @integer_literal
+                      block_item
+                        nl
+                          @nl
+                  @rcurl
+        top_decl
+          nl
+            @nl
+        nl_star

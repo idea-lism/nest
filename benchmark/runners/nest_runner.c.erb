@@ -86,7 +86,7 @@ static void* runner_thread(void* arg) {
     <%= prefix %>_cleanup(&res);
 
     // CSV: parse_us,size_bytes,token_count,chunk_count
-    printf("%.1f,%d,%d,%d\n", median_us, file_size, token_count, chunk_count);
+    printf("%.1f,%d,%zu,%zu\n", median_us, file_size, token_count, chunk_count);
 
     free(times);
     ustr_del(src);

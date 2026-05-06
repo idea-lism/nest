@@ -1,0 +1,773 @@
+# Kotlin lexer/scoped-token proof grammar in nest syntax.
+# The VPA mirrors KotlinLexer.g4 modes as TokenTree scopes.  The PEG is still
+# deliberately shallow: each lexical scope has its own private list/item/token
+# grammar so rule closures cannot leak across scopes while the real Kotlin PEG is
+# rebuilt scope-by-scope.
+
+[[vpa]]
+%ignore @delimited_comment @line_comment @ws @inside_nl
+
+*hidden = {
+  delimited_comment
+  /\/\/[^\r\n]*/ @line_comment
+  /[ \t\f]+/ @ws
+}
+
+*layout_sensitive_ops = {
+  /([ \t\f]|\r?\n)+@([ \t\f]|\r?\n)+/ @at_both_ws
+  /([ \t\f]|\r?\n)+@/ @at_pre_ws
+  /@([ \t\f]|\r?\n)+/ @at_post_ws
+  /\?([ \t\f]|\r?\n)+/ @quest_ws
+  /!in([ \t\f]|\r?\n)+/ @not_in
+  /!is([ \t\f]|\r?\n)+/ @not_is
+  /!([ \t\f]|\r?\n)+/ @excl_ws
+}
+
+*separators_and_operations = {
+  *layout_sensitive_ops
+  /\.\.\./ @reserved
+  /\.\.</ @range_until
+  /\.\./ @range
+  /\./ @dot
+  /,/ @comma
+  /\+\+/ @incr
+  /--/ @decr
+  /&&/ @conj
+  /\|\|/ @disj
+  /!==/ @excl_eqeq
+  /!=/ @excl_eq
+  /!/ @excl_no_ws
+  /::/ @coloncolon
+  /:/ @colon
+  /;;/ @double_semicolon
+  /;/ @semicolon
+  /\+=/ @add_assignment
+  /-=/ @sub_assignment
+  /\*=/ @mult_assignment
+  /\/=/ @div_assignment
+  /%=/ @mod_assignment
+  /=>/ @double_arrow
+  /->/ @arrow
+  /===/ @eqeqeq
+  /==/ @eqeq
+  /=/ @assignment
+  /<=/ @le
+  />=/ @ge
+  /</ @langle
+  />/ @rangle
+  /as\?/ @as_safe
+  /\?/ @quest_no_ws
+  /#/ @hash
+  /@/ @at_no_ws
+  /\*/ @mult
+  /%/ @mod
+  /\// @div
+  /\+/ @add
+  /-/ @sub
+  /'/ @single_quote
+  /&/ @amp
+}
+
+*keywords = {
+  /return@[A-Za-z_][A-Za-z_0-9]*/ @return_at
+  /continue@[A-Za-z_][A-Za-z_0-9]*/ @continue_at
+  /break@[A-Za-z_][A-Za-z_0-9]*/ @break_at
+  /this@[A-Za-z_][A-Za-z_0-9]*/ @this_at
+  /super@[A-Za-z_][A-Za-z_0-9]*/ @super_at
+  "typealias" @type_alias
+  "constructor" @constructor
+  "companion" @companion
+  "crossinline" @crossinline
+  "annotation" @annotation
+  "protected" @protected
+  "continue" @continue
+  "internal" @internal
+  "operator" @operator
+  "override" @override
+  "lateinit" @lateinit
+  "noinline" @noinline
+  "property" @property
+  "setparam" @setparam
+  "package" @package
+  "interface" @interface
+  "dynamic" @dynamic
+  "private" @private
+  "tailrec" @tailrec
+  "external" @external
+  "suspend" @suspend
+  "reified" @reified
+  "receiver" @receiver
+  "delegate" @delegate
+  "import" @import
+  "object" @object
+  "typeof" @typeof
+  "where" @where
+  "catch" @catch
+  "finally" @finally
+  "while" @while
+  "throw" @throw
+  "return" @return
+  "break" @break
+  "public" @public
+  "sealed" @sealed
+  "abstract" @abstract
+  "actual" @actual
+  "class" @class
+  "init" @init
+  "this" @this
+  "super" @super
+  "when" @when
+  "else" @else
+  "true" @boolean_literal
+  "false" @boolean_literal
+  "null" @null_literal
+  "enum" @enum
+  "data" @data
+  "inner" @inner
+  "value" @value
+  "inline" @inline
+  "infix" @infix
+  "final" @final
+  "open" @open
+  "const" @const
+  "vararg" @vararg
+  "expect" @expect
+  "field" @field
+  "file" @file
+  "param" @param
+  "fun" @fun
+  "val" @val
+  "var" @var
+  "try" @try
+  "for" @for
+  "do" @do
+  "as" @as
+  "is" @is
+  "in" @in
+  "out" @out
+  "get" @get
+  "set" @set
+  "by" @by
+  "if" @if
+}
+
+*inside_keywords = {
+  /return@[A-Za-z_][A-Za-z_0-9]*/ @return_at
+  /continue@[A-Za-z_][A-Za-z_0-9]*/ @continue_at
+  /break@[A-Za-z_][A-Za-z_0-9]*/ @break_at
+  "continue" @continue
+  "protected" @protected
+  "internal" @internal
+  "operator" @operator
+  "override" @override
+  "lateinit" @lateinit
+  "noinline" @noinline
+  "property" @property
+  "setparam" @setparam
+  "crossinline" @crossinline
+  "annotation" @annotation
+  "abstract" @abstract
+  "private" @private
+  "tailrec" @tailrec
+  "external" @external
+  "suspend" @suspend
+  "reified" @reified
+  "receiver" @receiver
+  "delegate" @delegate
+  "object" @object
+  "super" @super
+  "when" @when
+  "throw" @throw
+  "return" @return
+  "break" @break
+  "public" @public
+  "sealed" @sealed
+  "actual" @actual
+  "else" @else
+  "true" @boolean_literal
+  "false" @boolean_literal
+  "null" @null_literal
+  "enum" @enum
+  "data" @data
+  "inner" @inner
+  "value" @value
+  "inline" @inline
+  "infix" @infix
+  "final" @final
+  "open" @open
+  "const" @const
+  "vararg" @vararg
+  "expect" @expect
+  "field" @field
+  "file" @file
+  "param" @param
+  "fun" @fun
+  "val" @val
+  "var" @var
+  "try" @try
+  "for" @for
+  "do" @do
+  "as" @as
+  "is" @is
+  "in" @in
+  "out" @out
+  "get" @get
+  "set" @set
+  "if" @if
+}
+
+*literals_and_identifiers = {
+  /0[xX][0-9a-fA-F][0-9a-fA-F_]*[uU][lL]?/ @unsigned_literal
+  /0[bB][01][01_]*[uU][lL]?/ @unsigned_literal
+  /[1-9][0-9_]*[0-9][uU][lL]?/ @unsigned_literal
+  /[0-9][uU][lL]?/ @unsigned_literal
+  /0[xX][0-9a-fA-F][0-9a-fA-F_]*[lL]/ @long_literal
+  /0[bB][01][01_]*[lL]/ @long_literal
+  /[1-9][0-9_]*[0-9][lL]/ @long_literal
+  /[0-9][lL]/ @long_literal
+  /([0-9][0-9_]*)?\.[0-9][0-9_]*([eE][+\-]?[0-9][0-9_]*)?[fF]?/ @real_literal
+  /[0-9][0-9_]*[eE][+\-]?[0-9][0-9_]*[fF]?/ @real_literal
+  /[0-9][0-9_]*[fF]/ @real_literal
+  /0[xX][0-9a-fA-F][0-9a-fA-F_]*/ @hex_literal
+  /0[bB][01][01_]*/ @bin_literal
+  /[1-9][0-9_]*[0-9]/ @integer_literal
+  /[0-9]/ @integer_literal
+  /'(\\u[0-9a-fA-F][0-9a-fA-F][0-9a-fA-F][0-9a-fA-F]|\\[tbrn'"\\$]|[^\n\r'\\])'/ @character_literal
+  /[A-Za-z_][A-Za-z_0-9]*/ @identifier
+  /`[^`\r\n]+`/ @identifier
+}
+
+*default_units = {
+  /#![^\r\n]*/ @shebang_line
+  line_string
+  multiline_string
+  delimited_comment
+  /\/\/[^\r\n]*/ @line_comment
+  parens
+  brackets
+  block
+  *keywords
+  *literals_and_identifiers
+  *separators_and_operations
+  /\r\n?/ @nl
+  /\n/ @nl
+  /[ \t\f]+/ @ws
+}
+
+*inside_units = {
+  line_string
+  multiline_string
+  delimited_comment
+  /\/\/[^\r\n]*/ @line_comment
+  parens
+  brackets
+  block
+  *inside_keywords
+  *literals_and_identifiers
+  *separators_and_operations
+  /\r\n?/ @inside_nl
+  /\n/ @inside_nl
+  /[ \t\f]+/ @ws
+}
+
+main = {
+  *default_units
+  EOF .end
+}
+
+delimited_comment = /\/\*/ .begin @delimited_comment {
+  delimited_comment
+  /\*\// .end
+  /[^*\/]+/
+  /\*/
+  /\//
+}
+
+block = /[{]/ .begin @lcurl {
+  *default_units
+  /[}]/ @rcurl .end
+}
+
+parens = /\(/ .begin @lparen {
+  *inside_units
+  /\)/ @rparen .end
+}
+
+brackets = /\[/ .begin @lsquare {
+  *inside_units
+  /\]/ @rsquare .end
+}
+
+line_string = /"/ .begin @quote_open {
+  /"/ @quote_close .end
+  line_str_expr
+  /\$[A-Za-z_][A-Za-z_0-9]*/ @line_str_ref
+  /\\u[0-9a-fA-F][0-9a-fA-F][0-9a-fA-F][0-9a-fA-F]/ @line_str_escaped_char
+  /\\[tbrn'"\\$]/ @line_str_escaped_char
+  /[^"\\$]+/ @line_str_text
+  /\$/ @line_str_text
+}
+
+line_str_expr = /\$[{]/ .begin @line_str_expr_start {
+  *default_units
+  /[}]/ @rcurl .end
+}
+
+multiline_string = /"""/ .begin @triple_quote_open {
+  /"{3,}/ @triple_quote_close .end
+  multi_line_str_expr
+  /\$[A-Za-z_][A-Za-z_0-9]*/ @multi_line_str_ref
+  /"{1,2}/ @multi_line_str_text
+  /[^"$]+/ @multi_line_str_text
+  /\$/ @multi_line_str_text
+}
+
+multi_line_str_expr = /\$[{]/ .begin @multi_line_str_expr_start {
+  *default_units
+  /[}]/ @rcurl .end
+}
+
+[[peg]]
+
+main = main_list
+main_list = shebang_line? nl* file_annotation* package_header import_list top_level_object* main_trailing*
+
+shebang_line = @shebang_line nl+
+nl = @nl
+semi = [
+  @semicolon : semi_semicolon
+  @nl : semi_nl
+] nl*
+semis = semi+
+main_trailing = [
+  semi : trailing_semi
+  main_token : trailing_token
+]
+
+file_annotation = annotation_site annotation_body nl*
+annotation_site = [
+  @at_no_ws : site_at_no_ws
+  @at_pre_ws : site_at_pre_ws
+]
+annotation_body = [
+  @file @colon annotation_payload : file_annotation_plain
+  @file @colon brackets : file_annotation_brackets
+]
+annotation_payload = annotation_token*
+annotation_token = [
+  line_string : annotation_line_string
+  multiline_string : annotation_multiline_string
+  parens : annotation_parens
+  block : annotation_block
+  brackets : annotation_brackets
+  main_token : annotation_token
+]
+
+package_header = package_header_body?
+package_header_body = @package identifier semi?
+import_list = import_header*
+import_header = @import identifier import_suffix? semi?
+import_suffix = [
+  @dot @mult : import_all
+  import_alias : import_alias
+]
+import_alias = @as simple_id
+
+top_level_object = [
+  declaration semis? : declaration
+  main_token : stray_token
+]
+
+declaration = [
+  class_declaration : class_declaration
+  function_declaration : function_declaration
+  property_declaration : property_declaration
+  type_alias : type_alias
+]
+
+class_declaration = modifiers? class_kind simple_id type_parameters? primary_constructor? delegation? type_constraints? class_body_variant?
+class_kind = [
+  @class : class_class
+  @fun? @interface : class_fun_interface
+]
+class_body_variant = [
+  block : class_body
+]
+primary_constructor = [
+  modifiers? @constructor? parens : primary_constructor
+]
+delegation = @colon expression
+
+type_alias = modifiers? @type_alias simple_id type_parameters? @assignment type
+
+function_declaration = modifiers? @fun type_parameters? receiver_type? simple_id function_value_parameters type_annotation? type_constraints? function_body?
+function_value_parameters = parens
+function_body = [
+  @assignment expression : expression_body
+  block : block_body
+]
+
+property_declaration = modifiers? val_or_var property_variables type_annotation? type_constraints? property_initializer?
+val_or_var = [
+  @val : val
+  @var : var
+]
+property_variables = [
+  variable_declaration : single_variable
+  parens : multi_variable
+]
+variable_declaration = simple_id
+property_initializer = @assignment expression
+
+type_parameters = [
+  type_parameter_list : type_parameter_list
+]
+type_parameter_list = @langle type_parameter_item* @rangle
+type_parameter_item = [
+  simple_id : type_parameter_id
+  @comma : type_parameter_comma
+  @colon : type_parameter_colon
+  type : type_parameter_type
+]
+type_constraints = @where type_constraint*<@comma>
+type_constraint = simple_id @colon type
+
+type_annotation = @colon type
+receiver_type = type @dot
+
+type = type_item+
+type_item = [
+  simple_id : type_simple_id
+  parens : type_parens
+  brackets : type_brackets
+  @dot : type_dot
+  @quest_no_ws : type_nullable
+  @quest_ws : type_nullable_ws
+  @langle : type_langle
+  @rangle : type_rangle
+  @comma : type_comma
+  @mult : type_mult
+  @in : type_in
+  @out : type_out
+]
+
+expression = expression_atom expression_part*
+expression_part = nl* operator_token nl* expression_atom
+expression_atom = expression_primary expression_postfix*
+expression_postfix = [
+  parens : postfix_parens
+  brackets : postfix_brackets
+]
+expression_primary = [
+  block : expr_block
+  parens : expr_parens
+  brackets : expr_brackets
+  line_string : expr_line_string
+  multiline_string : expr_multiline_string
+  literal_constant : expr_literal
+  simple_id : expr_simple_id
+]
+literal_constant = [
+  @real_literal : lit_real
+  @integer_literal : lit_integer
+  @hex_literal : lit_hex
+  @bin_literal : lit_bin
+  @character_literal : lit_character
+  @long_literal : lit_long
+  @unsigned_literal : lit_unsigned
+  @boolean_literal : lit_boolean
+  @null_literal : lit_null
+]
+operator_token = [
+  @dot : op_dot
+  @comma : op_comma
+  @mult : op_mult
+  @mod : op_mod
+  @div : op_div
+  @add : op_add
+  @sub : op_sub
+  @incr : op_incr
+  @decr : op_decr
+  @conj : op_conj
+  @disj : op_disj
+  @excl_ws : op_excl_ws
+  @excl_no_ws : op_excl_no_ws
+  @colon : op_colon
+  @semicolon : op_semicolon
+  @assignment : op_assignment
+  @add_assignment : op_add_assignment
+  @sub_assignment : op_sub_assignment
+  @mult_assignment : op_mult_assignment
+  @div_assignment : op_div_assignment
+  @mod_assignment : op_mod_assignment
+  @arrow : op_arrow
+  @double_arrow : op_double_arrow
+  @range : op_range
+  @range_until : op_range_until
+  @coloncolon : op_coloncolon
+  @double_semicolon : op_double_semicolon
+  @hash : op_hash
+  @at_no_ws : op_at_no_ws
+  @at_post_ws : op_at_post_ws
+  @at_pre_ws : op_at_pre_ws
+  @at_both_ws : op_at_both_ws
+  @quest_ws : op_quest_ws
+  @quest_no_ws : op_quest_no_ws
+  @langle : op_langle
+  @rangle : op_rangle
+  @le : op_le
+  @ge : op_ge
+  @excl_eq : op_excl_eq
+  @excl_eqeq : op_excl_eqeq
+  @as_safe : op_as_safe
+  @eqeq : op_eqeq
+  @eqeqeq : op_eqeqeq
+  @single_quote : op_single_quote
+  @amp : op_amp
+  @not_is : op_not_is
+  @not_in : op_not_in
+]
+
+modifiers = modifier+
+modifier = [
+  annotation : modifier_annotation
+  modifier_keyword : modifier_keyword
+]
+annotation = annotation_site? simple_id annotation_arguments?
+annotation_arguments = [
+  parens : annotation_args_parens
+  brackets : annotation_args_brackets
+]
+modifier_keyword = [
+  @public : mod_public
+  @private : mod_private
+  @protected : mod_protected
+  @internal : mod_internal
+  @enum : mod_enum
+  @sealed : mod_sealed
+  @annotation : mod_annotation
+  @data : mod_data
+  @inner : mod_inner
+  @value : mod_value
+  @tailrec : mod_tailrec
+  @operator : mod_operator
+  @inline : mod_inline
+  @infix : mod_infix
+  @external : mod_external
+  @suspend : mod_suspend
+  @override : mod_override
+  @abstract : mod_abstract
+  @final : mod_final
+  @open : mod_open
+  @const : mod_const
+  @lateinit : mod_lateinit
+  @vararg : mod_vararg
+  @noinline : mod_noinline
+  @crossinline : mod_crossinline
+  @reified : mod_reified
+  @expect : mod_expect
+  @actual : mod_actual
+]
+
+identifier = simple_id+<@dot>
+simple_id = [
+  @identifier : id_identifier
+  @abstract : id_abstract
+  @annotation : id_annotation
+  @by : id_by
+  @catch : id_catch
+  @companion : id_companion
+  @constructor : id_constructor
+  @crossinline : id_crossinline
+  @data : id_data
+  @dynamic : id_dynamic
+  @enum : id_enum
+  @external : id_external
+  @final : id_final
+  @finally : id_finally
+  @import : id_import
+  @infix : id_infix
+  @init : id_init
+  @inline : id_inline
+  @inner : id_inner
+  @internal : id_internal
+  @lateinit : id_lateinit
+  @noinline : id_noinline
+  @open : id_open
+  @operator : id_operator
+  @out : id_out
+  @override : id_override
+  @private : id_private
+  @protected : id_protected
+  @public : id_public
+  @reified : id_reified
+  @sealed : id_sealed
+  @tailrec : id_tailrec
+  @vararg : id_vararg
+  @where : id_where
+  @get : id_get
+  @set : id_set
+  @field : id_field
+  @property : id_property
+  @receiver : id_receiver
+  @param : id_param
+  @setparam : id_setparam
+  @delegate : id_delegate
+  @file : id_file
+  @expect : id_expect
+  @actual : id_actual
+  @value : id_value
+  @const : id_const
+  @suspend : id_suspend
+]
+
+main_token = default_token
+
+block = TODO
+parens = TODO
+brackets = TODO
+line_string = TODO
+line_str_expr = TODO
+multiline_string = TODO
+multi_line_str_expr = TODO
+
+default_token = [
+  @shebang_line : t_shebang_line
+  @nl : t_nl
+  @reserved : t_reserved
+  @dot : t_dot
+  @comma : t_comma
+  @mult : t_mult
+  @mod : t_mod
+  @div : t_div
+  @add : t_add
+  @sub : t_sub
+  @incr : t_incr
+  @decr : t_decr
+  @conj : t_conj
+  @disj : t_disj
+  @excl_ws : t_excl_ws
+  @excl_no_ws : t_excl_no_ws
+  @colon : t_colon
+  @semicolon : t_semicolon
+  @assignment : t_assignment
+  @add_assignment : t_add_assignment
+  @sub_assignment : t_sub_assignment
+  @mult_assignment : t_mult_assignment
+  @div_assignment : t_div_assignment
+  @mod_assignment : t_mod_assignment
+  @arrow : t_arrow
+  @double_arrow : t_double_arrow
+  @range : t_range
+  @range_until : t_range_until
+  @coloncolon : t_coloncolon
+  @double_semicolon : t_double_semicolon
+  @hash : t_hash
+  @at_no_ws : t_at_no_ws
+  @at_post_ws : t_at_post_ws
+  @at_pre_ws : t_at_pre_ws
+  @at_both_ws : t_at_both_ws
+  @quest_ws : t_quest_ws
+  @quest_no_ws : t_quest_no_ws
+  @langle : t_langle
+  @rangle : t_rangle
+  @le : t_le
+  @ge : t_ge
+  @excl_eq : t_excl_eq
+  @excl_eqeq : t_excl_eqeq
+  @as_safe : t_as_safe
+  @eqeq : t_eqeq
+  @eqeqeq : t_eqeqeq
+  @single_quote : t_single_quote
+  @amp : t_amp
+  @return_at : t_return_at
+  @continue_at : t_continue_at
+  @break_at : t_break_at
+  @this_at : t_this_at
+  @super_at : t_super_at
+  @file : t_file
+  @field : t_field
+  @property : t_property
+  @get : t_get
+  @set : t_set
+  @receiver : t_receiver
+  @param : t_param
+  @setparam : t_setparam
+  @delegate : t_delegate
+  @package : t_package
+  @import : t_import
+  @class : t_class
+  @interface : t_interface
+  @fun : t_fun
+  @object : t_object
+  @val : t_val
+  @var : t_var
+  @type_alias : t_type_alias
+  @constructor : t_constructor
+  @by : t_by
+  @companion : t_companion
+  @init : t_init
+  @this : t_this
+  @super : t_super
+  @typeof : t_typeof
+  @where : t_where
+  @if : t_if
+  @else : t_else
+  @when : t_when
+  @try : t_try
+  @catch : t_catch
+  @finally : t_finally
+  @for : t_for
+  @do : t_do
+  @while : t_while
+  @throw : t_throw
+  @return : t_return
+  @continue : t_continue
+  @break : t_break
+  @as : t_as
+  @is : t_is
+  @in : t_in
+  @out : t_out
+  @dynamic : t_dynamic
+  @public : t_public
+  @private : t_private
+  @protected : t_protected
+  @internal : t_internal
+  @enum : t_enum
+  @sealed : t_sealed
+  @annotation : t_annotation
+  @data : t_data
+  @inner : t_inner
+  @value : t_value
+  @tailrec : t_tailrec
+  @operator : t_operator
+  @inline : t_inline
+  @infix : t_infix
+  @external : t_external
+  @suspend : t_suspend
+  @override : t_override
+  @abstract : t_abstract
+  @final : t_final
+  @open : t_open
+  @const : t_const
+  @lateinit : t_lateinit
+  @vararg : t_vararg
+  @noinline : t_noinline
+  @crossinline : t_crossinline
+  @reified : t_reified
+  @expect : t_expect
+  @actual : t_actual
+  @boolean_literal : t_boolean_literal
+  @null_literal : t_null_literal
+  @real_literal : t_real_literal
+  @integer_literal : t_integer_literal
+  @hex_literal : t_hex_literal
+  @bin_literal : t_bin_literal
+  @character_literal : t_character_literal
+  @long_literal : t_long_literal
+  @unsigned_literal : t_unsigned_literal
+  @identifier : t_identifier
+  @not_is : t_not_is
+  @not_in : t_not_in
+]
+

@@ -18,6 +18,7 @@ main = {
   /[{]/ @lbrace
   /[}]/ @rbrace
   str
+  EOF .end
 }
 
 str = /"/ .begin {

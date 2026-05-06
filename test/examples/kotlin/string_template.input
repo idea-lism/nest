@@ -1,0 +1,4 @@
+fun main() {
+  val s = "a $foo b"
+  val t = "raw $bar text"
+}

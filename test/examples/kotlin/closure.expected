@@ -1,0 +1,199 @@
+------
+@fun "fun"
+@identifier "main"
+  @lparen "("
+  @rparen ")"
+  @lcurl "{"
+  @nl "
+"
+  @val "val"
+  @identifier "inc"
+  @assignment "="
+    @lcurl "{"
+    @identifier "x"
+    @colon ":"
+    @identifier "Int"
+    @arrow "->"
+    @identifier "x"
+    @add "+"
+    @integer_literal "1"
+    @rcurl "}"
+  @nl "
+"
+  @val "val"
+  @identifier "twice"
+  @assignment "="
+    @lcurl "{"
+    @identifier "y"
+    @colon ":"
+    @identifier "Int"
+    @arrow "->"
+    @nl "
+"
+    @identifier "inc"
+      @lparen "("
+      @identifier "inc"
+        @lparen "("
+        @identifier "y"
+        @rparen ")"
+      @rparen ")"
+    @nl "
+"
+    @rcurl "}"
+  @nl "
+"
+  @rcurl "}"
+@nl "
+"
+------
+main
+  file
+    file_rest
+      nl_star
+      top_decl
+        declaration
+          fun_decl
+            @fun
+            simple_id
+              @identifier
+            value_params
+              parens
+                @lparen
+                @rparen
+            fun_body
+              block
+                @lcurl
+                block_content
+                  statement_content
+                    block_item
+                      nl
+                        @nl
+                    block_item
+                      statement
+                        declaration
+                          prop_decl
+                            val_var
+                              @val
+                            simple_id
+                              @identifier
+                            prop_init
+                              op_assignment
+                                @assignment
+                              expr
+                                postfix_expr
+                                  primary_expr
+                                    block
+                                      @lcurl
+                                      block_content
+                                        lambda_content
+                                          lambda_header
+                                            lambda_param
+                                              simple_id
+                                                @identifier
+                                              type_ann
+                                                op_colon
+                                                  @colon
+                                                type_ref
+                                                  type_atom
+                                                    simple_id
+                                                      @identifier
+                                            op_arrow
+                                              @arrow
+                                          statement_content
+                                            block_item
+                                              statement
+                                                expr
+                                                  postfix_expr
+                                                    primary_expr
+                                                      simple_id
+                                                        @identifier
+                                                  expr_tail
+                                                    nl_star
+                                                    operator
+                                                      op_add
+                                                        @add
+                                                    nl_star
+                                                    postfix_expr
+                                                      primary_expr
+                                                        literal
+                                                          @integer_literal
+                                      @rcurl
+                    block_item
+                      nl
+                        @nl
+                    block_item
+                      statement
+                        declaration
+                          prop_decl
+                            val_var
+                              @val
+                            simple_id
+                              @identifier
+                            prop_init
+                              op_assignment
+                                @assignment
+                              expr
+                                postfix_expr
+                                  primary_expr
+                                    block
+                                      @lcurl
+                                      block_content
+                                        lambda_content
+                                          lambda_header
+                                            lambda_param
+                                              simple_id
+                                                @identifier
+                                              type_ann
+                                                op_colon
+                                                  @colon
+                                                type_ref
+                                                  type_atom
+                                                    simple_id
+                                                      @identifier
+                                            op_arrow
+                                              @arrow
+                                          statement_content
+                                            block_item
+                                              nl
+                                                @nl
+                                            block_item
+                                              statement
+                                                expr
+                                                  postfix_expr
+                                                    primary_expr
+                                                      simple_id
+                                                        @identifier
+                                                    postfix_part
+                                                      parens
+                                                        @lparen
+                                                        parens_body
+                                                          parens_item
+                                                            inside_expr
+                                                              inside_postfix_expr
+                                                                inside_primary_expr
+                                                                  i_simple_id
+                                                                    @identifier
+                                                                inside_postfix_part
+                                                                  parens
+                                                                    @lparen
+                                                                    parens_body
+                                                                      parens_item
+                                                                        inside_expr
+                                                                          inside_postfix_expr
+                                                                            inside_primary_expr
+                                                                              i_simple_id
+                                                                                @identifier
+                                                                    @rparen
+                                                        @rparen
+                                            block_item
+                                              nl
+                                                @nl
+                                      @rcurl
+                    block_item
+                      nl
+                        @nl
+                @rcurl
+      top_decl
+        nl
+          @nl
+      nl_star

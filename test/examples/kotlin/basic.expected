@@ -1,36 +1,39 @@
 ------
 @nl "
 "
-@lit.package "package"
-@ident "demo"
+@package "package"
+@identifier "demo"
 @nl "
 "
-@lit.import "import"
-@ident "demo"
+@import "import"
+@identifier "demo"
 @dot "."
-@ident "Foo"
+@identifier "Foo"
 @nl "
 "
 ------
 main
-  @nl
-  package_header
-    package_header_body
-      @lit.package
-      identifier
-        simple_id
-          @ident
-      semi
-        semi_item
+  file
+    file_rest
+      nl_star
+        nl
           @nl
-  import_list
-    import_header
-      @lit.import
-      identifier
-        simple_id
-          @ident
-        simple_id
-          @ident
-      semi
-        semi_item
+      package_decl
+        @package
+        qualified_name
+          simple_id
+            @identifier
+        semi
           @nl
+          nl_star
+      import_decl
+        @import
+        qualified_name
+          simple_id
+            @identifier
+          simple_id
+            @identifier
+        semi
+          @nl
+          nl_star
+      nl_star
