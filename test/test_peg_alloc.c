@@ -60,9 +60,45 @@ static ScopeClosure _make_closure(const char* scope_name, int32_t rule_size, con
   return cl;
 }
 
+static void _free_scoped_unit(ScopedUnit* su) {
+  switch (su->kind) {
+  case SCOPED_UNIT_SEQ:
+  case SCOPED_UNIT_BRANCHES:
+    if (su->as.children) {
+      for (size_t i = 0; i < darray_size(su->as.children); i++) {
+        _free_scoped_unit(&su->as.children[i]);
+      }
+      darray_del(su->as.children);
+    }
+    break;
+  case SCOPED_UNIT_MAYBE:
+  case SCOPED_UNIT_AND:
+  case SCOPED_UNIT_NOT:
+    if (su->as.base) {
+      _free_scoped_unit(su->as.base);
+      free(su->as.base);
+    }
+    break;
+  case SCOPED_UNIT_STAR:
+  case SCOPED_UNIT_PLUS:
+    if (su->as.interlace.lhs) {
+      _free_scoped_unit(su->as.interlace.lhs);
+      free(su->as.interlace.lhs);
+    }
+    if (su->as.interlace.rhs) {
+      _free_scoped_unit(su->as.interlace.rhs);
+      free(su->as.interlace.rhs);
+    }
+    break;
+  default:
+    break;
+  }
+}
+
 static void _free_closure(ScopeClosure* cl) {
   for (size_t i = 0; i < darray_size(cl->scoped_rules); i++) {
     ScopedRule* sr = &cl->scoped_rules[i];
+    _free_scoped_unit(&sr->body);
     symtab_free(&sr->tags);
     if (sr->first_set) {
       bitset_del(sr->first_set);
@@ -237,10 +273,80 @@ TEST(test_naive_small_tags_pack_tight) {
   _free_closure(&cl);
 }
 
+TEST(test_shared_common_prefix_residuals_share_slot) {
+  int32_t token_ids[] = {1, 1};
+  int32_t tag_counts[] = {0, 0};
+  ScopeClosure cl = _make_closure("s", 2, token_ids, tag_counts);
+
+  // r0 = @a @b, r1 = @a @c @d. The raw first sets overlap on @a and
+  // lengths differ, so only the common-prefix residuals (@b vs @c @d) prove
+  // exclusiveness.
+  cl.scoped_rules[0].body.kind = SCOPED_UNIT_SEQ;
+  cl.scoped_rules[0].body.as.children = darray_new(sizeof(ScopedUnit), 0);
+  ScopedUnit a = {.kind = SCOPED_UNIT_TERM, .as.term_id = 1, .tag_bit_local_offset = -1};
+  ScopedUnit b = {.kind = SCOPED_UNIT_TERM, .as.term_id = 2, .tag_bit_local_offset = -1};
+  darray_push(cl.scoped_rules[0].body.as.children, a);
+  darray_push(cl.scoped_rules[0].body.as.children, b);
+
+  cl.scoped_rules[1].body.kind = SCOPED_UNIT_SEQ;
+  cl.scoped_rules[1].body.as.children = darray_new(sizeof(ScopedUnit), 0);
+  ScopedUnit c = {.kind = SCOPED_UNIT_TERM, .as.term_id = 3, .tag_bit_local_offset = -1};
+  ScopedUnit d = {.kind = SCOPED_UNIT_TERM, .as.term_id = 4, .tag_bit_local_offset = -1};
+  darray_push(cl.scoped_rules[1].body.as.children, a);
+  darray_push(cl.scoped_rules[1].body.as.children, c);
+  darray_push(cl.scoped_rules[1].body.as.children, d);
+
+  peg_alloc_scope(&cl, MEMOIZE_SHARED, 10000, NULL);
+
+  assert(cl.scoped_rules[0].slot_index == cl.scoped_rules[1].slot_index);
+
+  _free_closure(&cl);
+}
+
+TEST(test_shared_common_generated_star_prefix_residuals_share_slot) {
+  int32_t token_ids[] = {1, 1, 1, 1};
+  int32_t tag_counts[] = {0, 0, 0, 0};
+  ScopeClosure cl = _make_closure("s", 4, token_ids, tag_counts);
+
+  ScopedUnit c = {.kind = SCOPED_UNIT_TERM, .as.term_id = 1, .tag_bit_local_offset = -1};
+  ScopedUnit d = {.kind = SCOPED_UNIT_TERM, .as.term_id = 2, .tag_bit_local_offset = -1};
+  ScopedUnit e = {.kind = SCOPED_UNIT_TERM, .as.term_id = 3, .tag_bit_local_offset = -1};
+
+  // r2 = @c*, r3 = @c*. Different generated-rule names, same nominal body.
+  for (int32_t i = 2; i < 4; i++) {
+    cl.scoped_rules[i].scoped_rule_name = symtab_get(&cl.scoped_rule_names, i);
+    cl.scoped_rules[i].original_global_id = -1;
+    cl.scoped_rules[i].body.kind = SCOPED_UNIT_STAR;
+    cl.scoped_rules[i].body.as.interlace.lhs = malloc(sizeof(ScopedUnit));
+    *cl.scoped_rules[i].body.as.interlace.lhs = c;
+  }
+
+  // r0 = r2 @d, r1 = r3 @e. This should reduce to exclusiveness(@d, @e).
+  cl.scoped_rules[0].body.kind = SCOPED_UNIT_SEQ;
+  cl.scoped_rules[0].body.as.children = darray_new(sizeof(ScopedUnit), 0);
+  ScopedUnit a_star = {.kind = SCOPED_UNIT_CALL, .as.callee = "r2", .tag_bit_local_offset = -1};
+  darray_push(cl.scoped_rules[0].body.as.children, a_star);
+  darray_push(cl.scoped_rules[0].body.as.children, d);
+
+  cl.scoped_rules[1].body.kind = SCOPED_UNIT_SEQ;
+  cl.scoped_rules[1].body.as.children = darray_new(sizeof(ScopedUnit), 0);
+  ScopedUnit b_star = {.kind = SCOPED_UNIT_CALL, .as.callee = "r3", .tag_bit_local_offset = -1};
+  darray_push(cl.scoped_rules[1].body.as.children, b_star);
+  darray_push(cl.scoped_rules[1].body.as.children, e);
+
+  peg_alloc_scope(&cl, MEMOIZE_SHARED, 10000, NULL);
+
+  assert(cl.scoped_rules[0].slot_index == cl.scoped_rules[1].slot_index);
+
+  _free_closure(&cl);
+}
+
 int main(void) {
   RUN(test_shared_two_segments_pack_into_one_bucket);
   RUN(test_shared_four_tiny_segments_pack_into_one_bucket);
   RUN(test_naive_small_tags_pack_tight);
+  RUN(test_shared_common_prefix_residuals_share_slot);
+  RUN(test_shared_common_generated_star_prefix_residuals_share_slot);
   printf("all ok\n");
   return 0;
 }

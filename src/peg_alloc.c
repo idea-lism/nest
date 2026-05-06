@@ -380,25 +380,186 @@ static void _analyze_rules(ScopeClosure* cl) {
 // Shared mode: exclusiveness, graph coloring, tag bit gap-filling
 // ============================================================
 
-static bool _are_exclusive(ScopedRule* a, ScopedRule* b) {
-  if (a->min_size > 0 && b->min_size > 0) {
-    Bitset* inter = bitset_and(a->first_set, b->first_set);
-    bool disjoint = (bitset_size(inter) == 0);
-    bitset_del(inter);
-    if (disjoint) {
-      return true;
-    }
+typedef struct {
+  ScopedUnit* unit;
+  int32_t start;
+  int32_t end;
+} _Residual;
+
+typedef struct {
+  bool nullable;
+  uint32_t min_size;
+  uint32_t max_size;
+  Bitset* first_set;
+} _ResidualInfo;
+
+static int32_t _unit_size(ScopedUnit* unit) {
+  return unit->kind == SCOPED_UNIT_SEQ ? (int32_t)darray_size(unit->as.children) : 1;
+}
+
+static ScopedUnit* _unit_at(ScopedUnit* unit, int32_t i) {
+  return unit->kind == SCOPED_UNIT_SEQ ? &unit->as.children[i] : unit;
+}
+
+static bool _same_callee(const char* a, const char* b) {
+  if (a == b) {
+    return true;
   }
-  if (a->min_size > 0 && a->max_size != UINT32_MAX && a->min_size == a->max_size && b->max_size != UINT32_MAX &&
-      b->min_size == b->max_size && a->min_size == b->min_size) {
-    Bitset* inter = bitset_and(a->last_set, b->last_set);
-    bool disjoint = (bitset_size(inter) == 0);
-    bitset_del(inter);
-    if (disjoint) {
-      return true;
+  if (!a || !b) {
+    return false;
+  }
+  return strcmp(a, b) == 0;
+}
+
+static ScopedRule* _find_scoped_rule(ScopeClosure* cl, const char* name) {
+  int32_t id = symtab_find(&cl->scoped_rule_names, name);
+  if (id < 0) {
+    return NULL;
+  }
+  return &cl->scoped_rules[id - cl->scoped_rule_names.start_num];
+}
+
+static bool _unit_nominal_eq(ScopeClosure* cl, ScopedUnit* a, ScopedUnit* b, int32_t depth);
+
+static bool _call_nominal_eq(ScopeClosure* cl, ScopedUnit* a, ScopedUnit* b, int32_t depth) {
+  if (_same_callee(a->as.callee, b->as.callee)) {
+    return true;
+  }
+
+  // Analyzer-generated multiplier/wrapper rules get parent-specific names
+  // (`scope$a$1`, `scope$b$1`). Treat two such calls as nominally equivalent
+  // when their generated bodies are structurally equivalent, but do not expand
+  // user rules: expanding arbitrary named rules costs high and risks cycles.
+  if (depth >= 8) {
+    return false;
+  }
+  ScopedRule* ar = _find_scoped_rule(cl, a->as.callee);
+  ScopedRule* br = _find_scoped_rule(cl, b->as.callee);
+  if (!ar || !br || ar->original_global_id >= 0 || br->original_global_id >= 0) {
+    return false;
+  }
+  return _unit_nominal_eq(cl, &ar->body, &br->body, depth + 1);
+}
+
+static bool _unit_nominal_eq(ScopeClosure* cl, ScopedUnit* a, ScopedUnit* b, int32_t depth) {
+  if (a->kind != b->kind) {
+    return false;
+  }
+  switch (a->kind) {
+  case SCOPED_UNIT_TERM:
+    return a->as.term_id == b->as.term_id;
+  case SCOPED_UNIT_CALL:
+    return _call_nominal_eq(cl, a, b, depth);
+  case SCOPED_UNIT_SEQ:
+  case SCOPED_UNIT_BRANCHES: {
+    size_t an = darray_size(a->as.children);
+    size_t bn = darray_size(b->as.children);
+    if (an != bn) {
+      return false;
     }
+    for (size_t i = 0; i < an; i++) {
+      if (!_unit_nominal_eq(cl, &a->as.children[i], &b->as.children[i], depth)) {
+        return false;
+      }
+    }
+    return true;
+  }
+  case SCOPED_UNIT_MAYBE:
+  case SCOPED_UNIT_AND:
+  case SCOPED_UNIT_NOT:
+    return _unit_nominal_eq(cl, a->as.base, b->as.base, depth);
+  case SCOPED_UNIT_STAR:
+  case SCOPED_UNIT_PLUS:
+    if (!_unit_nominal_eq(cl, a->as.interlace.lhs, b->as.interlace.lhs, depth)) {
+      return false;
+    }
+    if (!a->as.interlace.rhs || !b->as.interlace.rhs) {
+      return a->as.interlace.rhs == b->as.interlace.rhs;
+    }
+    return _unit_nominal_eq(cl, a->as.interlace.rhs, b->as.interlace.rhs, depth);
   }
   return false;
+}
+
+static void _strip_common_prefix(ScopeClosure* cl, ScopedRule* sa, ScopedRule* sb, _Residual* a, _Residual* b) {
+  *a = (_Residual){.unit = &sa->body, .start = 0, .end = _unit_size(&sa->body)};
+  *b = (_Residual){.unit = &sb->body, .start = 0, .end = _unit_size(&sb->body)};
+  while (a->start < a->end && b->start < b->end) {
+    ScopedUnit* au = _unit_at(a->unit, a->start);
+    ScopedUnit* bu = _unit_at(b->unit, b->start);
+    if (!_unit_nominal_eq(cl, au, bu, 0)) {
+      break;
+    }
+    a->start++;
+    b->start++;
+  }
+}
+
+static uint32_t _size_add(uint32_t a, uint32_t b) {
+  if (a == UINT32_MAX || b == UINT32_MAX || UINT32_MAX - a < b) {
+    return UINT32_MAX;
+  }
+  return a + b;
+}
+
+static void _compute_residual_info(ScopeClosure* cl, _Residual* r, _ResidualInfo* info) {
+  info->nullable = true;
+  info->min_size = 0;
+  info->max_size = 0;
+  info->first_set = bitset_new();
+
+  for (int32_t i = r->start; i < r->end; i++) {
+    ScopedRule tmp = {0};
+    _compute_nullable(cl, &tmp, _unit_at(r->unit, i));
+    if (!tmp.nullable) {
+      info->nullable = false;
+    }
+    info->min_size = _size_add(info->min_size, tmp.min_size);
+    info->max_size = _size_add(info->max_size, tmp.max_size);
+  }
+
+  for (int32_t i = r->start; i < r->end; i++) {
+    ScopedUnit* unit = _unit_at(r->unit, i);
+    _compute_set(cl, unit, info->first_set, SET_FIRST);
+    if (!_is_unit_nullable(cl, unit)) {
+      break;
+    }
+  }
+}
+
+static void _residual_info_del(_ResidualInfo* info) { bitset_del(info->first_set); }
+
+static bool _first_sets_disjoint(Bitset* a, Bitset* b) {
+  Bitset* inter = bitset_and(a, b);
+  bool disjoint = (bitset_size(inter) == 0);
+  bitset_del(inter);
+  return disjoint;
+}
+
+static bool _are_exclusive(ScopeClosure* cl, ScopedRule* sa, ScopedRule* sb) {
+  _Residual a;
+  _Residual b;
+  _strip_common_prefix(cl, sa, sb, &a, &b);
+
+  _ResidualInfo ai;
+  _ResidualInfo bi;
+  _compute_residual_info(cl, &a, &ai);
+  _compute_residual_info(cl, &b, &bi);
+
+  bool exclusive = false;
+  if (ai.min_size > 0 && bi.min_size > 0 && _first_sets_disjoint(ai.first_set, bi.first_set)) {
+    exclusive = true;
+  }
+  if (!exclusive && ai.min_size > 0 && ai.max_size != UINT32_MAX && ai.min_size == ai.max_size &&
+      bi.max_size != UINT32_MAX && bi.min_size == bi.max_size && ai.min_size == bi.min_size &&
+      _first_sets_disjoint(sa->last_set, sb->last_set)) {
+    exclusive = true;
+  }
+
+  _residual_info_del(&ai);
+  _residual_info_del(&bi);
+
+  return exclusive;
 }
 
 static void _alloc_slot_bits(ScopeClosure* cl, int32_t max_steps, FILE* log) {
@@ -410,7 +571,7 @@ static void _alloc_slot_bits(ScopeClosure* cl, int32_t max_steps, FILE* log) {
   Graph* g = graph_new(n);
   for (size_t i = 0; i < n; i++) {
     for (size_t j = i + 1; j < n; j++) {
-      if (!_are_exclusive(&cl->scoped_rules[i], &cl->scoped_rules[j])) {
+      if (!_are_exclusive(cl, &cl->scoped_rules[i], &cl->scoped_rules[j])) {
         graph_add_edge(g, i, j);
       }
     }

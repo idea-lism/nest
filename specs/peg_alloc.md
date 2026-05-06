@@ -79,7 +79,7 @@ Rules that cannot co-exist at the same matching position share a slot and tag-bi
 
 #### Exclusiveness analysis
 
-Compute per rule R:
+Define these operations rule R:
 - `first_set(R)` — leaf token ids (expanding calls), excluding epsilon.
 - `last_set(R)` — same, for the last token.
 - `nullable(R)` — can match 0 tokens.
@@ -87,11 +87,18 @@ Compute per rule R:
 
 Rules may recursively call each other; use fix-point iteration.
 
-Two rules A, B are **exclusive** iff at least one holds:
+For two scoped rules SA and SB, define `A, B = strip_common_prefix(SA, SB)`:
+- strips structural prefix equivalence without expanding rules -- expanding rules costs high but gains little.
+- return residual units.
+
+Then two rules SA, SB are **exclusive** iff at least one holds:
 - `min_size(A) > 0 && min_size(B) > 0 && first_set(A) ∩ first_set(B) = ∅`
   (covers the `all_set` intersection case)
-- `min_size(A) == max_size(A) == min_size(B) == max_size(B) > 0 && last_set(A) ∩ last_set(B) = ∅`
-  (`first_set` already checked above)
+- syntactic common-prefix residual check succeeds
+- `min_size(A) == max_size(A) == min_size(B) == max_size(B) > 0 && last_set(SA) ∩ last_set(SB) = ∅`
+  (`first_set` and common-prefix residual check already checked above)
+
+So only the `last_set` is cachable on rule, `first_set`, `min_size`, `max_size` are computed on-the-fly.
 
 #### Interference graph and coloring
 
@@ -134,8 +141,6 @@ struct ScopedRule {
   int32_t tag_bit_offset;  // bit offset within tag region of the segment
   int32_t tag_bit_count;
 
-  bool nullable;
-  Bitset first_set; // excluding epsilon
   Bitset last_set;  // excluding epsilon
 
   int32_t segment_color;   // logical color group id
