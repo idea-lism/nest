@@ -1,0 +1,36 @@
+------
+@nl "
+"
+@lit.package "package"
+@ident "demo"
+@nl "
+"
+@lit.import "import"
+@ident "demo"
+@dot "."
+@ident "Foo"
+@nl "
+"
+------
+main
+  @nl
+  package_header
+    package_header_body
+      @lit.package
+      identifier
+        simple_id
+          @ident
+      semi
+        semi_item
+          @nl
+  import_list
+    import_header
+      @lit.import
+      identifier
+        simple_id
+          @ident
+        simple_id
+          @ident
+      semi
+        semi_item
+          @nl

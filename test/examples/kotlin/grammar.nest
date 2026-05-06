@@ -84,8 +84,14 @@
 }
 
 main = {
+  /#![^\r\n]*/ @shebang_line
+  /return@[A-Za-z_]\w*/ @return_at
+  /continue@[A-Za-z_]\w*/ @continue_at
+  /break@[A-Za-z_]\w*/ @break_at
+  /this@[A-Za-z_]\w*/ @this_at
+  /super@[A-Za-z_]\w*/ @super_at
   *keywords
-  /\/\*([^*]|\*+[^*\/])*\*+\// @comment
+  comment
   /\/\/[^\r\n]*/ @comment
   str
   multiline_str
@@ -102,7 +108,8 @@ main = {
   /[A-Za-z_]\w*/ @ident
   /`[^`\r\n]+`/ @ident
   /[\r]?\n/ @nl
-  /[ \t]+/ @space
+  /[ \t\f]+/ @space
+  /=>/
   /->/ @arrow
   /::/ @coloncolon
   /===/ @eqeqeq
@@ -112,7 +119,9 @@ main = {
   /<=/ @le
   />=/ @ge
   /&&/ @conj
+  /&/ @amp
   /\|\|/ @disj
+  /\.\.</ @range_until
   /\.\./ @range
   /\+\+/ @incr
   /--/ @decr
@@ -133,10 +142,13 @@ main = {
   block
   /,/ @comma
   /:/ @colon
+  /;;/ @double_semi
   /;/ @semi
   /\./ @dot
-  /\?/ @quest
-  /!/ @excl
+  /\?[ \t\f]+/ @quest_ws
+  /\?/ @quest_no_ws
+  /![ \t\f]+/ @excl_ws
+  /!/ @excl_no_ws
   /=/ @assign
   /</ @langle
   />/ @rangle
@@ -144,14 +156,31 @@ main = {
   /-/ @minus
   /\*/ @star
   /%/ @mod
+  /#/
+  /\.\.\./
   /\// @slash
-  /@/ @at
+  /@[ \t\f\r\n]+/ @at_post_ws
+  /@/ @at_no_ws
   EOF .end
 }
 
+comment = /\/\*/ .begin @comment {
+  comment
+  /\*\// .end
+  /[^*\/]+/
+  /\*/
+  /\//
+}
+
 block = /[{]/ .begin @lbrace {
+  /#![^\r\n]*/
+  /return@[A-Za-z_]\w*/ @return_at
+  /continue@[A-Za-z_]\w*/ @continue_at
+  /break@[A-Za-z_]\w*/ @break_at
+  /this@[A-Za-z_]\w*/ @this_at
+  /super@[A-Za-z_]\w*/ @super_at
   *keywords
-  /\/\*([^*]|\*+[^*\/])*\*+\// @comment
+  comment
   /\/\/[^\r\n]*/ @comment
   str
   multiline_str
@@ -168,7 +197,8 @@ block = /[{]/ .begin @lbrace {
   /[A-Za-z_]\w*/ @ident
   /`[^`\r\n]+`/ @ident
   /[\r]?\n/ @nl
-  /[ \t]+/ @space
+  /[ \t\f]+/ @space
+  /=>/
   /->/ @arrow
   /::/ @coloncolon
   /===/ @eqeqeq
@@ -178,7 +208,9 @@ block = /[{]/ .begin @lbrace {
   /<=/ @le
   />=/ @ge
   /&&/ @conj
+  /&/ @amp
   /\|\|/ @disj
+  /\.\.</ @range_until
   /\.\./ @range
   /\+\+/ @incr
   /--/ @decr
@@ -200,10 +232,13 @@ block = /[{]/ .begin @lbrace {
   /[}]/ @rbrace .end
   /,/ @comma
   /:/ @colon
+  /;;/ @double_semi
   /;/ @semi
   /\./ @dot
-  /\?/ @quest
-  /!/ @excl
+  /\?[ \t\f]+/ @quest_ws
+  /\?/ @quest_no_ws
+  /![ \t\f]+/ @excl_ws
+  /!/ @excl_no_ws
   /=/ @assign
   /</ @langle
   />/ @rangle
@@ -211,8 +246,11 @@ block = /[{]/ .begin @lbrace {
   /-/ @minus
   /\*/ @star
   /%/ @mod
+  /#/
+  /\.\.\./
   /\// @slash
-  /@/ @at
+  /@[ \t\f\r\n]+/ @at_post_ws
+  /@/ @at_no_ws
 }
 
 str = /"/ .begin @str_open {
@@ -226,8 +264,14 @@ str = /"/ .begin @str_open {
 }
 
 str_interp = /\$[{]/ .begin @str_expr_open {
+  /#![^\r\n]*/
+  /return@[A-Za-z_]\w*/ @return_at
+  /continue@[A-Za-z_]\w*/ @continue_at
+  /break@[A-Za-z_]\w*/ @break_at
+  /this@[A-Za-z_]\w*/ @this_at
+  /super@[A-Za-z_]\w*/ @super_at
   *keywords
-  /\/\*([^*]|\*+[^*\/])*\*+\// @comment
+  comment
   /\/\/[^\r\n]*/ @comment
   str
   multiline_str
@@ -244,7 +288,8 @@ str_interp = /\$[{]/ .begin @str_expr_open {
   /[A-Za-z_]\w*/ @ident
   /`[^`\r\n]+`/ @ident
   /[\r]?\n/ @nl
-  /[ \t]+/ @space
+  /[ \t\f]+/ @space
+  /=>/
   /->/ @arrow
   /::/ @coloncolon
   /===/ @eqeqeq
@@ -254,7 +299,9 @@ str_interp = /\$[{]/ .begin @str_expr_open {
   /<=/ @le
   />=/ @ge
   /&&/ @conj
+  /&/ @amp
   /\|\|/ @disj
+  /\.\.</ @range_until
   /\.\./ @range
   /\+\+/ @incr
   /--/ @decr
@@ -276,9 +323,13 @@ str_interp = /\$[{]/ .begin @str_expr_open {
   /[}]/ @str_expr_close .end
   /,/ @comma
   /:/ @colon
+  /;;/ @double_semi
+  /;/ @semi
   /\./ @dot
-  /\?/ @quest
-  /!/ @excl
+  /\?[ \t\f]+/ @quest_ws
+  /\?/ @quest_no_ws
+  /![ \t\f]+/ @excl_ws
+  /!/ @excl_no_ws
   /=/ @assign
   /</ @langle
   />/ @rangle
@@ -286,8 +337,11 @@ str_interp = /\$[{]/ .begin @str_expr_open {
   /-/ @minus
   /\*/ @star
   /%/ @mod
+  /#/
+  /\.\.\./
   /\// @slash
-  /@/ @at
+  /@[ \t\f\r\n]+/ @at_post_ws
+  /@/ @at_no_ws
 }
 
 multiline_str = /"""/ .begin @ml_str_open {
@@ -300,8 +354,14 @@ multiline_str = /"""/ .begin @ml_str_open {
 }
 
 ml_str_interp = /\$[{]/ .begin @str_expr_open {
+  /#![^\r\n]*/
+  /return@[A-Za-z_]\w*/ @return_at
+  /continue@[A-Za-z_]\w*/ @continue_at
+  /break@[A-Za-z_]\w*/ @break_at
+  /this@[A-Za-z_]\w*/ @this_at
+  /super@[A-Za-z_]\w*/ @super_at
   *keywords
-  /\/\*([^*]|\*+[^*\/])*\*+\// @comment
+  comment
   /\/\/[^\r\n]*/ @comment
   str
   multiline_str
@@ -318,7 +378,8 @@ ml_str_interp = /\$[{]/ .begin @str_expr_open {
   /[A-Za-z_]\w*/ @ident
   /`[^`\r\n]+`/ @ident
   /[\r]?\n/ @nl
-  /[ \t]+/ @space
+  /[ \t\f]+/ @space
+  /=>/
   /->/ @arrow
   /::/ @coloncolon
   /===/ @eqeqeq
@@ -328,7 +389,9 @@ ml_str_interp = /\$[{]/ .begin @str_expr_open {
   /<=/ @le
   />=/ @ge
   /&&/ @conj
+  /&/ @amp
   /\|\|/ @disj
+  /\.\.</ @range_until
   /\.\./ @range
   /\+\+/ @incr
   /--/ @decr
@@ -350,9 +413,13 @@ ml_str_interp = /\$[{]/ .begin @str_expr_open {
   /[}]/ @str_expr_close .end
   /,/ @comma
   /:/ @colon
+  /;;/ @double_semi
+  /;/ @semi
   /\./ @dot
-  /\?/ @quest
-  /!/ @excl
+  /\?[ \t\f]+/ @quest_ws
+  /\?/ @quest_no_ws
+  /![ \t\f]+/ @excl_ws
+  /!/ @excl_no_ws
   /=/ @assign
   /</ @langle
   />/ @rangle
@@ -360,8 +427,11 @@ ml_str_interp = /\$[{]/ .begin @str_expr_open {
   /-/ @minus
   /\*/ @star
   /%/ @mod
+  /#/
+  /\.\.\./
   /\// @slash
-  /@/ @at
+  /@[ \t\f\r\n]+/ @at_post_ws
+  /@/ @at_no_ws
 }
 
 char_lit = /'/ .begin @char_open {
@@ -373,280 +443,299 @@ char_lit = /'/ .begin @char_open {
 
 [[peg]]
 
-# Newline handling:
-# - @nl is visible to PEG (not %ignore'd).
-# - @space / @comment are %ignore'd, so "spaces only" gaps are implicit between
-#   tokens and need no explicit rule.
-# - `_` matches optional newlines (packcc's `__*`). Use it where newlines are
-#   allowed, e.g. after a binary operator.
-# - `semi` matches one or more statement terminators (newline or `;`).
-# - Binary operator separators follow packcc: no newline allowed on the left of
-#   the operator (so newlines terminate the expression), newlines allowed on
-#   the right before the next operand.
-_ = @nl*
-semi = semi_item+
+# Kotlin parser grammar, shaped after KotlinParser.g4.
+# Lexer-hidden tokens: @space and @comment. Significant whitespace: @nl.
+
+semi = semi_item @nl*
+semis = semi_item+
 semi_item = [
   @semi
+  @double_semi
   @nl
 ]
-comma_sep = _ @comma _
+comma_sep = @nl* @comma @nl*
+trailing_comma = @nl* @comma
 
-# Operator separators (`sep` in `+<sep>` must be a single rule).
-# Shape: `operator _` — no `_` before the operator, so a trailing newline on
-# the previous operand terminates the expression instead of being consumed.
-disj_sep = @disj _
-conj_sep = @conj _
-elvis_sep = @elvis _
-range_sep = @range _
-eq_sep = equality_op _
-cmp_sep = comparison_op _
-add_sep = additive_op _
-mul_sep = mult_op _
+# Interlaced separators. Nest requires these to be named rules.
+disj_sep = @nl* @disj @nl*
+conj_sep = @nl* @conj @nl*
+elvis_sep = @nl* elvis @nl*
+range_sep = @nl* range_op @nl*
+eq_sep = equality_op @nl*
+cmp_sep = comparison_op @nl*
+add_sep = additive_operator @nl*
+mul_sep = multiplicative_op @nl*
 
-# Kotlin file structure
-# Top-level: a list of file_parts separated by optional semis/newlines, with
-# optional leading and trailing blank lines.
-main = _ top_list? _
-top_list = file_part+<semi>
-
-file_part = [
-  package_header
-  import_header
-  declaration
-]
-
-# Package & import
-package_header = "package" identifier
-import_header = "import" identifier import_suffix?
+# SECTION: general
+main = shebang_line? @nl* file_annotation* package_header import_list top_level_object* @nl*
+shebang_line = @shebang_line @nl+
+file_annotation = annotation
+package_header = package_header_body?
+package_header_body = "package" identifier semi?
+import_list = import_header*
+import_header = "import" identifier import_suffix? semi?
 import_suffix = [
   @dot @star
   "as" simple_id
 ]
+top_level_object = declaration semis?
 
-# Declarations
+# SECTION: declarations
 declaration = [
-  class_decl
-  object_decl
-  fun_decl
-  property_decl
+  class_declaration
+  object_declaration
+  function_declaration
+  property_declaration
   type_alias
 ]
+type_alias = modifier* "typealias" @nl* simple_id nl_type_parameters? @nl* @assign @nl* type
 
-type_alias = modifier* "typealias" _ simple_id nl_type_params? _ @assign _ type
-
-# Class
-class_decl = modifier* class_kw _ simple_id nl_type_params? nl_primary_ctor? nl_delegation? nl_type_constraints? nl_class_body?
-# Helper rules: `nl_X?` means "optional newlines followed by X". When X is
-# absent, the newlines aren't consumed either — which is essential for
-# statement separation (otherwise a trailing `_` would eat the NL that a
-# later `semi` needs).
-nl_type_params = _ type_params
-nl_primary_ctor = _ primary_constructor
-nl_delegation = _ delegation
-nl_type_constraints = _ type_constraints
-nl_class_body = _ class_body
-nl_receiver_type_dot = _ receiver_type_dot
-nl_return_type = _ return_type
-nl_fun_body = _ fun_body
-nl_property_init = _ property_init
-nl_property_accessors = _ property_accessors
-class_kw = [
+# SECTION: classes
+class_declaration = modifier* class_kind @nl* simple_id nl_type_parameters? nl_primary_constructor? nl_delegation_specifiers? nl_type_constraints? nl_class_body?
+class_kind = [
   "class"
+  "fun" @nl* "interface"
   "interface"
 ]
-primary_constructor = modifier* "constructor"? _ class_params
-class_params = @lparen _ class_param*<comma_sep> _ @rparen
-class_param = modifier* val_or_var? simple_id _ @colon _ type _ default_value?
+nl_type_parameters = @nl* type_parameters
+nl_primary_constructor = @nl* primary_constructor
+nl_delegation_specifiers = @nl* @colon @nl* delegation_specifiers
+nl_type_constraints = @nl* type_constraints
+nl_class_body = @nl* class_body_variant
+class_body_variant = [
+  class_body
+  enum_class_body
+]
+primary_constructor = primary_constructor_head? class_parameters
+primary_constructor_head = modifier* "constructor" @nl*
+class_body = block
+class_parameters = @lparen @nl* class_parameter*<comma_sep> trailing_comma? @nl* @rparen
+class_parameter = modifier* val_or_var? @nl* simple_id @nl* @colon @nl* type default_value?
 val_or_var = [
   "val"
   "var"
 ]
-default_value = @assign _ expression
-delegation = @colon _ delegation_spec+<comma_sep>
-delegation_spec = [
-  user_type _ value_args : ctor_invocation
-  user_type _ "by" _ expression : explicit_delegation
-  user_type : type_spec
-  fun_type : fun_type_spec
+default_value = @nl* @assign @nl* expression
+delegation_specifiers = annotated_delegation_specifier+<comma_sep>
+annotated_delegation_specifier = annotation* @nl* delegation_specifier
+delegation_specifier = [
+  constructor_invocation
+  explicit_delegation
+  user_type
+  function_type
+  "suspend" @nl* function_type
 ]
-class_body = _ block
-block = @lbrace _ statements _ @rbrace
-
-# Class members (parsed as statements inside class bodies)
-companion_obj = modifier* "companion" _ "object" nl_simple_id? nl_delegation? nl_class_body?
-nl_simple_id = _ simple_id
-secondary_constructor = modifier* "constructor" _ fun_value_params nl_delegation_call? nl_block?
-nl_delegation_call = _ delegation_call
-nl_block = _ block
-delegation_call = @colon _ [
-  "this" _ value_args
-  "super" _ value_args
+constructor_invocation = user_type @nl* value_arguments
+explicit_delegation = explicit_delegation_lhs @nl* "by" @nl* expression
+explicit_delegation_lhs = [
+  user_type
+  function_type
 ]
-anon_init = "init" _ block
 
-# Functions
-fun_decl = modifier* "fun" nl_type_params? nl_receiver_type_dot? _ simple_id _ fun_value_params nl_return_type? nl_type_constraints? nl_fun_body?
-fun_value_params = @lparen _ fun_value_param*<comma_sep> _ @rparen
-fun_value_param = modifier* parameter _ default_value?
-parameter = simple_id _ @colon _ type
-return_type = @colon _ type
-fun_body = [
+# SECTION: class members
+class_member_declarations = class_member_declaration_list?
+class_member_declaration_list = class_member_declaration+<semis> semis?
+class_member_declaration = [
+  declaration
+  companion_object
+  anonymous_initializer
+  secondary_constructor
+]
+anonymous_initializer = "init" @nl* block
+companion_object = modifier* "companion" @nl* data_modifier? @nl* "object" nl_simple_id? nl_delegation_specifiers? nl_class_body?
+data_modifier = "data"
+nl_simple_id = @nl* simple_id
+secondary_constructor = modifier* "constructor" @nl* function_value_parameters nl_constructor_delegation_call? nl_block?
+nl_constructor_delegation_call = @nl* @colon @nl* constructor_delegation_call
+nl_block = @nl* block
+constructor_delegation_call = [
+  "this" @nl* value_arguments
+  "super" @nl* value_arguments
+]
+
+# SECTION: functions and properties
+function_value_parameters = @lparen @nl* function_value_parameter*<comma_sep> trailing_comma? @nl* @rparen
+function_value_parameter = parameter_modifier* parameter default_value?
+parameter = simple_id @nl* @colon @nl* type
+parameter_with_optional_type = simple_id @nl* type_annotation?
+function_value_parameter_with_optional_type = parameter_modifier* parameter_with_optional_type default_value?
+parameters_with_optional_type = @lparen @nl* function_value_parameter_with_optional_type*<comma_sep> trailing_comma? @nl* @rparen
+
+function_declaration = modifier* "fun" nl_type_parameters? nl_receiver_type_dot? @nl* simple_id @nl* function_value_parameters nl_return_type? nl_type_constraints? nl_function_body?
+nl_receiver_type_dot = @nl* receiver_type @nl* @dot
+nl_return_type = @nl* @colon @nl* type
+nl_function_body = @nl* function_body
+function_body = [
   block
-  @assign _ expression
+  @assign @nl* expression
 ]
-# `receiverTypeAndDot <- (typeModifiers _*)? (nullableType __* DOT __* /
-# parenthesizedType __* DOT __* / (simpleUserType __* DOT __*)+)` (packcc).
-# The last `DOT` belongs to the receiver, and a final `simpleIdentifier`
-# follows it — crucially the trailing dot means the inner user_type must
-# NOT greedily consume the identifier after the dot.
-receiver_type_dot = type_modifier* receiver_type_dot_tail
-receiver_type_dot_tail = [
-  nullable_type _ @dot _
-  paren_type _ @dot _
-  user_type_dot_list
-]
-user_type_dot_list = simple_user_type_dot+
-simple_user_type_dot = simple_user_type _ @dot _
 
-# Properties
-property_decl = modifier* val_or_var nl_type_params? nl_receiver_type_dot? _ var_decl nl_type_constraints? nl_property_init? nl_property_accessors?
-var_decl = [
-  @lparen _ variable_decl+<comma_sep> _ @rparen
-  variable_decl
+property_declaration = modifier* val_or_var nl_type_parameters? nl_receiver_type_dot? nl_property_variable nl_type_constraints? nl_property_initializer? nl_property_accessors?
+nl_property_variable = @nl* property_variable
+property_variable = [
+  multi_variable_declaration
+  variable_declaration
 ]
-variable_decl = simple_id type_annotation?
-type_annotation = _ @colon _ type
-property_init = [
-  @assign _ expression
-  "by" _ expression
+variable_declaration = annotation* @nl* simple_id type_annotation?
+type_annotation = @nl* @colon @nl* type
+multi_variable_declaration = @lparen @nl* variable_declaration+<comma_sep> trailing_comma? @nl* @rparen
+nl_property_initializer = @nl* property_initializer
+property_initializer = [
+  @assign @nl* expression
+  property_delegate
 ]
+property_delegate = "by" @nl* expression
+nl_property_accessors = @nl* property_accessors
 property_accessors = [
-  getter _ setter?
-  setter _ getter?
+  getter nl_setter?
+  setter nl_getter?
 ]
-getter = modifier* "get" _ @lparen _ @rparen _ return_type? _ fun_body
-setter = modifier* "set" _ @lparen _ setter_param _ @rparen _ return_type? _ fun_body
-setter_param = modifier* simple_id _ type_annotation?
+nl_getter = @nl* semi? getter
+nl_setter = @nl* semi? setter
+getter = modifier* "get" getter_body?
+getter_body = @nl* @lparen @nl* @rparen nl_return_type? @nl* function_body
+setter = modifier* "set" setter_body?
+setter_body = @nl* @lparen @nl* function_value_parameter_with_optional_type trailing_comma? @nl* @rparen nl_return_type? @nl* function_body
 
-# Object
-object_decl = modifier* "object" _ simple_id nl_delegation? nl_class_body?
+object_declaration = modifier* "object" @nl* simple_id nl_delegation_specifiers? nl_class_body?
 
-# Enum bodies use the class-member grammar for now; the packcc grammar has a
-# dedicated `enumClassBody` with comma-separated entries that we don't model yet.
+# SECTION: enum classes
+enum_class_body = enum_entries enum_members?
+enum_entries = enum_entry+<comma_sep> trailing_comma?
+enum_entry = modifier* @nl* simple_id enum_entry_args? nl_class_body?
+enum_entry_args = @nl* value_arguments
+enum_members = @nl* @semi @nl* class_member_declarations
 
-# Types
-type = type_modifier* type_inner quest*
-type_inner = [
-  fun_type
+# SECTION: types
+type = type_modifier* type_body
+type_body = [
+  function_type
+  parenthesized_type
+  definitely_non_nullable_type
   nullable_type
-  paren_type
-  type_ref
+  type_reference
 ]
-type_ref = [
+type_reference = [
   user_type
   "dynamic"
 ]
-nullable_type = [
-  type_ref quest+
-  paren_type quest+
+nullable_type = nullable_type_base @nl* quest+
+nullable_type_base = [
+  type_reference
+  parenthesized_type
 ]
 quest = [
-  @quest
+  @quest_no_ws
+  @quest_ws
 ]
-user_type = simple_user_type+<@dot>
-simple_user_type = simple_id nl_type_args?
-nl_type_args = _ type_args
-type_args = @langle _ type_projection+<comma_sep> _ @rangle
+user_type = simple_user_type+<user_type_dot_sep>
+user_type_dot_sep = @nl* @dot @nl*
+simple_user_type = simple_id nl_type_arguments?
+nl_type_arguments = @nl* type_arguments
+type_arguments = @langle @nl* type_projection+<comma_sep> trailing_comma? @nl* @rangle
 type_projection = [
   type_projection_modifier* type
   @star
 ]
 type_projection_modifier = [
-  variance_modifier
+  variance_modifier @nl*
   annotation
 ]
-fun_type = receiver_type_prefix? fun_type_params _ @arrow _ type
-receiver_type_prefix = receiver_type @dot _
-fun_type_params = @lparen _ fun_type_param*<comma_sep> _ @rparen
-fun_type_param = [
+function_type = receiver_type_prefix? function_type_parameters @nl* @arrow @nl* type
+receiver_type_prefix = receiver_type @nl* @dot @nl*
+function_type_parameters = @lparen @nl* function_type_parameter*<comma_sep> trailing_comma? @nl* @rparen
+function_type_parameter = [
   parameter
   type
 ]
-paren_type = @lparen _ type _ @rparen
-receiver_type = type_modifier* receiver_type_inner
-receiver_type_inner = [
+parenthesized_type = @lparen @nl* type @nl* @rparen
+receiver_type = type_modifier* receiver_type_body
+receiver_type_body = [
+  parenthesized_type
   nullable_type
-  paren_type
-  type_ref
+  type_reference
+]
+definitely_non_nullable_type = definitely_non_nullable_lhs @nl* @amp @nl* type_modifier* definitely_non_nullable_rhs
+definitely_non_nullable_lhs = [
+  user_type
+  parenthesized_user_type
+]
+definitely_non_nullable_rhs = [
+  user_type
+  parenthesized_user_type
+]
+parenthesized_user_type = @lparen @nl* parenthesized_user_type_body @nl* @rparen
+parenthesized_user_type_body = [
+  user_type
+  parenthesized_user_type
 ]
 type_modifier = [
   annotation
-  "suspend" _
+  "suspend" @nl*
 ]
-
-# Type parameters & constraints
-type_params = @langle _ type_param+<comma_sep> _ @rangle
-type_param = type_param_modifier* simple_id _ type_bound?
-type_bound = @colon _ type
-type_constraints = "where" _ type_constraint+<comma_sep>
-type_constraint = annotation* simple_id _ @colon _ type
+type_parameters = @langle @nl* type_parameter+<comma_sep> trailing_comma? @nl* @rangle
+type_parameter = type_parameter_modifier* @nl* simple_id type_bound?
+type_bound = @nl* @colon @nl* type
+type_constraints = "where" @nl* type_constraint+<comma_sep>
+type_constraint = annotation* simple_id @nl* @colon @nl* type
 variance_modifier = [
   "in"
   "out"
 ]
-type_param_modifier = [
+type_parameter_modifier = [
   "reified"
   variance_modifier
   annotation
 ]
 
-statements = stmt_list?
-stmt_list = statement stmt_cont* semi?
-stmt_cont = semi statement
-statement = [
+# SECTION: statements
+statements = statement_list? semis?
+statement_list = statement+<semis>
+statement = statement_prefix* statement_body
+statement_prefix = [
+  label
+  annotation
+]
+statement_body = [
   declaration
-  companion_obj
-  secondary_constructor
-  anon_init
-  when_entry
   assignment
-  loop_stmt
+  loop_statement
   expression
 ]
-assignment = [
-  directly_assignable _ assign_op _ expression
-  assignable _ assign_op _ expression
+control_structure_body = [
+  block
+  statement
 ]
-assign_op = [
-  @assign
+block = @lbrace @nl* statements @nl* @rbrace
+loop_statement = [
+  for_statement
+  while_statement
+  do_while_statement
+]
+for_statement = "for" @nl* @lparen annotation* for_variable "in" expression @rparen @nl* control_structure_body?
+for_variable = [
+  variable_declaration
+  multi_variable_declaration
+]
+while_statement = "while" @nl* @lparen expression @rparen @nl* while_body
+while_body = [
+  control_structure_body
+  @semi
+]
+do_while_statement = "do" @nl* control_structure_body? @nl* "while" @nl* @lparen expression @rparen
+assignment = [
+  directly_assignable_expression @assign @nl* expression
+  assignable_expression assignment_and_operator @nl* expression
+]
+assignment_and_operator = [
   @plus_assign
   @minus_assign
   @star_assign
   @slash_assign
   @mod_assign
 ]
-loop_stmt = [
-  for_stmt
-  while_stmt
-  do_while_stmt
-]
-for_stmt = "for" _ @lparen _ annotation* for_var _ "in" _ expression _ @rparen nl_control_body?
-for_var = [
-  variable_decl
-  @lparen _ variable_decl+<comma_sep> _ @rparen
-]
-while_stmt = "while" _ @lparen _ expression _ @rparen _ control_body
-do_while_stmt = "do" nl_control_body? _ "while" _ @lparen _ expression _ @rparen
-control_body = [
-  block
-  statement
-]
 
-# Expressions
-# For binary/infix/postfix chains, newlines on the LEFT of an operator must
-# terminate the expression (so the next line starts a new statement); newlines
-# on the RIGHT of an operator are allowed so line continuations work. This
-# mirrors packcc's `_*` (no NL) vs `__*` (allow NL) distinction.
+# SECTION: expressions
 expression = disjunction
 disjunction = conjunction+<disj_sep>
 conjunction = equality+<conj_sep>
@@ -657,145 +746,151 @@ equality_op = [
   @noteqeq
   @noteq
 ]
-comparison = generic_call_like+<cmp_sep>
+comparison = generic_call_like_comparison+<cmp_sep>
 comparison_op = [
   @le
   @ge
   @langle
   @rangle
 ]
-generic_call_like = infix_op call_suffix*
-infix_op = elvis_expr infix_tail*
-infix_tail = [
-  in_op _ elvis_expr : in_check
-  is_op _ type : is_check
-  simple_id _ elvis_expr : named_check
+generic_call_like_comparison = infix_operation call_suffix*
+infix_operation = elvis_expression infix_operation_tail*
+infix_operation_tail = [
+  in_operator @nl* elvis_expression
+  is_operator @nl* type
 ]
-in_op = [
+in_operator = [
   "in"
   @not_in
 ]
-is_op = [
+is_operator = [
   "is"
   @not_is
 ]
-elvis_expr = infix_fn_call+<elvis_sep>
-infix_fn_call = range_expr infix_fn_tail*
-infix_fn_tail = simple_id _ range_expr
-range_expr = additive_expr+<range_sep>
-additive_expr = mult_expr+<add_sep>
-additive_op = [
+elvis_expression = infix_function_call+<elvis_sep>
+elvis = @elvis
+infix_function_call = range_expression infix_function_call_tail*
+infix_function_call_tail = simple_id @nl* range_expression
+range_expression = additive_expression+<range_sep>
+range_op = [
+  @range
+  @range_until
+]
+additive_expression = multiplicative_expression+<add_sep>
+additive_operator = [
   @plus
   @minus
 ]
-mult_expr = as_expr+<mul_sep>
-mult_op = [
+multiplicative_expression = as_expression+<mul_sep>
+multiplicative_op = [
   @star
   @slash
   @mod
 ]
-# `asExpression <- prefixUnary (__* asOperator __* type)*` — packcc allows NL on
-# BOTH sides of `as`, so we keep `_` on the left too.
-as_expr = prefix_unary as_tail*
-as_tail = _ as_op _ type
-as_op = [
+as_expression = prefix_unary_expression as_expression_tail*
+as_expression_tail = @nl* as_operator @nl* type
+as_operator = [
   @as_safe
   "as"
 ]
-prefix_unary = unary_prefix* postfix_unary
+prefix_unary_expression = unary_prefix* postfix_unary_expression
 unary_prefix = [
   annotation
   label
-  prefix_unary_op
+  prefix_unary_operator @nl*
 ]
-prefix_unary_op = [
+prefix_unary_operator = [
   @incr
   @decr
   @minus
   @plus
-  @excl
+  excl
 ]
-postfix_unary = primary_expr postfix_suffix*
-postfix_suffix = [
+excl = [
+  @excl_no_ws
+  @excl_ws
+]
+postfix_unary_expression = primary_expression postfix_unary_suffix*
+postfix_unary_suffix = [
+  postfix_unary_operator
+  type_arguments
+  call_suffix
+  indexing_suffix
+  navigation_suffix
+]
+postfix_unary_operator = [
   @incr
   @decr
-  type_args
-  call_suffix
-  index_suffix
-  nav_suffix
+  @excl_no_ws excl
 ]
-directly_assignable = [
-  postfix_unary assignable_suffix
+directly_assignable_expression = [
+  postfix_unary_expression assignable_suffix
   simple_id
+  parenthesized_directly_assignable_expression
 ]
-assignable = prefix_unary
+parenthesized_directly_assignable_expression = @lparen @nl* directly_assignable_expression @nl* @rparen
+assignable_expression = [
+  prefix_unary_expression
+  parenthesized_assignable_expression
+]
+parenthesized_assignable_expression = @lparen @nl* assignable_expression @nl* @rparen
 assignable_suffix = [
-  nav_suffix
-  type_args
-  index_suffix
+  type_arguments
+  indexing_suffix
+  navigation_suffix
 ]
-index_suffix = @lbracket _ expression+<comma_sep> _ @rbracket
-nav_suffix = member_access_op _ nav_target
-member_access_op = [
+indexing_suffix = @lbracket @nl* expression+<comma_sep> trailing_comma? @nl* @rbracket
+navigation_suffix = member_access_operator @nl* navigation_target
+member_access_operator = [
   @safe_dot
   @dot
   @coloncolon
 ]
-nav_target = [
+navigation_target = [
   simple_id
-  paren_expr
+  parenthesized_expression
   "class"
 ]
-# callSuffix: all internal gaps are `_*` (no NL), mirroring packcc. A NL
-# before the `{` of a trailing lambda would terminate the expression and start
-# a new statement.
 call_suffix = [
-  type_args? value_args annotated_lambda : args_lambda
-  type_args? value_args : args_only
-  type_args annotated_lambda : type_lambda
-  annotated_lambda : lambda_only
+  type_arguments? value_arguments? annotated_lambda : lambda_call
+  type_arguments? value_arguments : value_call
 ]
-annotated_lambda = annotation* label? lambda_lit
-value_args = @lparen _ value_arg*<comma_sep> _ @rparen
-value_arg = annotation? named_arg? @star? expression
-named_arg = simple_id _ @assign _
-lambda_lit = block
+annotated_lambda = annotation* label? @nl* lambda_literal
+value_arguments = @lparen @nl* value_argument*<comma_sep> trailing_comma? @nl* @rparen
+value_argument = annotation? @nl* named_argument? @star? @nl* expression
+named_argument = simple_id @nl* @assign @nl*
 
-# Primary expressions
-primary_expr = [
-  "this" @at simple_id : this_at
-  "this" : this_expr
-  "super" @at simple_id : super_at
-  "super" type_args? : super_expr
-  if_expr
-  when_expr
-  try_expr
-  jump_expr
-  paren_expr
-  callable_ref
-  string_lit
-  fun_literal
-  object_literal
-  collection_lit
+# SECTION: primary expressions
+primary_expression = [
+  parenthesized_expression
   simple_id
-  literal_const
+  literal_constant
+  string_literal
+  callable_reference
+  function_literal
+  object_literal
+  collection_literal
+  this_expression
+  super_expression
+  if_expression
+  when_expression
+  try_expression
+  jump_expression
 ]
-paren_expr = @lparen _ expression _ @rparen
-collection_lit = [
-  @lbracket _ expression+<comma_sep> _ @rbracket : non_empty
-  @lbracket _ @rbracket : empty
-]
-literal_const = [
-  @float_lit
-  @hex_lit
-  @bin_lit
-  @long_lit
-  @unsigned_lit
-  @int_lit
+parenthesized_expression = @lparen @nl* expression @nl* @rparen
+collection_literal = @lbracket @nl* collection_elements? @nl* @rbracket
+collection_elements = expression+<comma_sep> trailing_comma?
+literal_constant = [
   "true"
   "false"
-  "null"
+  @int_lit
+  @hex_lit
+  @bin_lit
   char_lit
+  @float_lit
+  "null"
+  @long_lit
+  @unsigned_lit
 ]
 char_lit = @char_open char_content* @char_close
 char_content = [
@@ -803,85 +898,107 @@ char_content = [
   @str_unicode
   @str_text
 ]
-
-# Strings
-string_lit = [
-  multi_line_str
-  line_str
+string_literal = [
+  line_string_literal
+  multi_line_string_literal
 ]
-line_str = str
-str = @str_open line_str_content* @str_close
-line_str_content = [
-  str_interp
+line_string_literal = str
+str = @str_open line_string_element* @str_close
+line_string_element = [
+  line_string_content
+  line_string_expression
+]
+line_string_content = [
+  @str_text
   @str_escape
   @str_unicode
   @str_ref
-  @str_text
 ]
-multi_line_str = multiline_str
-multiline_str = @ml_str_open ml_str_content* @ml_str_close
-ml_str_content = [
-  ml_str_interp
+line_string_expression = str_interp
+str_interp = @str_expr_open @nl* expression @nl* @str_expr_close
+multi_line_string_literal = multiline_str
+multiline_str = @ml_str_open multi_line_string_element* @ml_str_close
+multi_line_string_element = [
+  multi_line_string_content
+  multi_line_string_expression
+]
+multi_line_string_content = [
+  @str_text
   @str_ref
-  @str_text
 ]
-str_interp = @str_expr_open _ expression _ @str_expr_close
-ml_str_interp = @str_expr_open _ expression _ @str_expr_close
-
-# Function literals & object literals
-fun_literal = [
-  lambda_lit
-  anon_fun
+multi_line_string_expression = ml_str_interp
+ml_str_interp = @str_expr_open @nl* expression @nl* @str_expr_close
+lambda_literal = block
+anonymous_function = "suspend"? @nl* "fun" anonymous_function_receiver? @nl* parameters_with_optional_type nl_return_type? nl_type_constraints? nl_function_body?
+anonymous_function_receiver = @nl* type @nl* @dot
+function_literal = [
+  lambda_literal
+  anonymous_function
 ]
-anon_fun = "fun" nl_receiver_type_dot? _ fun_value_params nl_return_type? nl_type_constraints? nl_fun_body?
-object_literal = [
-  "object" _ @colon _ delegation_spec+<comma_sep> _ class_body : with_delegation
-  "object" _ class_body : plain
+object_literal = "object" object_literal_delegation? nl_class_body?
+object_literal_delegation = @nl* @colon @nl* delegation_specifiers @nl*
+this_expression = [
+  @this_at
+  "this"
 ]
-
-# Control flow
-if_expr = "if" _ @lparen _ expression _ @rparen nl_control_body? nl_else_branch?
-nl_control_body = _ control_body
-nl_else_branch = _ else_branch
-else_branch = "else" _ control_body
-when_expr = "when" _ when_subject? _ block
-when_subject = @lparen _ when_subject_val? expression _ @rparen
-when_subject_val = annotation* "val" _ variable_decl _ @assign _
-when_entry = [
-  when_cond+<comma_sep> _ @arrow _ control_body
-  "else" _ @arrow _ control_body
+super_expression = [
+  @super_at
+  "super" type_arguments?
 ]
-when_cond = [
-  expression
-  in_op _ expression
-  is_op _ type
+if_expression = "if" @nl* @lparen @nl* expression @nl* @rparen @nl* if_body
+if_body = [
+  control_structure_body nl_else?
+  @semi
 ]
-try_expr = "try" _ block nl_catch_block* nl_finally_block?
-nl_catch_block = _ catch_block
-nl_finally_block = _ finally_block
-catch_block = "catch" _ @lparen _ annotation* simple_id _ @colon _ type _ @rparen _ block
-finally_block = "finally" _ block
-jump_expr = [
-  "throw" _ expression : throw_expr
-  "return" @at simple_id _ expression? : return_at
-  "return" _ expression? : return_expr
-  "continue" @at simple_id : continue_at
-  "continue" : continue_expr
-  "break" @at simple_id : break_at
-  "break" : break_expr
+nl_else = @nl* else_branch
+else_branch = "else" @nl* else_body
+else_body = [
+  control_structure_body
+  @semi
 ]
-callable_ref = type? @coloncolon _ callable_ref_target
-callable_ref_target = [
+when_subject = @lparen when_subject_variable? expression @rparen
+when_subject_variable = annotation* @nl* "val" @nl* variable_declaration @nl* @assign @nl*
+when_expression = "when" @nl* when_subject? @nl* block
+try_expression = "try" @nl* block try_tail
+try_tail = [
+  catch_block_with_nl+ nl_finally_block?
+  nl_finally_block
+]
+catch_block_with_nl = @nl* catch_block
+nl_finally_block = @nl* finally_block
+catch_block = "catch" @nl* @lparen annotation* simple_id @colon type trailing_comma? @rparen @nl* block
+finally_block = "finally" @nl* block
+jump_expression = [
+  "throw" @nl* expression
+  @return_at expression?
+  "return" expression?
+  @continue_at
+  "continue"
+  @break_at
+  "break"
+]
+callable_reference = receiver_type? @coloncolon @nl* callable_reference_target
+callable_reference_target = [
   simple_id
   "class"
 ]
 
-# Annotations & labels
+# SECTION: annotations and labels
 annotation = [
-  annotation_use_site unescaped_annotation _
-  @at unescaped_annotation _
+  single_annotation
+  multi_annotation
 ]
-annotation_use_site = @at annotation_target @colon
+single_annotation = annotation_prefix unescaped_annotation @nl*
+multi_annotation = annotation_prefix @lbracket unescaped_annotation+ @rbracket @nl*
+annotation_prefix = [
+  annotation_use_site @nl*
+  at
+]
+annotation_use_site = at annotation_target @nl* @colon
+at = [
+  @at_no_ws
+  @at_post_ws
+]
 annotation_target = [
   "field"
   "property"
@@ -894,21 +1011,21 @@ annotation_target = [
   "file"
 ]
 unescaped_annotation = [
-  user_type _ value_args : with_args
+  user_type @nl* value_arguments : with_args
   user_type : type_only
 ]
-label = @label_ref
+label = @label_ref @nl*
 
-# Modifiers
+# SECTION: modifiers
 modifier = [
-  class_modifier _
-  member_modifier _
-  visibility_modifier _
-  function_modifier _
-  property_modifier _
-  inheritance_modifier _
-  parameter_modifier _
-  platform_modifier _
+  class_modifier @nl*
+  member_modifier @nl*
+  visibility_modifier @nl*
+  function_modifier @nl*
+  property_modifier @nl*
+  inheritance_modifier @nl*
+  parameter_modifier @nl*
+  platform_modifier @nl*
   annotation
 ]
 class_modifier = [
@@ -952,7 +1069,7 @@ platform_modifier = [
   "actual"
 ]
 
-# Identifiers
+# SECTION: identifiers
 simple_id = [
   !hard_keyword @ident
   soft_keyword
@@ -1035,5 +1152,4 @@ soft_keyword = [
   "const"
   "suspend"
 ]
-
-identifier = simple_id+<@dot>
+identifier = simple_id+<user_type_dot_sep>

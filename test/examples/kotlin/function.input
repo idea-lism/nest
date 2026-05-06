@@ -1,0 +1,4 @@
+#!/usr/bin/env kotlin
+package demo
+
+fun add() = 1 + 2

@@ -1,0 +1,76 @@
+------
+@shebang_line "#!/usr/bin/env kotlin"
+@nl "
+"
+@lit.package "package"
+@ident "demo"
+@nl "
+"
+@nl "
+"
+@lit.fun "fun"
+@ident "add"
+@lparen "("
+@rparen ")"
+@assign "="
+@int_lit "1"
+@plus "+"
+@int_lit "2"
+@nl "
+"
+------
+main
+  shebang_line
+    @shebang_line
+    @nl
+  package_header
+    package_header_body
+      @lit.package
+      identifier
+        simple_id
+          @ident
+      semi
+        semi_item
+          @nl
+        @nl
+  import_list
+  top_level_object
+    declaration
+      function_declaration
+        @lit.fun
+        simple_id
+          @ident
+        function_value_parameters
+          @lparen
+          @rparen
+        nl_function_body
+          function_body
+            @assign
+            expression
+              disjunction
+                conjunction
+                  equality
+                    comparison
+                      generic_call_like_comparison
+                        infix_operation
+                          elvis_expression
+                            infix_function_call
+                              range_expression
+                                additive_expression
+                                  multiplicative_expression
+                                    as_expression
+                                      prefix_unary_expression
+                                        postfix_unary_expression
+                                          primary_expression
+                                            literal_constant
+                                              @int_lit
+                                  multiplicative_expression
+                                    as_expression
+                                      prefix_unary_expression
+                                        postfix_unary_expression
+                                          primary_expression
+                                            literal_constant
+                                              @int_lit
+    semis
+      semi_item
+        @nl

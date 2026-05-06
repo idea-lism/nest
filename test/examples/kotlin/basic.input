@@ -1,0 +1,3 @@
+// comments and spaces are hidden by lexer; newlines separate file parts
+package   demo
+import demo.Foo

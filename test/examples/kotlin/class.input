@@ -1,0 +1,6 @@
+#!/usr/bin/env kotlin
+package demo
+
+class Box {
+  fun value() = 1
+}
