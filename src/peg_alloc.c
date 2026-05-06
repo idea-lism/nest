@@ -422,13 +422,13 @@ static void _alloc_slot_bits(ScopeClosure* cl, int32_t max_steps, FILE* log) {
   assert(cr);
   cl->coloring_n_vertices = (int32_t)n;
   cl->coloring_n_edges = edge_size;
-  cl->coloring_n_colors = coloring_get_sg_size(cr);
-  cl->slots_size = coloring_get_sg_size(cr);
+  cl->coloring_n_colors = coloring_get_seg_group_size(cr);
+  cl->slots_size = coloring_get_seg_group_size(cr);
   for (size_t i = 0; i < n; i++) {
-    int32_t sg_id;
+    int32_t seg_group_id;
     int64_t seg_mask;
-    coloring_get_segment_info(cr, i, &sg_id, &seg_mask);
-    cl->scoped_rules[i].segment_color = sg_id;
+    coloring_get_segment_info(cr, i, &seg_group_id, &seg_mask);
+    cl->scoped_rules[i].segment_color = seg_group_id;
     cl->scoped_rules[i].rule_bit_mask = (uint64_t)seg_mask;
   }
   // compute segment_mask (union of all rule_bit_masks in same color group)

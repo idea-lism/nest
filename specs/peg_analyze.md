@@ -57,6 +57,8 @@ typedef struct {
   int32_t source_line; // line in .nest file (for LLVM IR debug info), 0 = unknown
   int32_t source_col;
   PegUnit body;
+  bool visited; // post-process: orphan detection
+  bool is_todo; // if the rule is defined as = TODO
 } PegRule;
 
 typedef PegRule* PegRules; // darray
@@ -72,7 +74,7 @@ typedef struct {
 
 ### Special rule `TODO`
 
-If there is scope with PEG rule `= TODO` (post_process already ensure that non-scoped PEG rule can't be `TODO`), the PEG parsing is skipped so the analysis should be skipped on this kind of rule.
+If there is scope with PEG rule `= TODO` (post_process already ensure that non-scoped PEG rule can't be `TODO`), the rule will have `is_todo = true`, then in codegen the rule generates an empty function which always succeeds.
 
 ### Scope closures
 

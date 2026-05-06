@@ -4,13 +4,13 @@
 #include <string.h>
 
 typedef struct {
-  int32_t sg_id;
+  int32_t seg_group_id;
   int64_t seg_mask;
 } VertexInfo;
 
 struct ColoringResult {
-  int32_t n_vertices;
-  int32_t sg_size;
+  int32_t vertex_size;
+  int32_t seg_group_size;
   VertexInfo* vertex_info;
   int32_t* colors;
 };
@@ -85,32 +85,32 @@ static int32_t* _solve_dsatur(int32_t n_vertices, int32_t* edges, int32_t n_edge
 
 static void _build_segments(ColoringResult* cr, int32_t* colors, int32_t k) {
   int32_t* color_counts = XCALLOC(k, sizeof(int32_t));
-  for (int32_t i = 0; i < cr->n_vertices; i++) {
+  for (int32_t i = 0; i < cr->vertex_size; i++) {
     color_counts[colors[i]]++;
   }
 
-  int32_t sg_id = 0;
-  int32_t* color_sg_base = XMALLOC(k * sizeof(int32_t));
+  int32_t seg_group_id = 0;
+  int32_t* color_seg_group_base = XMALLOC(k * sizeof(int32_t));
 
   for (int32_t c = 0; c < k; c++) {
-    color_sg_base[c] = sg_id;
+    color_seg_group_base[c] = seg_group_id;
     int32_t count = color_counts[c];
-    sg_id += (count + 63) / 64;
+    seg_group_id += (count + 63) / 64;
   }
-  cr->sg_size = sg_id;
+  cr->seg_group_size = seg_group_id;
 
   int32_t* color_pos = XCALLOC(k, sizeof(int32_t));
-  for (int32_t v = 0; v < cr->n_vertices; v++) {
+  for (int32_t v = 0; v < cr->vertex_size; v++) {
     int32_t c = colors[v];
     int32_t pos = color_pos[c]++;
     int32_t seg_idx = pos / 64;
     int32_t bit_idx = pos % 64;
-    cr->vertex_info[v].sg_id = color_sg_base[c] + seg_idx;
+    cr->vertex_info[v].seg_group_id = color_seg_group_base[c] + seg_idx;
     cr->vertex_info[v].seg_mask = (int64_t)(1ULL << bit_idx);
   }
 
   XFREE(color_counts);
-  XFREE(color_sg_base);
+  XFREE(color_seg_group_base);
   XFREE(color_pos);
 }
 
@@ -319,7 +319,7 @@ static ColoringResult* _binary_search_color(int32_t n_vertices, int32_t* edges, 
     if (colors) {
       // mid works, try smaller
       ColoringResult* cr = XMALLOC(sizeof(ColoringResult));
-      cr->n_vertices = n_vertices;
+      cr->vertex_size = n_vertices;
       cr->vertex_info = XMALLOC(n_vertices * sizeof(VertexInfo));
       _build_segments(cr, colors, mid);
       cr->colors = XMALLOC(n_vertices * sizeof(int32_t));
@@ -357,7 +357,7 @@ ColoringResult* coloring_solve(int32_t n_vertices, int32_t* edges, int32_t n_edg
     // Build the DSatur result now — it is a valid ub-coloring and serves as the
     // initial best so SAT never needs to probe k = ub.
     dsatur_cr = XMALLOC(sizeof(ColoringResult));
-    dsatur_cr->n_vertices = n_vertices;
+    dsatur_cr->vertex_size = n_vertices;
     dsatur_cr->vertex_info = XMALLOC(n_vertices * sizeof(VertexInfo));
     _build_segments(dsatur_cr, dsatur_colors, ub);
     dsatur_cr->colors = dsatur_colors; // transfer ownership
@@ -372,10 +372,10 @@ ColoringResult* coloring_solve(int32_t n_vertices, int32_t* edges, int32_t n_edg
 
   // Binary search between lb and ub-1: DSatur already covers ub.
   // dsatur_cr ownership is transferred to _binary_search_color.
-  ColoringResult* cr =
-      _binary_search_color(n_vertices, edges, n_edges, lb, ub - 1, max_steps, seed, use_product_encoding, log, dsatur_cr);
+  ColoringResult* cr = _binary_search_color(n_vertices, edges, n_edges, lb, ub - 1, max_steps, seed,
+                                            use_product_encoding, log, dsatur_cr);
   if (log && cr) {
-    fprintf(log, "  [coloring] result: %d colors\n", coloring_get_sg_size(cr));
+    fprintf(log, "  [coloring] result: %d colors\n", coloring_get_seg_group_size(cr));
   }
   return cr;
 }
@@ -393,11 +393,11 @@ void coloring_result_del(ColoringResult* cr) {
 
 int32_t coloring_get_color(ColoringResult* cr, int32_t vertex_id) { return cr->colors[vertex_id]; }
 
-void coloring_get_segment_info(ColoringResult* cr, int32_t vertex_id, int32_t* out_sg_id, int64_t* out_seg_mask) {
-  *out_sg_id = cr->vertex_info[vertex_id].sg_id;
+void coloring_get_segment_info(ColoringResult* cr, int32_t vertex_id, int32_t* out_seg_group_id, int64_t* out_seg_mask) {
+  *out_seg_group_id = cr->vertex_info[vertex_id].seg_group_id;
   *out_seg_mask = cr->vertex_info[vertex_id].seg_mask;
 }
 
-int32_t coloring_get_sg_size(ColoringResult* cr) { return cr->sg_size; }
+int32_t coloring_get_seg_group_size(ColoringResult* cr) { return cr->seg_group_size; }
 
-int32_t coloring_get_n_vertices(ColoringResult* cr) { return cr->n_vertices; }
+int32_t coloring_get_n_vertices(ColoringResult* cr) { return cr->vertex_size; }

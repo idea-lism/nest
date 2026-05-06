@@ -13,10 +13,10 @@ static bool _verify_coloring(Graph* g, ColoringResult* cr) {
 
   int32_t* colors = malloc(n * sizeof(int32_t));
   for (int32_t v = 0; v < n; v++) {
-    int32_t sg_id;
+    int32_t seg_group_id;
     int64_t seg_mask;
-    coloring_get_segment_info(cr, v, &sg_id, &seg_mask);
-    colors[v] = sg_id;
+    coloring_get_segment_info(cr, v, &seg_group_id, &seg_mask);
+    colors[v] = seg_group_id;
   }
 
   for (int32_t i = 0; i < n_edges; i++) {
@@ -70,8 +70,8 @@ static void _test_segmenting(void) {
 
   ColoringResult* cr = coloring_solve(100, graph_edges(g), graph_n_edges(g), 10000, 42, false, NULL);
 
-  int32_t sg_size = coloring_get_sg_size(cr);
-  assert(sg_size >= 2);
+  int32_t seg_group_size = coloring_get_seg_group_size(cr);
+  assert(seg_group_size >= 2);
 
   int32_t sg0, sg49;
   int64_t mask0, mask49;
@@ -90,7 +90,7 @@ int main(void) {
 
   int32_t edges[] = {0, 1, 1, 2, 2, 0};
   ColoringResult* cr = coloring_solve(3, edges, 3, 1000, 42, false, NULL);
-  assert(coloring_get_sg_size(cr) >= 3);
+  assert(coloring_get_seg_group_size(cr) >= 3);
   coloring_result_del(cr);
 
   Graph* g = graph_random_erdos_renyi(10, 0.3);
