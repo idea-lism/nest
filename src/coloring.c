@@ -114,7 +114,7 @@ static void _build_segments(ColoringResult* cr, int32_t* colors, int32_t k) {
   XFREE(color_pos);
 }
 
-#ifdef _WIN32
+#if 1
 
 // Windows fallback: DSatur only, no SAT solver.
 
@@ -132,7 +132,7 @@ ColoringResult* coloring_solve(int32_t n_vertices, int32_t* edges, int32_t n_edg
   }
 
   ColoringResult* cr = XMALLOC(sizeof(ColoringResult));
-  cr->n_vertices = n_vertices;
+  cr->vertex_size = n_vertices;
   cr->vertex_info = XMALLOC(n_vertices * sizeof(VertexInfo));
   _build_segments(cr, colors, n_vertices);
   cr->colors = XMALLOC(n_vertices * sizeof(int32_t));
