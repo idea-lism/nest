@@ -6,8 +6,8 @@
 #include "xmalloc.h"
 
 #include <assert.h>
-#include <stddef.h>
 #include <stdarg.h>
+#include <stddef.h>
 #include <stdio.h>
 #include <string.h>
 
@@ -605,8 +605,7 @@ static void _gen_todo_scope_ir(IrWriter* w, ScopeClosure* cl) {
   (void)irwriter_imm(w, "%stack_ptr_in"); // unused but part of signature
   IrVal tc = irwriter_call_retf(w, "ptr", "tt_current", "ptr %%tt");
   (void)irwriter_call_retf(w, "ptr", "tt_alloc_memoize_table", "ptr %%r%d, i64 %lld, i64 %lld, i64 %lld", (int)tc,
-                            (long long)sizeof_col, (long long)(cl->bits_bucket_size * 2),
-                            (long long)cl->slots_size);
+                           (long long)sizeof_col, (long long)(cl->bits_bucket_size * 2), (long long)cl->slots_size);
   IrVal sz = irwriter_call_retf(w, "i64", "tt_current_size", "ptr %%tt");
   IrVal r0 = irwriter_insertvalue(w, "{i64, i64}", -1, "i64", sz, 0);
   IrVal r1 = irwriter_insertvalue(w, "{i64, i64}", r0, "i64", sz, 1);
@@ -635,9 +634,9 @@ static void _gen_scope_ir(IrWriter* w, ScopeClosure* cl, int memoize_mode) {
   irwriter_dbg(w, cl->source_line, cl->source_col);
 
   IrVal tc = irwriter_call_retf(w, "ptr", "tt_current", "ptr %%tt");
-  IrVal peg_table = irwriter_call_retf(w, "ptr", "tt_alloc_memoize_table", "ptr %%r%d, i64 %lld, i64 %lld, i64 %lld",
-                                       (int)tc, (long long)sizeof_col, (long long)(cl->bits_bucket_size * 2),
-                                       (long long)cl->slots_size);
+  IrVal peg_table =
+      irwriter_call_retf(w, "ptr", "tt_alloc_memoize_table", "ptr %%r%d, i64 %lld, i64 %lld, i64 %lld", (int)tc,
+                         (long long)sizeof_col, (long long)(cl->bits_bucket_size * 2), (long long)cl->slots_size);
 
   irwriter_raw(w, "  %col = alloca i64\n");
   IrVal col = irwriter_imm(w, "%col");

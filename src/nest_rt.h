@@ -26,10 +26,10 @@ typedef struct __attribute__((packed, aligned(8))) TokenChunk {
   int64_t memoize_sizeof_col;
   int64_t memoize_slots_offset_in_i32;
   int64_t memoize_slots_size;
-  void* value;       // parser associate a value to it after parse, `struct ScopeXxx`
-  void* aux_value;   // parser associate another value to it
+  void* value;     // parser associate a value to it after parse, `struct ScopeXxx`
+  void* aux_value; // parser associate another value to it
   int64_t has_parse_error;
-  Tokens tokens;     // darray fat pointer
+  Tokens tokens; // darray fat pointer
 } TokenChunk;
 
 typedef TokenChunk* TokenChunks;
@@ -49,5 +49,10 @@ typedef struct __attribute__((packed, aligned(8))) {
   int32_t col;  // 1-based
 } Location;
 Location tt_locate(TokenTree* tree, int32_t cp_offset);
+void tt_collect_parse_errors(TokenTree* tree,
+                             void (*collect_func)(void* userdata, int64_t* scope_ids, size_t scope_ids_size,
+                                                  uint64_t* col, int64_t slot_index, int64_t cp_offset,
+                                                  int64_t cp_size),
+                             void* userdata);
 
 #include "parse_result.inc"

@@ -420,7 +420,8 @@ static void _gen_vpa_lex(VpaGenInput* input, IrWriter* w, const char* prefix) {
     IrVal state64 = irwriter_sext(w, "i32", dfa_state, "i64");
     IrVal cp64 = irwriter_sext(w, "i32", cp, "i64");
     // read tt->current->scope_id to decide which DFA to call
-    irwriter_rawf(w, "  %%r%d = getelementptr i8, ptr %%tt, i64 %zu\n", irwriter_next_reg(w), offsetof(TokenTree, current));
+    irwriter_rawf(w, "  %%r%d = getelementptr i8, ptr %%tt, i64 %zu\n", irwriter_next_reg(w),
+                  offsetof(TokenTree, current));
     IrVal cur_ptr = irwriter_load(w, "ptr", (IrVal)(irwriter_next_reg(w) - 1));
     IrVal scope_id = irwriter_load(w, "i32", cur_ptr);
 
@@ -531,7 +532,8 @@ static void _gen_vpa_lex(VpaGenInput* input, IrWriter* w, const char* prefix) {
     irwriter_bb_at(w, eof_scope_sw_bb);
 
     // read scope_id to switch on
-    irwriter_rawf(w, "  %%r%d = getelementptr i8, ptr %%tt, i64 %zu\n", irwriter_next_reg(w), offsetof(TokenTree, current));
+    irwriter_rawf(w, "  %%r%d = getelementptr i8, ptr %%tt, i64 %zu\n", irwriter_next_reg(w),
+                  offsetof(TokenTree, current));
     IrVal eof_cur_ptr = irwriter_load(w, "ptr", (IrVal)(irwriter_next_reg(w) - 1));
     IrVal eof_scope_id = irwriter_load(w, "i32", eof_cur_ptr);
 

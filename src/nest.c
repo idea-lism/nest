@@ -290,8 +290,7 @@ static void _gen_print_children(FILE* f, const char* prefix, PegUnit* children, 
         if (rid >= 0) {
           if (is_link) {
             if (is_many) {
-              fprintf(f, "    for (PegLink $l = $n.%s; %s_has_elem(&$l); %s_get_next(&$l)) {\n", fname, prefix,
-                      prefix);
+              fprintf(f, "    for (PegLink $l = $n.%s; %s_has_elem(&$l); %s_get_next(&$l)) {\n", fname, prefix, prefix);
             } else {
               fprintf(f, "    { PegLink $l = $n.%s; if (%s_has_elem(&$l)) {\n", fname, prefix);
             }
@@ -339,14 +338,17 @@ static void _gen_print_children(FILE* f, const char* prefix, PegUnit* children, 
   }
 }
 
-static void _gen_example_c(FILE* f, const char* prefix, ParseState* ps) {
+static void _gen_example_c(FILE* f, const char* prefix, ParseState* ps, ScopeClosure* scope_closures,
+                           int memoize_mode) {
   Symtab* tokens = &ps->tokens;
   Symtab* scope_names = &ps->scope_names;
   Symtab* rule_names = &ps->rule_names;
   PegRules rules = ps->peg_rules;
 
   fprintf(f, "#include <stdint.h>\n");
-  fprintf(f, "#include <stdio.h>\n\n");
+  fprintf(f, "#include <stdio.h>\n");
+  fprintf(f, "#include <stdlib.h>\n");
+  fprintf(f, "#include <string.h>\n\n");
   fprintf(f, "#include \"%s.h\"\n\n", prefix);
 
   fprintf(f, "int32_t %s_next_cp(void* userdata) {\n", prefix);
@@ -387,6 +389,63 @@ static void _gen_example_c(FILE* f, const char* prefix, ParseState* ps) {
   fprintf(f, "      putchar(ch);\n");
   fprintf(f, "    }\n");
   fprintf(f, "  }\n");
+  fprintf(f, "}\n\n");
+
+  fprintf(f, "static TokenTree* $parse_error_tt;\n\n");
+
+  fprintf(f, "static const char* scope_name(int64_t id) {\n");
+  fprintf(f, "  switch (id) {\n");
+  int32_t n_scopes = symtab_count(scope_names);
+  for (int32_t i = 0; i < n_scopes; i++) {
+    int32_t scope_id = i + scope_names->start_num;
+    fprintf(f, "  case %d: return \"%s\";\n", scope_id, symtab_get(scope_names, scope_id));
+  }
+  fprintf(f, "  default: return \"?\";\n");
+  fprintf(f, "  }\n");
+  fprintf(f, "}\n\n");
+
+  fprintf(f, "static const char* rule_name_from_slot(int64_t scope_id, uint64_t* col, int64_t slot_index) {\n");
+  fprintf(f, "  switch (scope_id) {\n");
+  for (size_t closure_id = 0; scope_closures && closure_id < darray_size(scope_closures); closure_id++) {
+    ScopeClosure* scope_closure = &scope_closures[closure_id];
+    fprintf(f, "  case %d:\n", scope_closure->scope_id);
+    for (size_t rule_id = 0; rule_id < darray_size(scope_closure->scoped_rules); rule_id++) {
+      ScopedRule* sr = &scope_closure->scoped_rules[rule_id];
+      if (sr->original_global_id < 0) {
+        continue;
+      }
+      if (memoize_mode == MEMOIZE_SHARED) {
+        fprintf(f, "    if (slot_index == %llu && col && (col[%llu] & %lluULL)) return \"%s\";\n",
+                (unsigned long long)sr->slot_index, (unsigned long long)sr->segment_index,
+                (unsigned long long)sr->rule_bit_mask, symtab_get(rule_names, sr->original_global_id));
+      } else {
+        fprintf(f, "    if (slot_index == %llu) return \"%s\";\n", (unsigned long long)sr->slot_index,
+                symtab_get(rule_names, sr->original_global_id));
+      }
+    }
+    fprintf(f, "    return NULL;\n");
+  }
+  fprintf(f, "  default: return NULL;\n");
+  fprintf(f, "  }\n");
+  fprintf(f, "}\n\n");
+
+  fprintf(f, "static void parse_error_collect(void* userdata, int64_t* scope_ids, size_t scope_ids_size, uint64_t* "
+             "col, int64_t slot_index, int64_t cp_offset, int64_t cp_size) {\n");
+  fprintf(f, "  (void)col; (void)cp_size;\n");
+  fprintf(f, "  FILE* out = (FILE*)userdata;\n");
+  fprintf(f, "  Location loc = tt_locate($parse_error_tt, (int32_t)cp_offset);\n");
+  fprintf(f, "  fprintf(out, \"%%d:%%d: \", loc.line, loc.col);\n");
+  fprintf(f, "  fprintf(out, \"[\");\n");
+  fprintf(f, "  for (size_t i = 0; i < scope_ids_size; i++) {\n");
+  fprintf(f, "    if (i > 0) fprintf(out, \" in \" );\n");
+  fprintf(f, "    fprintf(out, \"%%s\", scope_name(scope_ids[i]));\n");
+  fprintf(f, "  }\n");
+  fprintf(f, "  fprintf(out, \"]: syntax error\");\n");
+  fprintf(
+      f,
+      "  const char* rule = col && scope_ids_size > 0 ? rule_name_from_slot(scope_ids[0], col, slot_index) : NULL;\n");
+  fprintf(f, "  if (rule) fprintf(out, \" after %%s\", rule);\n");
+  fprintf(f, "  fprintf(out, \"\\n\");\n");
   fprintf(f, "}\n\n");
 
   // Token list printer: walk chunks recursively, scope tokens recurse with depth+1
@@ -560,15 +619,10 @@ static void _gen_example_c(FILE* f, const char* prefix, ParseState* ps) {
   fprintf(f, "    Location loc = tt_locate(tt, consumed);\n");
   fprintf(f, "    printf(\"%%d:%%d: token error\\n\", loc.line, loc.col);\n");
   fprintf(f, "  }\n");
-  // syntax error: PEG didn't consume all tokens in its chunk
-  fprintf(f, "  {\n");
-  fprintf(f, "    int64_t peg_end = res.parse_end_col;\n");
-  fprintf(f, "    int32_t n_tok = res.main.tc ? (int32_t)darray_size(res.main.tc->tokens) : 0;\n");
-  fprintf(f, "    if (n_tok > 0 && peg_end >= 0 && peg_end < n_tok) {\n");
-  fprintf(f, "      Token* err_tok = &res.main.tc->tokens[peg_end];\n");
-  fprintf(f, "      Location loc = tt_locate(tt, err_tok->cp_start);\n");
-  fprintf(f, "      printf(\"%%d:%%d: syntax error\\n\", loc.line, loc.col);\n");
-  fprintf(f, "    }\n");
+  // syntax error: collect PEG best-try diagnostics from errored chunks
+  fprintf(f, "  if (tt->has_parse_error && darray_size(tt->root->tokens) > 0) {\n");
+  fprintf(f, "    $parse_error_tt = tt;\n");
+  fprintf(f, "    tt_collect_parse_errors(tt, parse_error_collect, stdout);\n");
   fprintf(f, "  }\n");
 
   fprintf(f, "  printf(\"------\\n\");\n");
@@ -760,7 +814,7 @@ static int32_t _cmd_compile(int32_t argc, char** argv) {
       ret = -1;
       goto cleanup;
     }
-    _gen_example_c(fc, prefix, ps);
+    _gen_example_c(fc, prefix, ps, gen_input.scope_closures, memoize_mode);
     fclose(fc);
   }
 

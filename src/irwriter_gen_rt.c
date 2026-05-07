@@ -42,6 +42,9 @@ static bool _is_public_fn(const char* name) {
   if (strcmp(name, "tt_locate") == 0) {
     return true;
   }
+  if (strcmp(name, "tt_collect_parse_errors") == 0) {
+    return true;
+  }
   if (strcmp(name, "darray_size") == 0) {
     return true;
   }

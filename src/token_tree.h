@@ -1,5 +1,6 @@
 #pragma once
 
+#include <stddef.h>
 #include <stdint.h>
 
 typedef struct __attribute__((packed, aligned(8))) {
@@ -21,10 +22,10 @@ typedef struct __attribute__((packed, aligned(8))) TokenChunk {
   int64_t memoize_sizeof_col;
   int64_t memoize_slots_offset_in_i32;
   int64_t memoize_slots_size;
-  void* value;       // parser associate a value to it after parse, `struct ScopeXxx`
-  void* aux_value;   // parser associate another value to it
+  void* value;     // parser associate a value to it after parse, `struct ScopeXxx`
+  void* aux_value; // parser associate another value to it
   int64_t has_parse_error;
-  Tokens tokens;     // darray fat pointer
+  Tokens tokens; // darray fat pointer
 } TokenChunk;
 
 typedef TokenChunk* TokenChunks;
@@ -64,6 +65,12 @@ int64_t tt_current_size(TokenTree* tree);
 // get current chunk
 TokenChunk* tt_current(TokenTree* tree);
 void tt_mark_parse_error(TokenTree* tree);
+// for each token chunk with has_parse_error, invokes collect_func with the farthest memoized success.
+void tt_collect_parse_errors(TokenTree* tree,
+                             void (*collect_func)(void* userdata, int64_t* scope_ids, size_t scope_ids_size,
+                                                  uint64_t* col, int64_t slot_index, int64_t cp_offset,
+                                                  int64_t cp_size),
+                             void* userdata);
 // alloc sizeof_col * (token_count + 1) to value, +1 for sentinel column
 // sizeof_col must be multiple of 8, returned address must be 64-bit aligned
 void* tt_alloc_memoize_table(TokenChunk* chunk, int64_t sizeof_col, int64_t slots_offset_in_i32, int64_t slots_size);

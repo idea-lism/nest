@@ -1,4 +1,4 @@
-1:1: syntax error
+1:21: [main]: syntax error
 ------
 @lit.fn "fn"
 @ident "foo"

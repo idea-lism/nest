@@ -936,10 +936,11 @@ static bool _unit_has_hook(VpaUnit* u, int32_t hook_id, ParseState* ps) {
     if (u->action_units[i] < 0) {
       int32_t hid = -u->action_units[i];
       if (hid >= HOOK_ID_BUILTIN_COUNT) {
-        for (size_t e = 0; e < darray_size(ps->effect_decls); e++) {
-          if (ps->effect_decls[e].hook_id == hid) {
-            for (int32_t ef = 0; ef < (int32_t)darray_size(ps->effect_decls[e].effects); ef++) {
-              if (ps->effect_decls[e].effects[ef] < 0 && (-ps->effect_decls[e].effects[ef]) == hook_id) {
+        for (size_t effect_id = 0; effect_id < darray_size(ps->effect_decls); effect_id++) {
+          if (ps->effect_decls[effect_id].hook_id == hid) {
+            for (size_t decl_id = 0; decl_id < darray_size(ps->effect_decls[effect_id].effects); decl_id++) {
+              if (ps->effect_decls[effect_id].effects[decl_id] < 0 &&
+                  (-ps->effect_decls[effect_id].effects[decl_id]) == hook_id) {
                 return true;
               }
             }

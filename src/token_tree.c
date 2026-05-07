@@ -4,6 +4,7 @@
 #include "xmalloc.h"
 #include <assert.h>
 #include <stdbool.h>
+#include <stddef.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -129,6 +130,78 @@ TokenChunk* tt_current(TokenTree* tree) { return tree->current; }
 void tt_mark_parse_error(TokenTree* tree) {
   tree->has_parse_error = 1;
   tree->current->has_parse_error = 1;
+}
+
+static void _collect_scope_ids(TokenTree* tree, int32_t chunk_id, int64_t* scope_ids, size_t* scope_ids_size) {
+  if (chunk_id < 0) {
+    return;
+  }
+  TokenChunk* chunk = &tree->table[chunk_id];
+  scope_ids[(*scope_ids_size)++] = chunk->scope_id;
+  _collect_scope_ids(tree, chunk->parent_id, scope_ids, scope_ids_size);
+}
+
+void tt_collect_parse_errors(TokenTree* tree,
+                             void (*collect_func)(void* userdata, int64_t* scope_ids, size_t scope_ids_size,
+                                                  uint64_t* col, int64_t slot_index, int64_t cp_offset,
+                                                  int64_t cp_size),
+                             void* userdata) {
+  size_t chunk_count = darray_size(tree->table);
+  for (size_t chunk_id = 0; chunk_id < chunk_count; chunk_id++) {
+    TokenChunk* chunk = &tree->table[chunk_id];
+    if (!chunk->has_parse_error) {
+      continue;
+    }
+
+    int64_t best_reach = -1;
+    int64_t best_col = -1;
+    int64_t best_slot_index = -1;
+    if (chunk->value && chunk->memoize_sizeof_col > 0 && chunk->memoize_slots_size > 0) {
+      int64_t token_size = (int64_t)darray_size(chunk->tokens);
+      for (int64_t col = 0; col <= token_size; col++) {
+        int32_t* slots = (int32_t*)((uint8_t*)chunk->value + (size_t)col * (size_t)chunk->memoize_sizeof_col) +
+                         chunk->memoize_slots_offset_in_i32;
+        for (int64_t slot = 0; slot < chunk->memoize_slots_size; slot++) {
+          int32_t parsed_size = slots[slot];
+          if (parsed_size <= 0) {
+            continue;
+          }
+          int64_t reach = col + parsed_size;
+          if (reach > best_reach || (reach == best_reach && col > best_col)) {
+            best_reach = reach;
+            best_col = col;
+            best_slot_index = slot;
+          }
+        }
+      }
+    }
+
+    int32_t token_size = (int32_t)darray_size(chunk->tokens);
+    int64_t cp_offset = 0;
+    int64_t cp_size = 0;
+    if (best_reach >= 0) {
+      if (best_reach < token_size) {
+        cp_offset = chunk->tokens[best_reach].cp_start;
+        cp_size = chunk->tokens[best_reach].cp_size;
+      } else if (token_size > 0) {
+        Token* last = &chunk->tokens[token_size - 1];
+        cp_offset = last->cp_start + last->cp_size;
+      }
+    } else if (token_size > 0) {
+      cp_offset = chunk->tokens[0].cp_start;
+      cp_size = chunk->tokens[0].cp_size;
+    }
+
+    int64_t* scope_ids = XMALLOC((chunk_count > 0 ? chunk_count : 1) * sizeof(int64_t));
+    size_t scope_ids_size = 0;
+    _collect_scope_ids(tree, (int32_t)chunk_id, scope_ids, &scope_ids_size);
+    uint64_t* col_ptr = NULL;
+    if (best_reach >= 0 && best_col >= 0 && chunk->value && chunk->memoize_sizeof_col > 0) {
+      col_ptr = (uint64_t*)((uint8_t*)chunk->value + (size_t)best_col * (size_t)chunk->memoize_sizeof_col);
+    }
+    collect_func(userdata, scope_ids, scope_ids_size, col_ptr, best_slot_index, cp_offset, cp_size);
+    XFREE(scope_ids);
+  }
 }
 
 void* tt_alloc_memoize_table(TokenChunk* chunk, int64_t sizeof_col, int64_t slots_offset_in_i32, int64_t slots_size) {
