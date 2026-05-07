@@ -1,16 +1,13 @@
 ------
-@nl "
-"
+@nl "\x0a"
 @package "package"
 @identifier "demo"
-@nl "
-"
+@nl "\x0a"
 @import "import"
 @identifier "demo"
 @dot "."
 @identifier "Foo"
-@nl "
-"
+@nl "\x0a"
 ------
 main
   file
@@ -31,6 +28,8 @@ main
         qualified_name
           simple_id
             @identifier
+          op_dot
+            @dot
           simple_id
             @identifier
         semi

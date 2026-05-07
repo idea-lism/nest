@@ -18,6 +18,7 @@ main
         @colon
         value
           @number
+      @comma
       pair
         @ident
         @colon

@@ -224,10 +224,10 @@ static void _gen_loader(HeaderWriter* hw, const char* rule_name, RuleScopeEntry*
         ScopedRule* wrapper = nf->wrapper_name ? _find_scoped_rule_by_name(cl, nf->wrapper_name) : NULL;
         ScopedUnit* body = wrapper ? &wrapper->body : NULL;
         ScopedUnit* lhs = NULL;
-        if (body && (body->kind == SCOPED_UNIT_STAR || body->kind == SCOPED_UNIT_PLUS)) {
-          lhs = body->as.interlace.lhs;
-        } else if (body && body->kind == SCOPED_UNIT_MAYBE) {
+        if (body && body->kind == SCOPED_UNIT_MAYBE) {
           lhs = body->as.base;
+        } else if (body && (body->kind == SCOPED_UNIT_STAR || body->kind == SCOPED_UNIT_PLUS)) {
+          lhs = body->as.interlace.lhs;
         }
         if (lhs && lhs->kind == SCOPED_UNIT_TERM) {
           // term LHS: has_elem checks term_id, get_next advances by 1
@@ -248,7 +248,10 @@ static void _gen_loader(HeaderWriter* hw, const char* rule_name, RuleScopeEntry*
           hdwriter_printf(hw, "$1.%s.lhs_term_id = 0;\n", nf->name);
         }
         // RHS info for interlaced links
-        if (nf->rhs_row == PEG_ROW_TERM) {
+        if (body && body->kind == SCOPED_UNIT_MAYBE) {
+          hdwriter_printf(hw, "$1.%s.rhs_row = %d; $1.%s.rhs_bit_index = 0; $1.%s.rhs_bit_mask = 0;\n", nf->name,
+                          PEG_ROW_NONE, nf->name, nf->name);
+        } else if (nf->rhs_row == PEG_ROW_TERM) {
           hdwriter_printf(hw, "$1.%s.rhs_row = %d; $1.%s.rhs_bit_index = 0; $1.%s.rhs_bit_mask = 0;\n", nf->name,
                           PEG_ROW_TERM, nf->name, nf->name);
         } else if (nf->rhs_row >= 0 && body && (body->kind == SCOPED_UNIT_STAR || body->kind == SCOPED_UNIT_PLUS)) {

@@ -4,8 +4,6 @@
   @lparen "("
   @rparen ")"
   @lcurl "{"
-  @nl "
-"
   @val "val"
   @identifier "inc"
   @assignment "="
@@ -18,8 +16,6 @@
     @add "+"
     @integer_literal "1"
     @rcurl "}"
-  @nl "
-"
   @val "val"
   @identifier "twice"
   @assignment "="
@@ -28,8 +24,6 @@
     @colon ":"
     @identifier "Int"
     @arrow "->"
-    @nl "
-"
     @identifier "inc"
       @lparen "("
       @identifier "inc"
@@ -37,14 +31,10 @@
         @identifier "y"
         @rparen ")"
       @rparen ")"
-    @nl "
-"
     @rcurl "}"
-  @nl "
-"
+  @nl "\x0a"
   @rcurl "}"
-@nl "
-"
+@nl "\x0a"
 ------
 main
   file
@@ -65,9 +55,6 @@ main
                 @lcurl
                 block_content
                   statement_content
-                    block_item
-                      nl
-                        @nl
                     block_item
                       statement
                         declaration
@@ -119,9 +106,6 @@ main
                                                           @integer_literal
                                       @rcurl
                     block_item
-                      nl
-                        @nl
-                    block_item
                       statement
                         declaration
                           prop_decl
@@ -154,9 +138,6 @@ main
                                               @arrow
                                           statement_content
                                             block_item
-                                              nl
-                                                @nl
-                                            block_item
                                               statement
                                                 expr
                                                   postfix_expr
@@ -185,9 +166,6 @@ main
                                                                                 @identifier
                                                                     @rparen
                                                         @rparen
-                                            block_item
-                                              nl
-                                                @nl
                                       @rcurl
                     block_item
                       nl

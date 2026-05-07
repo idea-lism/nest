@@ -183,7 +183,7 @@ typedef struct {
   int64_t row; // absolute i32 row in { i64 bits[]; i32 slots[] }
 } PegRef;
 
-// for multiplier/interlaced rules, similar to
+// for multiplier/interlaced rules
 typedef struct {
   TokenChunk* tc;
   int64_t col;
@@ -195,7 +195,7 @@ typedef struct {
 
   int64_t rhs_bit_index;
   int64_t rhs_bit_mask;
-  int64_t rhs_row; // >= 0: call separator (read slot), -1: no separator, -2: term separator (advance by 1)
+  int64_t rhs_row; // >= 0: call separator (read slot), -1: no separator, -2: term separator
 } PegLink;
 
 typedef Node_{rule_name} {

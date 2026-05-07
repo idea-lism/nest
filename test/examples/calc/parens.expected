@@ -16,9 +16,13 @@ main
           term
             factor
               @number
+          addop
+            @plus
           term
             factor
               @number
         @rparen
+      mulop
+        @star
       factor
         @number

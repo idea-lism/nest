@@ -1,11 +1,9 @@
 ------
 @shebang_line "#!/usr/bin/env kotlin"
-@nl "
-"
+@nl "\x0a"
 @package "package"
 @identifier "demo"
-@nl "
-"
+@nl "\x0a"
 @val "val"
 @identifier "a"
 @colon ":"
@@ -13,21 +11,17 @@
 @assignment "="
 @integer_literal "1"
 @add "+"
-@nl "
-"
 @integer_literal "2"
 @mult "*"
 @integer_literal "3"
-@nl "
-"
+@nl "\x0a"
 @fun "fun"
 @identifier "b"
   @lparen "("
   @rparen ")"
 @assignment "="
 @identifier "a"
-@nl "
-"
+@nl "\x0a"
 ------
 main
   file
@@ -75,8 +69,6 @@ main
                       op_add
                         @add
                     nl_star
-                      nl
-                        @nl
                     postfix_expr
                       primary_expr
                         literal

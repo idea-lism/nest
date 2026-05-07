@@ -10,8 +10,12 @@ main
     term
       factor
         @number
+    addop
+      @plus
     term
       factor
         @number
+      mulop
+        @star
       factor
         @number

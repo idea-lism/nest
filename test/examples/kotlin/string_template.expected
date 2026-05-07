@@ -4,8 +4,6 @@
   @lparen "("
   @rparen ")"
   @lcurl "{"
-  @nl "
-"
   @val "val"
   @identifier "s"
   @assignment "="
@@ -14,8 +12,6 @@
     @line_str_ref "$foo"
     @line_str_text " b"
     @quote_close """
-  @nl "
-"
   @val "val"
   @identifier "t"
   @assignment "="
@@ -24,11 +20,9 @@
     @line_str_ref "$bar"
     @line_str_text " text"
     @quote_close """
-  @nl "
-"
+  @nl "\x0a"
   @rcurl "}"
-@nl "
-"
+@nl "\x0a"
 ------
 main
   file
@@ -49,9 +43,6 @@ main
                 @lcurl
                 block_content
                   statement_content
-                    block_item
-                      nl
-                        @nl
                     block_item
                       statement
                         declaration
@@ -75,9 +66,6 @@ main
                                       line_part
                                         @line_str_text
                                       @quote_close
-                    block_item
-                      nl
-                        @nl
                     block_item
                       statement
                         declaration

@@ -1,29 +1,20 @@
 ------
 @shebang_line "#!/usr/bin/env kotlin"
-@nl "
-"
+@nl "\x0a"
 @package "package"
 @identifier "demo"
-@nl "
-"
-@nl "
-"
 @class "class"
 @identifier "Box"
   @lcurl "{"
-  @nl "
-"
   @fun "fun"
   @value "value"
     @lparen "("
     @rparen ")"
   @assignment "="
   @integer_literal "1"
-  @nl "
-"
+  @nl "\x0a"
   @rcurl "}"
-@nl "
-"
+@nl "\x0a"
 ------
 main
   file
@@ -40,11 +31,6 @@ main
           qualified_name
             simple_id
               @identifier
-          semi
-            @nl
-            nl_star
-              nl
-                @nl
         top_decl
           declaration
             class_decl
@@ -57,9 +43,6 @@ main
                   @lcurl
                   block_content
                     statement_content
-                      block_item
-                        nl
-                          @nl
                       block_item
                         statement
                           declaration

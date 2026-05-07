@@ -18,6 +18,8 @@ main
             atom
               value
                 @ident
+            addop
+              @plus
             atom
               value
                 @ident

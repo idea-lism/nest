@@ -21,11 +21,17 @@ main
         term
           factor
             @number
+        addop
+          @plus
         term
           factor
             @number
+          mulop
+            @star
           factor
             @number
+        addop
+          @minus
         term
           factor
             @number

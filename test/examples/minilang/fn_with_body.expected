@@ -22,6 +22,7 @@ main
       @lparen
       param
         @ident
+      @comma
       param
         @ident
       @rparen
@@ -34,6 +35,8 @@ main
               term
                 factor
                   @ident
+              addop
+                @plus
               term
                 factor
                   @ident

@@ -29,9 +29,11 @@ main
             @lbracket
             value
               @number
+            @comma
             value
               @number
             @rbracket
+      @comma
       pair
         @ident
         @colon

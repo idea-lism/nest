@@ -244,6 +244,31 @@ static char* _field_base(Symtab* tokens, Symtab* scope_names, Symtab* rule_names
 }
 
 // Emit print statements for children of a SEQ.
+static void _gen_print_interlace_rhs(FILE* f, const char* prefix, PegUnit* u, Symtab* tokens, Symtab* scope_names,
+                                     Symtab* rule_names) {
+  if (!u->interlace_rhs_kind) {
+    return;
+  }
+  fprintf(f, "      PegLink $next = $l; %s_get_next(&$next);\n", prefix);
+  fprintf(f, "      if (%s_has_elem(&$next)) {\n", prefix);
+  if (u->interlace_rhs_kind == PEG_TERM) {
+    bool is_scope = _is_scope_term_ex(scope_names, u->interlace_rhs_id);
+    const char* tname = _term_name_ex(tokens, scope_names, u->interlace_rhs_id);
+    if (is_scope) {
+      int32_t rid = symtab_find(rule_names, tname);
+      if (rid >= 0) {
+        fprintf(f, "        print$%s(%s_get_rhs(&$l), depth + 1);\n", tname, prefix);
+      }
+    } else {
+      fprintf(f, "        $indent(depth + 1); printf(\"%s\\n\");\n", tname);
+    }
+  } else if (u->interlace_rhs_kind == PEG_CALL) {
+    const char* callee = symtab_get(rule_names, u->interlace_rhs_id);
+    fprintf(f, "        print$%s(%s_get_rhs(&$l), depth + 1);\n", callee, prefix);
+  }
+  fprintf(f, "      }\n");
+}
+
 static void _gen_print_children(FILE* f, const char* prefix, PegUnit* children, int32_t size, Symtab* tokens,
                                 Symtab* scope_names, Symtab* rule_names, ExDedup* fd) {
   for (int32_t i = 0; i < size; i++) {
@@ -252,8 +277,8 @@ static void _gen_print_children(FILE* f, const char* prefix, PegUnit* children, 
     if (u->lookahead) {
       continue;
     }
-    bool is_link = (u->multiplier == '*' || u->multiplier == '+');
-    bool is_opt = (u->multiplier == '?');
+    bool is_link = (u->multiplier == '?' || u->multiplier == '*' || u->multiplier == '+');
+    bool is_many = (u->multiplier == '*' || u->multiplier == '+');
 
     if (u->kind == PEG_TERM) {
       char* base = _field_base(tokens, scope_names, rule_names, u);
@@ -264,16 +289,28 @@ static void _gen_print_children(FILE* f, const char* prefix, PegUnit* children, 
         int32_t rid = symtab_find(rule_names, tname);
         if (rid >= 0) {
           if (is_link) {
-            fprintf(f, "    for (PegLink $l = $n.%s; %s_has_elem(&$l); %s_get_next(&$l))\n", fname, prefix, prefix);
+            if (is_many) {
+              fprintf(f, "    for (PegLink $l = $n.%s; %s_has_elem(&$l); %s_get_next(&$l)) {\n", fname, prefix,
+                      prefix);
+            } else {
+              fprintf(f, "    { PegLink $l = $n.%s; if (%s_has_elem(&$l)) {\n", fname, prefix);
+            }
             fprintf(f, "      print$%s(%s_get_lhs(&$l), depth + 1);\n", tname, prefix);
+            _gen_print_interlace_rhs(f, prefix, u, tokens, scope_names, rule_names);
+            fprintf(f, is_many ? "    }\n" : "    }}\n");
           } else {
             fprintf(f, "    print$%s($n.%s, depth + 1);\n", tname, fname);
           }
         }
       } else if (is_link) {
-        fprintf(f, "    for (PegLink $l = $n.%s; %s_has_elem(&$l); %s_get_next(&$l)) {\n", fname, prefix, prefix);
+        if (is_many) {
+          fprintf(f, "    for (PegLink $l = $n.%s; %s_has_elem(&$l); %s_get_next(&$l)) {\n", fname, prefix, prefix);
+        } else {
+          fprintf(f, "    { PegLink $l = $n.%s; if (%s_has_elem(&$l)) {\n", fname, prefix);
+        }
         fprintf(f, "      $indent(depth + 1); printf(\"%s\\n\");\n", tname);
-        fprintf(f, "    }\n");
+        _gen_print_interlace_rhs(f, prefix, u, tokens, scope_names, rule_names);
+        fprintf(f, is_many ? "    }\n" : "    }}\n");
       } else {
         fprintf(f, "    $indent(depth + 1); printf(\"%s\\n\");\n", tname);
       }
@@ -283,11 +320,17 @@ static void _gen_print_children(FILE* f, const char* prefix, PegUnit* children, 
       const char* callee = symtab_get(rule_names, u->id);
       char* fname = _exd_next(fd, callee);
       if (is_link) {
-        fprintf(f, "    for (PegLink $l = $n.%s; %s_has_elem(&$l); %s_get_next(&$l))\n", fname, prefix, prefix);
-        fprintf(f, "      print$%s(%s_get_lhs(&$l), depth + 1);\n", callee, prefix);
-      } else if (is_opt) {
-        fprintf(f, "    if (%s_peg_size($n.%s) > 0)\n", prefix, fname);
-        fprintf(f, "      print$%s($n.%s, depth + 1);\n", callee, fname);
+        if (is_many) {
+          fprintf(f, "    for (PegLink $l = $n.%s; %s_has_elem(&$l); %s_get_next(&$l)) {\n", fname, prefix, prefix);
+        } else {
+          fprintf(f, "    { PegLink $l = $n.%s; if (%s_has_elem(&$l)) {\n", fname, prefix);
+        }
+        fprintf(f, "      PegRef $lhs = %s_get_lhs(&$l);\n", prefix);
+        fprintf(f, "      if (%s_peg_size($lhs) > 0) {\n", prefix);
+        fprintf(f, "        print$%s($lhs, depth + 1);\n", callee);
+        _gen_print_interlace_rhs(f, prefix, u, tokens, scope_names, rule_names);
+        fprintf(f, "      }\n");
+        fprintf(f, is_many ? "    }\n" : "    }}\n");
       } else {
         fprintf(f, "    print$%s($n.%s, depth + 1);\n", callee, fname);
       }
@@ -429,36 +472,54 @@ static void _gen_example_c(FILE* f, const char* prefix, ParseState* ps) {
     } else if (body->kind == PEG_TERM) {
       bool is_scope = _is_scope_term_ex(scope_names, body->id);
       const char* tname = _term_name_ex(tokens, scope_names, body->id);
-      bool is_link = (body->multiplier == '*' || body->multiplier == '+');
+      bool is_link = (body->multiplier == '?' || body->multiplier == '*' || body->multiplier == '+');
+      bool is_many = (body->multiplier == '*' || body->multiplier == '+');
       char* san = _sanitize_ex(tname);
       if (is_scope) {
         int32_t rid = symtab_find(rule_names, tname);
         if (rid >= 0) {
           if (is_link) {
-            fprintf(f, "  for (PegLink $l = $n.%s; %s_has_elem(&$l); %s_get_next(&$l))\n", san, prefix, prefix);
+            if (is_many) {
+              fprintf(f, "  for (PegLink $l = $n.%s; %s_has_elem(&$l); %s_get_next(&$l)) {\n", san, prefix, prefix);
+            } else {
+              fprintf(f, "  { PegLink $l = $n.%s; if (%s_has_elem(&$l)) {\n", san, prefix);
+            }
             fprintf(f, "    print$%s(%s_get_lhs(&$l), depth + 1);\n", tname, prefix);
+            _gen_print_interlace_rhs(f, prefix, body, tokens, scope_names, rule_names);
+            fprintf(f, is_many ? "  }\n" : "  }}\n");
           } else {
             fprintf(f, "  print$%s($n.%s, depth + 1);\n", tname, san);
           }
         }
       } else if (is_link) {
-        fprintf(f, "  for (PegLink $l = $n.%s; %s_has_elem(&$l); %s_get_next(&$l)) {\n", san, prefix, prefix);
+        if (is_many) {
+          fprintf(f, "  for (PegLink $l = $n.%s; %s_has_elem(&$l); %s_get_next(&$l)) {\n", san, prefix, prefix);
+        } else {
+          fprintf(f, "  { PegLink $l = $n.%s; if (%s_has_elem(&$l)) {\n", san, prefix);
+        }
         fprintf(f, "    $indent(depth + 1); printf(\"%s\\n\");\n", tname);
-        fprintf(f, "  }\n");
+        _gen_print_interlace_rhs(f, prefix, body, tokens, scope_names, rule_names);
+        fprintf(f, is_many ? "  }\n" : "  }}\n");
       } else {
         fprintf(f, "  $indent(depth + 1); printf(\"%s\\n\");\n", tname);
       }
       XFREE(san);
     } else if (body->kind == PEG_CALL) {
       const char* callee = symtab_get(rule_names, body->id);
-      bool is_link = (body->multiplier == '*' || body->multiplier == '+');
-      bool is_opt = (body->multiplier == '?');
+      bool is_link = (body->multiplier == '?' || body->multiplier == '*' || body->multiplier == '+');
+      bool is_many = (body->multiplier == '*' || body->multiplier == '+');
       if (is_link) {
-        fprintf(f, "  for (PegLink $l = $n.%s; %s_has_elem(&$l); %s_get_next(&$l))\n", callee, prefix, prefix);
-        fprintf(f, "    print$%s(%s_get_lhs(&$l), depth + 1);\n", callee, prefix);
-      } else if (is_opt) {
-        fprintf(f, "  if (%s_peg_size($n.%s) > 0)\n", prefix, callee);
-        fprintf(f, "    print$%s($n.%s, depth + 1);\n", callee, callee);
+        if (is_many) {
+          fprintf(f, "  for (PegLink $l = $n.%s; %s_has_elem(&$l); %s_get_next(&$l)) {\n", callee, prefix, prefix);
+        } else {
+          fprintf(f, "  { PegLink $l = $n.%s; if (%s_has_elem(&$l)) {\n", callee, prefix);
+        }
+        fprintf(f, "    PegRef $lhs = %s_get_lhs(&$l);\n", prefix);
+        fprintf(f, "    if (%s_peg_size($lhs) > 0) {\n", prefix);
+        fprintf(f, "      print$%s($lhs, depth + 1);\n", callee);
+        _gen_print_interlace_rhs(f, prefix, body, tokens, scope_names, rule_names);
+        fprintf(f, "    }\n");
+        fprintf(f, is_many ? "  }\n" : "  }}\n");
       } else {
         fprintf(f, "  print$%s($n.%s, depth + 1);\n", callee, callee);
       }

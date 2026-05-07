@@ -574,7 +574,7 @@ static void _attach_wrapper(NodeField* nf, ScopeClosure* cl, ScopedRule* wrapper
   }
   int32_t row = _slot_row(cl, wrapper);
   if (nf->is_link) {
-    // `*`/`+`: the wrapper is also the thing we iterate over.
+    // `?`/`*`/`+`: the wrapper is the thing we iterate over.
     nf->ref_row = row;
     nf->wrapper_name =
         symtab_get(&cl->scoped_rule_names, (int32_t)(wrapper - cl->scoped_rules) + cl->scoped_rule_names.start_num);
@@ -600,7 +600,7 @@ static void _build_child_fields(PegAnalyzeInput* input, ScopeClosure* cl, ScopeC
     if (u->lookahead) {
       continue;
     }
-    bool is_link = (u->multiplier == '*' || u->multiplier == '+');
+    bool is_link = (u->multiplier == '?' || u->multiplier == '*' || u->multiplier == '+');
     bool needs_wrapper = is_link || u->multiplier == '?' || u->kind == PEG_BRANCHES;
     bool is_last = (i == child_size - 1);
     size_t size_before = darray_size(*out);

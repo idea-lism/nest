@@ -23,14 +23,22 @@ main
             term
               factor
                 @ident
+            addop
+              @plus
             term
               factor
                 @ident
+              mulop
+                @star
               factor
                 @ident
+            addop
+              @minus
             term
               factor
                 @ident
+              mulop
+                @slash
               factor
                 @ident
       @semi
