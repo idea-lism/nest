@@ -1016,6 +1016,101 @@ TEST(test_vpa_scope_switch_exec) {
 
   _free_gen_input(&input);
 }
+TEST(test_vpa_parse_error_does_not_stop_lexing_exec) {
+  VpaGenInput input = _empty_input();
+
+  int32_t tok_a_id = symtab_intern(&input.tokens, "@tok_a");
+  int32_t tok_b_id = symtab_intern(&input.tokens, "@tok_b");
+  int32_t tok_lbrace_id = symtab_intern(&input.tokens, "@lbrace");
+  int32_t tok_rbrace_id = symtab_intern(&input.tokens, "@rbrace");
+
+  VpaScope main_scope = {.scope_id = 0, .name = strdup("main"), .leader = {0}};
+  main_scope.children = darray_new(sizeof(VpaUnit), 0);
+
+  VpaUnit call_block = {.kind = VPA_CALL, .call_scope_id = 1, .action_units = NULL};
+  darray_push(main_scope.children, call_block);
+
+  VpaUnit u_a = {.kind = VPA_RE, .re = re_ir_new(), .action_units = _make_au_tok(tok_a_id)};
+  u_a.re = re_ir_emit_ch(u_a.re, 'a');
+  darray_push(main_scope.children, u_a);
+
+  darray_push(input.scopes, main_scope);
+
+  VpaScope block_scope = {.scope_id = 1, .name = strdup("block"), .has_parser = true};
+  block_scope.leader = (VpaUnit){.kind = VPA_RE, .re = re_ir_new()};
+  block_scope.leader.re = re_ir_emit_ch(block_scope.leader.re, '{');
+  block_scope.leader.action_units = darray_new(sizeof(int32_t), 0);
+  int32_t begin_hook = -HOOK_ID_BEGIN;
+  darray_push(block_scope.leader.action_units, begin_hook);
+  darray_push(block_scope.leader.action_units, tok_lbrace_id);
+
+  block_scope.children = darray_new(sizeof(VpaUnit), 0);
+  VpaUnit u_b = {.kind = VPA_RE, .re = re_ir_new(), .action_units = _make_au_tok(tok_b_id)};
+  u_b.re = re_ir_emit_ch(u_b.re, 'b');
+  darray_push(block_scope.children, u_b);
+
+  VpaActionUnits end_au = darray_new(sizeof(int32_t), 0);
+  darray_push(end_au, tok_rbrace_id);
+  int32_t end_hook = -HOOK_ID_END;
+  darray_push(end_au, end_hook);
+  VpaUnit u_close = {.kind = VPA_RE, .re = re_ir_new(), .action_units = end_au};
+  u_close.re = re_ir_emit_ch(u_close.re, '}');
+  darray_push(block_scope.children, u_close);
+
+  darray_push(input.scopes, block_scope);
+
+  _run_vpa_gen(&input, BUILD_DIR "/test_vpa_parse_error_continues.h", BUILD_DIR "/test_vpa_parse_error_continues.ll");
+
+  const char* driver_path = BUILD_DIR "/test_vpa_parse_error_continues_driver.c";
+  FILE* df = fopen(driver_path, "w");
+  assert(df);
+  fprintf(df, "#include <assert.h>\n"
+              "#include <stdint.h>\n"
+              "#include \"test_vpa_parse_error_continues.h\"\n"
+              "\n"
+              "int32_t nest_next_cp(void* userdata) { return ustr_iter_next((UstrIter*)userdata); }\n"
+              "int32_t tt_depth(void* tt) { (void)tt; return 1; }\n"
+              "void tt_tree_del(void* tt, int32_t fv) { (void)tt; (void)fv; }\n"
+              "void darray_del_traced(void* a, void* c, int l) { (void)a; (void)c; (void)l; }\n"
+              "struct { int64_t a; int64_t b; } parse_main(void* tt, void* sp) { (void)tt; (void)sp; return "
+              "(typeof(parse_main(0,0))){0,0}; }\n"
+              "struct { int64_t a; int64_t b; } parse_block(void* tt, void* sp) { (void)tt; (void)sp; return "
+              "(typeof(parse_block(0,0))){1,1}; }\n"
+              "\n"
+              "int main(void) {\n"
+              "  char* us = ustr_new(4, \"{b}a\");\n"
+              "  ParseContext ctx = {0};\n"
+              "  ParseResult res = nest_parse(&ctx, us);\n"
+              "  TokenTree* tt = res.tt;\n"
+              "  assert(res.parse_end_col == -1);\n"
+              "  assert(res.errors == 0);\n"
+              "  assert(tt->has_parse_error == 1);\n"
+              "  assert((int32_t)darray_size(tt->root->tokens) == 2);\n"
+              "  assert(tt->root->tokens[0].term_id == SCOPE_BLOCK);\n"
+              "  assert(tt->root->tokens[1].term_id == TOK_TOK_A);\n"
+              "  assert(tt->root->tokens[1].cp_start == 3);\n"
+              "  TokenChunk* bc = &tt->table[tt->root->tokens[0].chunk_id];\n"
+              "  assert(bc->has_parse_error == 1);\n"
+              "  assert((int32_t)darray_size(bc->tokens) == 3);\n"
+              "  nest_cleanup(&res);\n"
+              "  ustr_del(us);\n"
+              "  return 0;\n"
+              "}\n");
+  fclose(df);
+
+  char cmd[1024];
+  snprintf(cmd, sizeof(cmd), "%s %s %s -o %s", compat_llvm_cc(), driver_path,
+           BUILD_DIR "/test_vpa_parse_error_continues.ll", BUILD_DIR "/test_vpa_parse_error_continues_bin");
+  int ret = _run_cmd(cmd);
+  assert(ret == 0);
+
+  snprintf(cmd, sizeof(cmd), "%s", BUILD_DIR "/test_vpa_parse_error_continues_bin");
+  ret = _run_cmd(cmd);
+  assert(ret == 0);
+
+  _free_gen_input(&input);
+}
+
 TEST(test_vpa_empty_action_in_scope_exec) {
   VpaGenInput input = _empty_input();
 
@@ -1162,6 +1257,7 @@ int main(void) {
 
   // scope switching tests
   RUN(test_vpa_scope_switch_exec);
+  RUN(test_vpa_parse_error_does_not_stop_lexing_exec);
   RUN(test_vpa_empty_action_in_scope_exec);
 
   printf("all ok\n");

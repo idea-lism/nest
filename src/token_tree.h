@@ -18,8 +18,12 @@ typedef Token* Tokens;
 typedef struct __attribute__((packed, aligned(8))) TokenChunk {
   int32_t scope_id;
   int32_t parent_id; // parent chunk_id, -1 for root chunk, can be used by "pop"
+  int64_t memoize_sizeof_col;
+  int64_t memoize_slots_offset_in_i32;
+  int64_t memoize_slots_size;
   void* value;       // parser associate a value to it after parse, `struct ScopeXxx`
   void* aux_value;   // parser associate another value to it
+  int64_t has_parse_error;
   Tokens tokens;     // darray fat pointer
 } TokenChunk;
 
@@ -31,6 +35,7 @@ typedef struct __attribute__((packed, aligned(8))) TokenTree {
   TokenChunk* root;
   TokenChunk* current;
   TokenChunks table; // darray fat pointer
+  int64_t has_parse_error;
 } TokenTree;
 
 // 1-based line and column from tt_locate
@@ -58,6 +63,7 @@ TokenChunk* tt_pop(TokenTree* tree, int32_t cp_end);
 int64_t tt_current_size(TokenTree* tree);
 // get current chunk
 TokenChunk* tt_current(TokenTree* tree);
+void tt_mark_parse_error(TokenTree* tree);
 // alloc sizeof_col * (token_count + 1) to value, +1 for sentinel column
 // sizeof_col must be multiple of 8, returned address must be 64-bit aligned
-void* tt_alloc_memoize_table(TokenChunk* chunk, int64_t sizeof_col);
+void* tt_alloc_memoize_table(TokenChunk* chunk, int64_t sizeof_col, int64_t slots_offset_in_i32, int64_t slots_size);

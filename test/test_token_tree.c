@@ -2,6 +2,7 @@
 #include "../src/token_tree.h"
 #include "../src/ustr.h"
 #include <assert.h>
+#include <stddef.h>
 #include <stdio.h>
 #include <string.h>
 
@@ -14,6 +15,24 @@
   } while (0)
 
 // --- Tree creation / deletion ---
+
+TEST(test_layout_matches_spec) {
+  assert(offsetof(TokenChunk, scope_id) == 0);
+  assert(offsetof(TokenChunk, parent_id) == 4);
+  assert(offsetof(TokenChunk, memoize_sizeof_col) == 8);
+  assert(offsetof(TokenChunk, memoize_slots_offset_in_i32) == 16);
+  assert(offsetof(TokenChunk, memoize_slots_size) == 24);
+  assert(offsetof(TokenChunk, value) == 32);
+  assert(offsetof(TokenChunk, aux_value) == 40);
+  assert(offsetof(TokenChunk, has_parse_error) == 48);
+  assert(offsetof(TokenChunk, tokens) == 56);
+  assert(offsetof(TokenTree, src) == 0);
+  assert(offsetof(TokenTree, newline_map) == 8);
+  assert(offsetof(TokenTree, root) == 16);
+  assert(offsetof(TokenTree, current) == 24);
+  assert(offsetof(TokenTree, table) == 32);
+  assert(offsetof(TokenTree, has_parse_error) == 40);
+}
 
 TEST(test_tree_new) {
   char* s = ustr_new(5, "hello");
@@ -239,6 +258,7 @@ TEST(test_tree_structure) {
 int main(void) {
   printf("test_token_chunk:\n");
 
+  RUN(test_layout_matches_spec);
   RUN(test_tree_new);
 
   RUN(test_add_single);

@@ -6,6 +6,7 @@
 #include "xmalloc.h"
 
 #include <assert.h>
+#include <stddef.h>
 #include <stdarg.h>
 #include <stdio.h>
 #include <string.h>
@@ -591,7 +592,7 @@ static MemoizeDenyFn _memoize_deny_fns[] = {
 // `{chunk_size, chunk_size}` — i.e., "successfully consumed every token".
 static void _gen_todo_scope_ir(IrWriter* w, ScopeClosure* cl) {
   irwriter_declare(w, "ptr", "tt_current", "ptr");
-  irwriter_declare(w, "ptr", "tt_alloc_memoize_table", "ptr, i64");
+  irwriter_declare(w, "ptr", "tt_alloc_memoize_table", "ptr, i64, i64, i64");
   irwriter_declare(w, "i64", "tt_current_size", "ptr");
 
   int64_t sizeof_col = cl->bits_bucket_size * 8 + _aligned_slots_size(cl->slots_size) * 4;
@@ -603,7 +604,9 @@ static void _gen_todo_scope_ir(IrWriter* w, ScopeClosure* cl) {
 
   (void)irwriter_imm(w, "%stack_ptr_in"); // unused but part of signature
   IrVal tc = irwriter_call_retf(w, "ptr", "tt_current", "ptr %%tt");
-  (void)irwriter_call_retf(w, "ptr", "tt_alloc_memoize_table", "ptr %%r%d, i64 %lld", (int)tc, (long long)sizeof_col);
+  (void)irwriter_call_retf(w, "ptr", "tt_alloc_memoize_table", "ptr %%r%d, i64 %lld, i64 %lld, i64 %lld", (int)tc,
+                            (long long)sizeof_col, (long long)(cl->bits_bucket_size * 2),
+                            (long long)cl->slots_size);
   IrVal sz = irwriter_call_retf(w, "i64", "tt_current_size", "ptr %%tt");
   IrVal r0 = irwriter_insertvalue(w, "{i64, i64}", -1, "i64", sz, 0);
   IrVal r1 = irwriter_insertvalue(w, "{i64, i64}", r0, "i64", sz, 1);
@@ -624,7 +627,7 @@ static void _gen_scope_ir(IrWriter* w, ScopeClosure* cl, int memoize_mode) {
   int64_t sizeof_col = cl->bits_bucket_size * 8 + _aligned_slots_size(cl->slots_size) * 4;
 
   irwriter_declare(w, "ptr", "tt_current", "ptr");
-  irwriter_declare(w, "ptr", "tt_alloc_memoize_table", "ptr, i64");
+  irwriter_declare(w, "ptr", "tt_alloc_memoize_table", "ptr, i64, i64, i64");
 
   char* fn_name = _asprintf("parse_%s", cl->scope_name);
   irwriter_define_startf(w, fn_name, "{i64, i64} @%s(ptr %%tt, ptr %%stack_ptr_in) sspreq", fn_name);
@@ -632,8 +635,9 @@ static void _gen_scope_ir(IrWriter* w, ScopeClosure* cl, int memoize_mode) {
   irwriter_dbg(w, cl->source_line, cl->source_col);
 
   IrVal tc = irwriter_call_retf(w, "ptr", "tt_current", "ptr %%tt");
-  IrVal peg_table =
-      irwriter_call_retf(w, "ptr", "tt_alloc_memoize_table", "ptr %%r%d, i64 %lld", (int)tc, (long long)sizeof_col);
+  IrVal peg_table = irwriter_call_retf(w, "ptr", "tt_alloc_memoize_table", "ptr %%r%d, i64 %lld, i64 %lld, i64 %lld",
+                                       (int)tc, (long long)sizeof_col, (long long)(cl->bits_bucket_size * 2),
+                                       (long long)cl->slots_size);
 
   irwriter_raw(w, "  %col = alloca i64\n");
   IrVal col = irwriter_imm(w, "%col");
@@ -673,7 +677,8 @@ static void _gen_scope_ir(IrWriter* w, ScopeClosure* cl, int memoize_mode) {
     }
   }
 
-  irwriter_rawf(w, "  %%r%d = getelementptr i8, ptr %%r%d, i64 24\n", irwriter_next_reg(w), (int)tc);
+  irwriter_rawf(w, "  %%r%d = getelementptr i8, ptr %%r%d, i64 %zu\n", irwriter_next_reg(w), (int)tc,
+                offsetof(TokenChunk, tokens));
   IrVal tokens = irwriter_load(w, "ptr", (IrVal)(irwriter_next_reg(w) - 1));
 
   PegIrCtx ctx = {

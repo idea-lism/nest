@@ -3,10 +3,12 @@
 #include "re.h"
 #include "re_ir.h"
 #include "symtab.h"
+#include "token_tree.h"
 #include "xmalloc.h"
 
 #include <assert.h>
 #include <ctype.h>
+#include <stddef.h>
 #include <stdio.h>
 #include <string.h>
 
@@ -187,6 +189,7 @@ static void _gen_dispatch(VpaGenInput* input, IrWriter* w, Actions actions) {
   irwriter_declare(w, "void", "tt_add", "i8*, i32, i32, i32, i32");
   irwriter_declare(w, "i8*", "tt_push_assoc", "i8*, i32");
   irwriter_declare(w, "i8*", "tt_pop", "i8*, i32");
+  irwriter_declare(w, "void", "tt_mark_parse_error", "ptr");
   irwriter_declare(w, "i64", "tt_current_size", "ptr");
 
   // pre-declare PEG parse functions for scopes with .end
@@ -280,17 +283,8 @@ static void _gen_dispatch(VpaGenInput* input, IrWriter* w, Actions actions) {
             IrLabel parse_fail_bb = irwriter_label(w);
             irwriter_br_cond(w, parsed_ok, parse_ok_bb, parse_fail_bb);
             irwriter_bb_at(w, parse_fail_bb);
-            IrVal cp_end_fail =
-                irwriter_binop(w, "add", "i32", irwriter_imm(w, "%cp_start"), irwriter_imm(w, "%cp_size"));
-            irwriter_call_retf(w, "i8*", "tt_pop", "i8* %%tt, i32 %%r%d", (int)cp_end_fail);
-            IrVal is_negative = irwriter_icmp(w, "slt", "i64", parsed_size, irwriter_imm_int(w, 0));
-            IrLabel neg_fail_bb = irwriter_label(w);
-            IrLabel partial_fail_bb = irwriter_label(w);
-            irwriter_br_cond(w, is_negative, neg_fail_bb, partial_fail_bb);
-            irwriter_bb_at(w, neg_fail_bb);
-            irwriter_ret(w, "i64", irwriter_imm_int(w, 0));
-            irwriter_bb_at(w, partial_fail_bb);
-            irwriter_ret(w, "i64", parsed_size);
+            irwriter_call_void_fmtf(w, "tt_mark_parse_error", "ptr %%tt");
+            irwriter_br(w, parse_ok_bb);
             irwriter_bb_at(w, parse_ok_bb);
           }
           // pop scope + add scope-ref to parent
@@ -426,7 +420,7 @@ static void _gen_vpa_lex(VpaGenInput* input, IrWriter* w, const char* prefix) {
     IrVal state64 = irwriter_sext(w, "i32", dfa_state, "i64");
     IrVal cp64 = irwriter_sext(w, "i32", cp, "i64");
     // read tt->current->scope_id to decide which DFA to call
-    irwriter_rawf(w, "  %%r%d = getelementptr i8, ptr %%tt, i64 24\n", irwriter_next_reg(w));
+    irwriter_rawf(w, "  %%r%d = getelementptr i8, ptr %%tt, i64 %zu\n", irwriter_next_reg(w), offsetof(TokenTree, current));
     IrVal cur_ptr = irwriter_load(w, "ptr", (IrVal)(irwriter_next_reg(w) - 1));
     IrVal scope_id = irwriter_load(w, "i32", cur_ptr);
 
@@ -537,7 +531,7 @@ static void _gen_vpa_lex(VpaGenInput* input, IrWriter* w, const char* prefix) {
     irwriter_bb_at(w, eof_scope_sw_bb);
 
     // read scope_id to switch on
-    irwriter_rawf(w, "  %%r%d = getelementptr i8, ptr %%tt, i64 24\n", irwriter_next_reg(w));
+    irwriter_rawf(w, "  %%r%d = getelementptr i8, ptr %%tt, i64 %zu\n", irwriter_next_reg(w), offsetof(TokenTree, current));
     IrVal eof_cur_ptr = irwriter_load(w, "ptr", (IrVal)(irwriter_next_reg(w) - 1));
     IrVal eof_scope_id = irwriter_load(w, "i32", eof_cur_ptr);
 
@@ -689,13 +683,12 @@ static void _gen_parse_entry(VpaGenInput* input, IrWriter* w, const char* prefix
   {
     int32_t n_scopes = (int32_t)darray_size(input->scopes);
     if (n_scopes > 0) {
-      // tt->root is at offset 16 in TokenTree
-      irwriter_rawf(w, "  %%r%d = getelementptr i8, ptr %%r%d, i64 16\n", irwriter_next_reg(w), (int)tt);
+      irwriter_rawf(w, "  %%r%d = getelementptr i8, ptr %%r%d, i64 %zu\n", irwriter_next_reg(w), (int)tt,
+                    offsetof(TokenTree, root));
       IrVal root_chunk = irwriter_load(w, "ptr", (IrVal)(irwriter_next_reg(w) - 1));
-      // root_chunk->scope_id is at offset 0 in TokenChunk
       irwriter_store(w, "i32", irwriter_imm_int(w, input->scopes[0].scope_id), root_chunk);
-      // root_chunk->aux_value is at offset 16 in TokenChunk (after scope_id(4) + parent_id(4) + tokens(8))
-      irwriter_rawf(w, "  %%r%d = getelementptr i8, ptr %%r%d, i64 16\n", irwriter_next_reg(w), (int)root_chunk);
+      irwriter_rawf(w, "  %%r%d = getelementptr i8, ptr %%r%d, i64 %zu\n", irwriter_next_reg(w), (int)root_chunk,
+                    offsetof(TokenChunk, aux_value));
       irwriter_store(w, "ptr", tt, (IrVal)(irwriter_next_reg(w) - 1));
     }
   }
@@ -739,8 +732,8 @@ static void _gen_parse_entry(VpaGenInput* input, IrWriter* w, const char* prefix
   IrVal lex_result =
       irwriter_call_retf(w, "i64", "vpa_lex", "ptr %%r%d, i64 %%r%d, ptr %%r%d, ptr null, ptr %%r%d, ptr %%r%d",
                          (int)iter_ptr, (int)len64, (int)tt, (int)ctx_alloca, (int)stack_buf);
-  // load tt->root (offset 16 in TokenTree struct)
-  irwriter_rawf(w, "  %%r%d = getelementptr i8, ptr %%r%d, i64 16\n", irwriter_next_reg(w), (int)tt);
+  irwriter_rawf(w, "  %%r%d = getelementptr i8, ptr %%r%d, i64 %zu\n", irwriter_next_reg(w), (int)tt,
+                offsetof(TokenTree, root));
   IrVal tc = irwriter_load(w, "ptr", (IrVal)(irwriter_next_reg(w) - 1));
 
   // Store results via out-params
@@ -757,7 +750,7 @@ static void _gen_parse_entry(VpaGenInput* input, IrWriter* w, const char* prefix
   irwriter_store(w, "i64", irwriter_imm_int(w, main_rule_row), (IrVal)(irwriter_next_reg(w) - 1));
   // out_tt: TokenTree**
   irwriter_store(w, "ptr", tt, irwriter_imm(w, "%out_tt"));
-  // out_errors: ParseErrors* (null)
+  // out_errors: ParseErrors* (null until tt_collect_parse_errors is implemented)
   irwriter_store(w, "ptr", irwriter_imm(w, "null"), irwriter_imm(w, "%out_errors"));
   // out_parse_end_col: i64*
   irwriter_store(w, "i64", lex_result, irwriter_imm(w, "%out_parse_end_col"));
@@ -904,7 +897,6 @@ static void _gen_header(VpaGenInput* input, HeaderWriter* hw, const char* prefix
 
 void vpa_gen(VpaGenInput* input, HeaderWriter* hw, IrWriter* w, const char* prefix, int32_t main_rule_row) {
   int32_t n_scopes = (int32_t)darray_size(input->scopes);
-
   Actions actions = darray_new(sizeof(Action), 0);
   Action sentinel = {.action_id = 0, .action_units = NULL, .end_scope_name = NULL, .begin_scope_id = -1};
   darray_push(actions, sentinel);

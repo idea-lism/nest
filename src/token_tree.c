@@ -126,9 +126,17 @@ int64_t tt_current_size(TokenTree* tree) { return (int64_t)darray_size(tree->cur
 
 TokenChunk* tt_current(TokenTree* tree) { return tree->current; }
 
-void* tt_alloc_memoize_table(TokenChunk* chunk, int64_t sizeof_col) {
+void tt_mark_parse_error(TokenTree* tree) {
+  tree->has_parse_error = 1;
+  tree->current->has_parse_error = 1;
+}
+
+void* tt_alloc_memoize_table(TokenChunk* chunk, int64_t sizeof_col, int64_t slots_offset_in_i32, int64_t slots_size) {
   // sizeof_col must be multiple of 8, returned address must be 64-bit aligned
   assert(sizeof_col % 8 == 0);
+  chunk->memoize_sizeof_col = sizeof_col;
+  chunk->memoize_slots_offset_in_i32 = slots_offset_in_i32;
+  chunk->memoize_slots_size = slots_size;
   // +1 for sentinel column
   size_t bytesize = (darray_size(chunk->tokens) + 1) * (size_t)sizeof_col;
 #ifdef TRACE_TOTAL_MALLOC
