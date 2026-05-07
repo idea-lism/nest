@@ -383,7 +383,7 @@ class_body = block
 delegation = op_colon expr
 type_alias_decl = modifiers? @type_alias simple_id type_params? op_assignment type_ref
 
-fun_decl = modifiers? @fun type_params? simple_id value_params type_constraints? fun_body?
+fun_decl = modifiers? @fun type_params? simple_id value_params type_ann? type_constraints? fun_body?
 value_params = parens
 fun_body = [
   op_assignment expr : expr_body
@@ -492,17 +492,27 @@ prefix = [
 
 parens = @lparen parens_body? @rparen
 parens_body = parens_item*<iop_comma> iop_comma?
-parens_item = inside_expr
+parens_item = [
+  param_decl : param_decl
+  inside_expr : inside_expr
+]
+param_decl = i_modifier_kw* i_val_var? i_simple_id iop_colon i_type_ref iop_assignment? inside_expr?
 brackets = @lsquare brackets_body? @rsquare
 brackets_body = inside_expr*<iop_comma> iop_comma?
 inside_expr = inside_prefix* inside_postfix_expr inside_expr_tail*
-inside_expr_tail = i_operator inside_prefix* inside_postfix_expr
+inside_expr_tail = [
+  is_tail : is_tail
+  op_tail : op_tail
+]
+is_tail = @is i_type_ref
+op_tail = i_operator inside_prefix* inside_postfix_expr
 inside_postfix_expr = inside_primary_expr inside_postfix_part*
 inside_postfix_part = [
   parens : call
   brackets : index
 ]
 inside_primary_expr = [
+  when_expr : when_expr
   i_literal : literal
   i_simple_id : simple_id
   i_keyword_atom : keyword
@@ -841,6 +851,8 @@ operator = [
 
 i_simple_id = [
   @identifier : iid_identifier
+  @val : iid_val
+  @var : iid_var
   @abstract : iid_abstract
   @annotation : iid_annotation
   @crossinline : iid_crossinline
@@ -879,6 +891,30 @@ i_simple_id = [
   @value : iid_value
   @const : iid_const
   @suspend : iid_suspend
+]
+
+i_val_var = [
+  @val : val_kw
+  @var : var_kw
+]
+
+i_type_ref = i_type_atom+
+i_type_atom = [
+  i_simple_id : simple_id
+  parens : parens
+  brackets : brackets
+  i_type_op : type_op
+]
+i_type_op = [
+  iop_dot : dot
+  iop_quest_no_ws : nullable
+  iop_quest_ws : nullable_ws
+  iop_langle : langle
+  iop_rangle : rangle
+  iop_comma : comma
+  iop_mult : mult
+  @in : in_kw
+  @out : out_kw
 ]
 
 i_literal = [
@@ -923,6 +959,8 @@ i_modifier_kw = [
   @expect : imod_expect
   @actual : imod_actual
 ]
+
+when_expr = @when parens? block
 
 i_keyword_atom = [
   @return_at : ikw_return_at
