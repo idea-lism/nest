@@ -52,6 +52,60 @@ run() {
 pass=0
 fail=0
 
+validate_parsed_tokens() {
+  local expected="$1"
+  local actual_file="$2"
+  local report_file="$3"
+
+  ruby - "$expected" "$actual_file" >"$report_file" <<'RUBY'
+expected = File.read(ARGV[0])
+actual = File.read(ARGV[1])
+
+# Only success cases must have complete parse coverage. Error cases have
+# diagnostic lines before the first separator in their expected output.
+expected_errors = expected.split("------\n", 2)[0]
+exit 0 unless expected_errors.strip.empty?
+
+parts = actual.split("------\n", 3)
+if parts.length < 3
+  puts "parsed token coverage check failed: output does not contain all three sections"
+  exit 1
+end
+
+token_section = parts[1]
+parse_section = parts[2]
+
+tokenizer_tokens = token_section.lines.filter_map do |line|
+  match = line.match(/^\s*(\S+)\s+"/)
+  match && match[1].start_with?("@") ? match[1] : nil
+end
+
+parsed_tokens = parse_section.lines.filter_map do |line|
+  name = line.strip.split(/\s+/, 2)[0]
+  name&.start_with?("@") ? name : nil
+end
+
+exit 0 if tokenizer_tokens == parsed_tokens
+
+puts "parsed token coverage mismatch"
+puts "  tokenizer tokens: #{tokenizer_tokens.length}"
+puts "  parse tree tokens: #{parsed_tokens.length}"
+
+limit = [tokenizer_tokens.length, parsed_tokens.length].min
+mismatch = (0...limit).find { |i| tokenizer_tokens[i] != parsed_tokens[i] }
+if mismatch
+  puts "  first mismatch at token #{mismatch}: tokenizer=#{tokenizer_tokens[mismatch].inspect}, parse=#{parsed_tokens[mismatch].inspect}"
+else
+  puts "  first mismatch at token #{limit}: #{tokenizer_tokens.length > parsed_tokens.length ? 'parse tree ended early' : 'parse tree has extra tokens'}"
+end
+
+start = [mismatch || limit, 0].max
+puts "  tokenizer tail: #{tokenizer_tokens[start, 12].inspect}"
+puts "  parse tree tail: #{parsed_tokens[start, 12].inspect}"
+exit 1
+RUBY
+}
+
 for dir in "$ROOT"/test/examples/*/; do
   dir="${dir%/}"
   name=$(basename "$dir")
@@ -89,12 +143,28 @@ for dir in "$ROOT"/test/examples/*/; do
       rel_input="${input_file#$ROOT/}"
       echo "${C_INPUT}${rel_input}${C_RESET}"
       actual=$("$bin" "$input_file" 2>&1 || true)
+      actual_file="$case_dir/${case_name}.actual"
+      printf "%s\n" "$actual" >"$actual_file"
 
-      if diff -u "$expected" - <<<"$actual" >"$case_dir/${case_name}.diff" 2>&1; then
+      diff_ok=0
+      validate_ok=0
+      if diff -u "$expected" "$actual_file" >"$case_dir/${case_name}.diff" 2>&1; then
+        diff_ok=1
+      fi
+      if validate_parsed_tokens "$expected" "$actual_file" "$case_dir/${case_name}.tokens"; then
+        validate_ok=1
+      fi
+
+      if [ "$diff_ok" -eq 1 ] && [ "$validate_ok" -eq 1 ]; then
         pass=$((pass + 1))
       else
         echo "FAIL $name/$case_name ($mode):"
-        cat "$case_dir/${case_name}.diff"
+        if [ "$diff_ok" -ne 1 ]; then
+          cat "$case_dir/${case_name}.diff"
+        fi
+        if [ "$validate_ok" -ne 1 ]; then
+          cat "$case_dir/${case_name}.tokens"
+        fi
         fail=$((fail + 1))
       fi
     done

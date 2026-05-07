@@ -384,12 +384,14 @@ static void _gen_vpa_lex(VpaGenInput* input, IrWriter* w, const char* prefix) {
   IrVal dfa_state_ptr = irwriter_alloca(w, "i32");
   IrVal last_action_ptr = irwriter_alloca(w, "i32");
   IrVal last_match_off_ptr = irwriter_alloca(w, "i32");
+  IrVal last_match_valid_ptr = irwriter_alloca(w, "i32");
   IrVal token_start_ptr = irwriter_alloca(w, "i32");
 
   irwriter_store(w, "i32", irwriter_imm_int(w, 0), cp_off_ptr);
   irwriter_store(w, "i32", irwriter_imm_int(w, 0), dfa_state_ptr);
   irwriter_store(w, "i32", irwriter_imm_int(w, 0), last_action_ptr);
   irwriter_store(w, "i32", irwriter_imm_int(w, 0), last_match_off_ptr);
+  irwriter_store(w, "i32", irwriter_imm_int(w, 0), last_match_valid_ptr);
   irwriter_store(w, "i32", irwriter_imm_int(w, 0), token_start_ptr);
   IrLabel loop_bb = irwriter_label(w);
   IrLabel read_bb = irwriter_label(w);
@@ -480,21 +482,12 @@ static void _gen_vpa_lex(VpaGenInput* input, IrWriter* w, const char* prefix) {
     IrVal action_valid = irwriter_icmp(w, "ne", "i32", action, irwriter_imm_int(w, -2));
     irwriter_br_cond(w, action_valid, has_action_bb, no_action_bb);
     irwriter_bb_at(w, has_action_bb);
-    irwriter_comment(w, "has_action: check if positive");
-    IrLabel action_pos_bb = irwriter_label(w);
-    IrLabel advance_bb = irwriter_label(w);
-    IrVal action_is_pos = irwriter_icmp(w, "sgt", "i32", action, irwriter_imm_int(w, 0));
-    irwriter_br_cond(w, action_is_pos, action_pos_bb, advance_bb);
-    irwriter_bb_at(w, action_pos_bb);
-    irwriter_comment(w, "record last_action + last_match_off");
-    irwriter_store(w, "i32", action, last_action_ptr);
+    irwriter_comment(w, "record committed match, then advance");
     IrVal next_off = irwriter_binop(w, "add", "i32", cp_off2, irwriter_imm_int(w, 1));
+    irwriter_store(w, "i32", action, last_action_ptr);
     irwriter_store(w, "i32", next_off, last_match_off_ptr);
-    irwriter_br(w, advance_bb);
-    irwriter_bb_at(w, advance_bb);
-    irwriter_comment(w, "advance cp_off, store new_state");
-    IrVal adv_off = irwriter_binop(w, "add", "i32", cp_off2, irwriter_imm_int(w, 1));
-    irwriter_store(w, "i32", adv_off, cp_off_ptr);
+    irwriter_store(w, "i32", irwriter_imm_int(w, 1), last_match_valid_ptr);
+    irwriter_store(w, "i32", next_off, cp_off_ptr);
     irwriter_store(w, "i32", new_state, dfa_state_ptr);
     irwriter_br(w, loop_bb);
     irwriter_bb_at(w, no_action_bb);
@@ -519,11 +512,15 @@ static void _gen_vpa_lex(VpaGenInput* input, IrWriter* w, const char* prefix) {
     }
   }
 
+  IrVal last_match_valid = irwriter_load(w, "i32", last_match_valid_ptr);
   IrLabel eof_check_bb = (IrLabel)0;
-  IrVal has_last = irwriter_icmp(w, "sgt", "i32", last_action, irwriter_imm_int(w, 0));
+  IrLabel dispatch_match_bb = irwriter_label(w);
+  IrLabel dispatch_empty_bb = irwriter_label(w);
+  IrLabel reset_match_bb = irwriter_label(w);
+  IrVal has_last = irwriter_icmp(w, "ne", "i32", last_match_valid, irwriter_imm_int(w, 0));
   if (any_eof) {
     eof_check_bb = irwriter_label(w);
-    irwriter_br_cond(w, has_last, dispatch_action_bb, eof_check_bb);
+    irwriter_br_cond(w, has_last, dispatch_match_bb, eof_check_bb);
 
     // --- eof check: if at end of input and scope has eof_action, invoke it ---
     irwriter_bb_at(w, eof_check_bb);
@@ -590,8 +587,15 @@ static void _gen_vpa_lex(VpaGenInput* input, IrWriter* w, const char* prefix) {
     }
     XFREE(eof_case_bbs);
   } else {
-    irwriter_br_cond(w, has_last, dispatch_action_bb, done_bb);
+    irwriter_br_cond(w, has_last, dispatch_match_bb, done_bb);
   }
+
+  irwriter_bb_at(w, dispatch_match_bb);
+  IrVal last_action_is_pos = irwriter_icmp(w, "sgt", "i32", last_action, irwriter_imm_int(w, 0));
+  irwriter_br_cond(w, last_action_is_pos, dispatch_action_bb, dispatch_empty_bb);
+
+  irwriter_bb_at(w, dispatch_empty_bb);
+  irwriter_br(w, reset_match_bb);
 
   irwriter_bb_at(w, dispatch_action_bb);
   // vpa_dispatch uses i64 ABI — widen i32 args
@@ -603,16 +607,16 @@ static void _gen_vpa_lex(VpaGenInput* input, IrWriter* w, const char* prefix) {
                                              (int)la64, (int)ts64, (int)sz64);
   IrVal dispatch_failed = irwriter_icmp(w, "sge", "i64", dispatch_result, irwriter_imm_int(w, 0));
   IrLabel dispatch_fail_bb = irwriter_label(w);
-  IrLabel dispatch_ok_bb = irwriter_label(w);
-  irwriter_br_cond(w, dispatch_failed, dispatch_fail_bb, dispatch_ok_bb);
+  irwriter_br_cond(w, dispatch_failed, dispatch_fail_bb, reset_match_bb);
   irwriter_bb_at(w, dispatch_fail_bb);
   irwriter_ret(w, "i64", dispatch_result);
-  irwriter_bb_at(w, dispatch_ok_bb);
+  irwriter_bb_at(w, reset_match_bb);
 
   irwriter_store(w, "i32", match_off, cp_off_ptr);
   irwriter_store(w, "i32", match_off, token_start_ptr);
   irwriter_store(w, "i32", irwriter_imm_int(w, 0), dfa_state_ptr);
   irwriter_store(w, "i32", irwriter_imm_int(w, 0), last_action_ptr);
+  irwriter_store(w, "i32", irwriter_imm_int(w, 0), last_match_valid_ptr);
   irwriter_store(w, "i32", match_off, last_match_off_ptr);
   // seek iterator to backtrack position
   irwriter_call_void_fmtf(w, "ustr_iter_seek", "i8* %%src, i32 %%r%d", (int)match_off);

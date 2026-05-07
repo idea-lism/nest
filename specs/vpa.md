@@ -115,6 +115,7 @@ The matcher for `s` first matches `/regex1/`, then the braced union. Since `a` i
 
 The automata's `action_id` is the index in actions array, codegen will create basic blocks in LLVM IR for all actions, invoking the action units in sequence.
 - With the label array and computed-goto extension, we can dispatch by action_id.
+- Empty-action regexp units are valid: they consume input and commit lexer progress without emitting tokens or invoking hooks.
 - if a user hook have `%effect` definition, check if returned value is within definition:
   - if yes, emit token or execute primitive hook.
   - if no, add parse error and terminate parsing (TODO: continuable parsing)
@@ -220,6 +221,7 @@ Similar to the `_lex_scope` in the [parse spec][parse.md].
 - Union of regexps with multiple actions
   - Inlines child scope's leader regexp
 - Greedy match, and trigger `last_action_id` on no match / eof
+- Empty-action matches update the committed match position, but dispatch no action.
 - Manages scoping stack / token_tree / parser invocation
 
 ### Error reporting
@@ -274,3 +276,4 @@ void _print_upper(HeaderWriter hw, const char* s) {
 ### Testing
 
 - test should check if token tree is created when there are multiple scopes, not a flatten token stream.
+- test should cover empty-action regexp units inside scope bodies.

@@ -335,6 +335,17 @@ static void _gen_example_c(FILE* f, const char* prefix, ParseState* ps) {
   fprintf(f, "  for (int i = 0; i < depth; i++) printf(\"  \");\n");
   fprintf(f, "}\n\n");
 
+  fprintf(f, "static void $print_token_text(UstrByteSlice sl) {\n");
+  fprintf(f, "  for (int32_t i = 0; i < sl.size; i++) {\n");
+  fprintf(f, "    unsigned char ch = (unsigned char)sl.s[i];\n");
+  fprintf(f, "    if (ch < 0x20 || ch == 0x7f) {\n");
+  fprintf(f, "      printf(\"\\\\x%%02x\", ch);\n");
+  fprintf(f, "    } else {\n");
+  fprintf(f, "      putchar(ch);\n");
+  fprintf(f, "    }\n");
+  fprintf(f, "  }\n");
+  fprintf(f, "}\n\n");
+
   // Token list printer: walk chunks recursively, scope tokens recurse with depth+1
   int32_t total_scope_ids = symtab_count(scope_names) + scope_names->start_num;
   fprintf(f, "static void print$tokens(TokenTree* tt, TokenChunk* chunk, int depth) {\n");
@@ -345,7 +356,9 @@ static void _gen_example_c(FILE* f, const char* prefix, ParseState* ps) {
   fprintf(f, "    } else {\n");
   fprintf(f, "      $indent(depth);\n");
   fprintf(f, "      UstrByteSlice sl = ustr_slice_bytes(tt->src, tok->cp_start, tok->cp_start + tok->cp_size);\n");
-  fprintf(f, "      printf(\"%%s \\\"%%.*s\\\"\\n\", tok_name(tok->term_id), sl.size, sl.s);\n");
+  fprintf(f, "      printf(\"%%s \\\"\", tok_name(tok->term_id));\n");
+  fprintf(f, "      $print_token_text(sl);\n");
+  fprintf(f, "      printf(\"\\\"\\n\");\n");
   fprintf(f, "    }\n");
   fprintf(f, "  }\n");
   fprintf(f, "}\n\n");

@@ -84,6 +84,7 @@ main
 
 `nest c` produces `<prefix>.c` which must print both sections:
 the scope-indented token list, then `------`, then the indented parse tree.
+Token text in the token list is quoted; ASCII control bytes (`0x00`-`0x1f` and `0x7f`) are printed as lowercase hex escapes (`\xNN`).
 The `------` separator between errors and the token list is also printed, so the combined captured output matches the expected format directly.
 
 ### Test runner
@@ -96,7 +97,8 @@ For each directory, for each memoize mode (`naive`, `shared`):
 2. Compile `<name>.c` + `<name>.ll` with clang.
 3. For each `*.input` file, run the binary with the file name as `argv[1]`.
 4. Diff combined output against the matching `*.expected` file.
-5. Report pass/fail per case; exit non-zero if anything failed.
+5. For success cases (expected output has no errors before the first `------`), validate that parse-tree token leaves are exactly the tokenizer output tokens (after `%ignore` suppression), in the same order and with no missing or extra tokens.
+6. Report pass/fail per case; exit non-zero if anything failed.
 
 Temp build artifacts go in a scratch directory and are cleaned up.
 
