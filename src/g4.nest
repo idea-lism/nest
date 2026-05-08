@@ -1,0 +1,168 @@
+# ANTLR .g4 grammar recognizer for g4-to-nest importer
+# This grammar recognizes the ANTLR4 syntax needed for importing.
+
+[[vpa]]
+
+%ignore @line_comment @block_comment @ws
+
+main = {
+  *keywords
+  /\/\/[^\n]*/ @line_comment
+  /\/\*([^*]|\*[^\/])*\*\// @block_comment
+  /[ \t\r\n]+/ @ws
+  /:/ @colon
+  /;/ @semi
+  /\|/ @pipe
+  /\(/ @lparen
+  /\)/ @rparen
+  /\?/ @question
+  /\*/ @star
+  /\+/ @plus
+  /~/ @tilde
+  /\.\./ @dotdot
+  /\./ @dot
+  /,/ @comma
+  /->/ @arrow
+  /#/ @hash
+  /\+=/ @pluseq
+  /=/ @eq
+  /'([^'\\]|\\.)*'/ @string_lit
+  /\[\^?([^\]\\]|\\.)*\]/ @charset
+  /[A-Z][a-zA-Z_0-9]*/ @upper_id
+  /[a-z][a-zA-Z_0-9]*/ @lower_id
+  brace_block
+  EOF .end
+}
+
+*keywords = @{
+  "fragment"
+  "options"
+  "import"
+  "channels"
+  "tokens"
+  "mode"
+  "lexer"
+  "parser"
+  "grammar"
+  "returns"
+  "locals"
+  "throws"
+  "EOF"
+}
+
+brace_block = /[{]/ .begin @lbrace {
+  brace_block
+  /[}]/ @rbrace .end
+  /\/\/[^\n]*/ @line_comment
+  /\/\*([^*]|\*[^\/])*\*\// @block_comment
+  /[ \t\r\n]+/ @ws
+  /[^{}\s]+/ @brace_text
+}
+
+[[peg]]
+
+main = grammar_decl body_item*
+
+grammar_decl = grammar_type @upper_id @semi
+
+grammar_type = [
+  "lexer" "grammar" : lexer_type
+  "parser" "grammar" : parser_type
+  "grammar" : combined_type
+]
+
+body_item = [
+  options_decl
+  import_decl
+  channels_decl
+  tokens_decl
+  mode_decl
+  rule_def
+]
+
+options_decl = "options" brace_block
+
+import_decl = "import" import_name+<@comma> @semi
+
+import_name = @upper_id
+
+channels_decl = "channels" brace_block
+
+tokens_decl = "tokens" brace_block
+
+mode_decl = "mode" @upper_id @semi
+
+rule_def = rule_head @colon alt_list lexer_commands? @semi
+
+rule_head = [
+  "fragment" @upper_id : fragment_head
+  @upper_id : lexer_head
+  @lower_id parser_rule_modifiers? : parser_head
+]
+
+parser_rule_modifiers = [
+  "returns" brace_block
+  "locals" brace_block
+  "throws" @upper_id+<@comma>
+]
+
+lexer_commands = @arrow lexer_command+<@comma>
+
+lexer_command = [
+  @lower_id @lparen channel_arg @rparen : cmd_with_arg
+  @lower_id : cmd_simple
+]
+
+channel_arg = [
+  @upper_id
+  @lower_id
+]
+
+alt_list = alt+<@pipe>
+
+alt = labeled_element* alt_label?
+
+alt_label = @hash @upper_id
+
+labeled_element = element label_assign?
+
+label_assign = [
+  @lower_id @eq : eq_label
+  @lower_id @pluseq : plus_label
+]
+
+element = atom ebnf_suffix?
+
+ebnf_suffix = [
+  @question @question? : maybe
+  @star @question? : star_suffix
+  @plus @question? : plus_suffix
+]
+
+atom = [
+  @string_lit @dotdot @string_lit : range_atom
+  @string_lit : string_atom
+  @charset : charset_atom
+  @dot : dot_atom
+  @tilde not_atom_inner : not_atom
+  @upper_id : upper_ref
+  @lower_id : lower_ref
+  @lparen alt_list @rparen : group_atom
+  brace_block @question? : action_atom
+  "EOF" : eof_atom
+]
+
+not_atom_inner = [
+  @string_lit
+  @charset
+  @upper_id
+  @lower_id
+  @lparen alt_list @rparen
+]
+
+brace_block = @lbrace brace_content* @rbrace
+
+brace_content = [
+  @brace_text
+  brace_block
+]

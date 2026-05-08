@@ -641,6 +641,8 @@ static void _gen_scope_ir(IrWriter* w, ScopeClosure* cl, int memoize_mode) {
   irwriter_raw(w, "  %col = alloca i64\n");
   IrVal col = irwriter_imm(w, "%col");
   irwriter_store(w, "i64", irwriter_imm_int(w, 0), col);
+  irwriter_raw(w, "  %col_before = alloca i64\n");
+  IrVal col_before = irwriter_imm(w, "%col_before");
   IrVal stack_ptr = irwriter_alloca(w, "ptr");
   irwriter_store(w, "ptr", irwriter_imm(w, "%stack_ptr_in"), stack_ptr);
   IrVal parse_result = irwriter_alloca(w, "i64");
@@ -686,6 +688,7 @@ static void _gen_scope_ir(IrWriter* w, ScopeClosure* cl, int memoize_mode) {
       .tc = tc,
       .tokens = tokens,
       .col = col,
+      .col_before = col_before,
       .stack_ptr = stack_ptr,
       .parse_result = parse_result,
       .tag_bits = tag_bits,

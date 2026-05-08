@@ -42,6 +42,8 @@ static TestCtx _setup(const char* fn_name) {
 
   IrVal col_ptr = irwriter_alloca(t.w, "i64");
   irwriter_store(t.w, "i64", irwriter_imm_int(t.w, 0), col_ptr);
+  IrVal col_before_ptr = irwriter_alloca(t.w, "i64");
+  irwriter_store(t.w, "i64", irwriter_imm_int(t.w, 0), col_before_ptr);
   IrVal stack_ptr = irwriter_alloca(t.w, "ptr");
   irwriter_store(t.w, "ptr", irwriter_imm(t.w, "%stack_ptr_in"), stack_ptr);
   IrVal parse_result = irwriter_alloca(t.w, "i64");
@@ -61,6 +63,7 @@ static TestCtx _setup(const char* fn_name) {
       .tc = tc,
       .tokens = tokens,
       .col = col_ptr,
+      .col_before = col_before_ptr,
       .stack_ptr = stack_ptr,
       .parse_result = parse_result,
       .tag_bits = tag_bits,
@@ -573,6 +576,86 @@ TEST(test_emit_not_branches) {
   free(out);
 }
 
+// Regression: star with nullable body containing a recursive call must produce
+// valid LLVM IR. The bug was that col_before (an SSA register) defined in the
+// loop header was used after an indirect branch (blockaddress dispatch) that
+// broke SSA dominance.
+TEST(test_compile_star_nullable_recursive) {
+  TestCtx t = _setup("parse_main");
+
+  // Build: star(maybe(call("main$rule")))
+  // The maybe wrapper makes the body nullable.
+  // The call generates blockaddress-based indirect branches.
+  ScopedUnit call_unit = {.kind = SCOPED_UNIT_CALL, .tag_bit_local_offset = -1};
+  call_unit.as.callee = "main$rule";
+
+  ScopedUnit* call_heap = malloc(sizeof(ScopedUnit));
+  *call_heap = call_unit;
+
+  ScopedUnit maybe_unit = {.kind = SCOPED_UNIT_MAYBE, .tag_bit_local_offset = -1, .nullable = true};
+  maybe_unit.as.base = call_heap;
+
+  ScopedUnit* maybe_heap = malloc(sizeof(ScopedUnit));
+  *maybe_heap = maybe_unit;
+
+  ScopedUnit star = {.kind = SCOPED_UNIT_STAR, .tag_bit_local_offset = -1};
+  star.as.interlace = (ScopedInterlace){.lhs = maybe_heap, .rhs = NULL};
+
+  // Set up call sites so the rule dispatch (indirectbr) is generated
+  CallSite* call_sites = darray_new(sizeof(CallSite), 0);
+  CallSite entry = {.caller_id = -1, .site = 0};
+  darray_push(call_sites, entry);
+  t.ctx.current_rule_call_sites = call_sites;
+  t.ctx.current_rule_id = 0;
+
+  IrLabel fail = irwriter_label(t.w);
+  peg_ir_emit_parse(&t.ctx, &star, fail);
+  irwriter_br(t.w, fail);
+  irwriter_bb_at(t.w, fail);
+  irwriter_ret(t.w, "{i64, i64}", irwriter_imm(t.w, "undef"));
+
+  // Emit a stub callee rule that the call dispatches to.
+  // It stores 0 to parse_result (success) and returns via indirectbr.
+  IrLabel rule_label = irwriter_label_f(t.w, "main$rule");
+  irwriter_bb_at(t.w, rule_label);
+  irwriter_store(t.w, "i64", irwriter_imm_int(t.w, 0), t.ctx.parse_result);
+  IrVal sp = irwriter_load(t.w, "ptr", t.ctx.stack_ptr);
+  irwriter_rawf(t.w, "  %%r%d = getelementptr i64, ptr %%r%d, i64 -1\n", irwriter_next_reg(t.w), (int)sp);
+  IrVal sp_m1 = (IrVal)(irwriter_next_reg(t.w) - 1);
+  IrVal ret_addr = irwriter_load(t.w, "ptr", sp_m1);
+  irwriter_rawf(t.w, "  %%r%d = getelementptr i64, ptr %%r%d, i64 -1\n", irwriter_next_reg(t.w), (int)sp_m1);
+  IrVal sp_m2 = (IrVal)(irwriter_next_reg(t.w) - 1);
+  irwriter_store(t.w, "ptr", sp_m2, t.ctx.stack_ptr);
+  irwriter_rawf(t.w, "  indirectbr ptr %%r%d, [label %%callsite$0$0]\n", (int)ret_addr);
+
+  char* out = _finish(&t);
+
+  // Write to file and compile with clang to verify valid IR
+  char ll_path[256], obj_path[256];
+  snprintf(ll_path, sizeof(ll_path), "%s/test_star_nullable_recursive.ll", BUILD_DIR);
+  snprintf(obj_path, sizeof(obj_path), "%s/test_star_nullable_recursive.o", BUILD_DIR);
+  FILE* f = fopen(ll_path, "w");
+  assert(f);
+  fputs(out, f);
+  fclose(f);
+
+  char cmd[512];
+  snprintf(cmd, sizeof(cmd), "%s -c %s -o %s 2>&1", compat_llvm_cc(), ll_path, obj_path);
+  int status = _run_cmd(cmd);
+  if (status != 0) {
+    fprintf(stderr, "\nIR compilation failed for test_compile_star_nullable_recursive\n");
+    fprintf(stderr, "IR written to: %s\n", ll_path);
+  }
+  assert(status == 0 && "star with nullable recursive body must produce valid LLVM IR");
+
+  remove(ll_path);
+  remove(obj_path);
+  darray_del(call_sites);
+  free(call_heap);
+  free(maybe_heap);
+  free(out);
+}
+
 TEST(test_compile_helpers_ir) {
   char* buf = NULL;
   size_t len = 0;
@@ -625,6 +708,7 @@ int main(void) {
   RUN(test_emit_not_predicate);
   RUN(test_emit_and_call);
   RUN(test_emit_not_branches);
+  RUN(test_compile_star_nullable_recursive);
   RUN(test_compile_helpers_ir);
   printf("test_peg_ir: OK\n");
   return 0;

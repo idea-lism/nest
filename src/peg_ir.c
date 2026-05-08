@@ -294,13 +294,14 @@ static void _emit_star(PegIrCtx* ctx, ScopedUnit* unit, IrLabel fail_label) {
     irwriter_br(w, loop_bb);
     irwriter_bb_at(w, loop_bb);
 
-    IrVal col_before = body_nullable ? irwriter_load(w, "i64", ctx->col) : (IrVal)0;
+    if (body_nullable) irwriter_store(w, "i64", irwriter_load(w, "i64", ctx->col), ctx->col_before);
 
     peg_ir_emit_parse(ctx, unit->as.interlace.lhs, end_bb);
 
     // if e is nullable, check advancement to prevent infinite loop
     if (body_nullable) {
       IrVal col_after = irwriter_load(w, "i64", ctx->col);
+      IrVal col_before = irwriter_load(w, "i64", ctx->col_before);
       IrVal advanced = irwriter_icmp(w, "ne", "i64", col_after, col_before);
       irwriter_br_cond(w, advanced, loop_bb, end_bb);
     } else {
@@ -321,7 +322,7 @@ static void _emit_star(PegIrCtx* ctx, ScopedUnit* unit, IrLabel fail_label) {
     // loop
     irwriter_bb_at(w, loop_bb);
 
-    IrVal col_before = body_nullable ? irwriter_load(w, "i64", ctx->col) : (IrVal)0;
+    if (body_nullable) irwriter_store(w, "i64", irwriter_load(w, "i64", ctx->col), ctx->col_before);
 
     _emit_call_save(ctx);
     peg_ir_emit_parse(ctx, unit->as.interlace.rhs, sep_fail_bb);
@@ -331,6 +332,7 @@ static void _emit_star(PegIrCtx* ctx, ScopedUnit* unit, IrLabel fail_label) {
     // if e is nullable, check advancement to prevent infinite loop
     if (body_nullable) {
       IrVal col_after = irwriter_load(w, "i64", ctx->col);
+      IrVal col_before = irwriter_load(w, "i64", ctx->col_before);
       IrVal advanced = irwriter_icmp(w, "ne", "i64", col_after, col_before);
       irwriter_br_cond(w, advanced, loop_bb, end_bb);
     } else {
@@ -369,13 +371,14 @@ static void _emit_plus(PegIrCtx* ctx, ScopedUnit* unit, IrLabel fail_label) {
     irwriter_br(w, loop_bb);
     irwriter_bb_at(w, loop_bb);
 
-    IrVal col_before = body_nullable ? irwriter_load(w, "i64", ctx->col) : (IrVal)0;
+    if (body_nullable) irwriter_store(w, "i64", irwriter_load(w, "i64", ctx->col), ctx->col_before);
 
     peg_ir_emit_parse(ctx, unit->as.interlace.lhs, end_bb);
 
     // if e is nullable, check advancement to prevent infinite loop
     if (body_nullable) {
       IrVal col_after = irwriter_load(w, "i64", ctx->col);
+      IrVal col_before = irwriter_load(w, "i64", ctx->col_before);
       IrVal advanced = irwriter_icmp(w, "ne", "i64", col_after, col_before);
       irwriter_br_cond(w, advanced, loop_bb, end_bb);
     } else {
@@ -391,7 +394,7 @@ static void _emit_plus(PegIrCtx* ctx, ScopedUnit* unit, IrLabel fail_label) {
     irwriter_br(w, loop_bb);
     irwriter_bb_at(w, loop_bb);
 
-    IrVal col_before = body_nullable ? irwriter_load(w, "i64", ctx->col) : (IrVal)0;
+    if (body_nullable) irwriter_store(w, "i64", irwriter_load(w, "i64", ctx->col), ctx->col_before);
 
     _emit_call_save(ctx);
     peg_ir_emit_parse(ctx, unit->as.interlace.rhs, sep_fail_bb);
@@ -401,6 +404,7 @@ static void _emit_plus(PegIrCtx* ctx, ScopedUnit* unit, IrLabel fail_label) {
     // if e is nullable, check advancement to prevent infinite loop
     if (body_nullable) {
       IrVal col_after = irwriter_load(w, "i64", ctx->col);
+      IrVal col_before = irwriter_load(w, "i64", ctx->col_before);
       IrVal advanced = irwriter_icmp(w, "ne", "i64", col_after, col_before);
       irwriter_br_cond(w, advanced, loop_bb, end_bb);
     } else {

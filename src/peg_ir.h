@@ -19,6 +19,7 @@ typedef struct {
 
   // shared allocas
   IrVal col;
+  IrVal col_before; // entry-block alloca for nullable star/plus advancement check
   IrVal stack_ptr;
   IrVal parse_result;
   IrVal tag_bits;        // first tag_bits alloca (or only one if tag_bits_n <= 1)
