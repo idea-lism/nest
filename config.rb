@@ -130,6 +130,11 @@ rule cc_test
   depfile = $out.d
   description = CC $in
 
+rule cc_g4
+  command = #{CC} #{CFLAGS} -I#{BUILDDIR} -MMD -MF $out.d -c $in -o $out
+  depfile = $out.d
+  description = CC $in
+
 rule ar
   command = #{AR} rcs $out $in
   description = AR $out
@@ -165,6 +170,17 @@ build #{BUILDDIR}/nest_lex.o: ll_cc #{BUILDDIR}/nest_lex.ll
 
 build #{BUILDDIR}/llir_lex.ll: gen_nest_lex #{BUILDDIR}/llir_parse_gen
 build #{BUILDDIR}/llir_lex.o: ll_cc #{BUILDDIR}/llir_lex.ll
+
+rule nest_compile
+  command = cd $builddir && $nest c $grammar -p $prefix
+  description = NEST_COMPILE $prefix
+
+build #{BUILDDIR}/g4_grammar.h #{BUILDDIR}/g4_grammar.ll #{BUILDDIR}/g4_grammar.c: nest_compile src/g4.nest | #{BUILDDIR}/nest
+  nest = #{Dir.pwd}/#{BUILDDIR}/nest
+  grammar = #{Dir.pwd}/src/g4.nest
+  prefix = g4_grammar
+  builddir = #{Dir.pwd}/#{BUILDDIR}
+build #{BUILDDIR}/g4_grammar.ll.o: ll_cc #{BUILDDIR}/g4_grammar.ll
 
   NINJA
 
@@ -203,7 +219,7 @@ build #{BUILDDIR}/llir_lex.o: ll_cc #{BUILDDIR}/llir_lex.ll
     objs = exe[:srcs].map do |src|
       obj = "#{BUILDDIR}/#{src.sub(/\.c$/, '.o')}"
       unless emitted[obj]
-        rule = src.start_with?("test/") ? "cc_test" : "cc"
+        rule = src.start_with?("test/") ? "cc_test" : (src == "src/g4.c" ? "cc_g4" : "cc")
         od = obj_order_deps[obj]
         order_suffix = od.empty? ? "" : " || #{od.join(' ')}"
         f.puts "build #{obj}: #{rule} #{src}#{order_suffix}"

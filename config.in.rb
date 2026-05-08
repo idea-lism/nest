@@ -1,4 +1,4 @@
-base = (Dir.glob "src/*.c") - ["src/nest.c", "src/parse_gen.c", "src/llir_parse_gen.c", "src/ustr.c", "src/ustr_neon.c", "src/ustr_avx.c"]
+base = (Dir.glob "src/*.c") - ["src/nest.c", "src/parse_gen.c", "src/llir_parse_gen.c", "src/ustr.c", "src/ustr_neon.c", "src/ustr_avx.c", "src/g4.c"]
 base_lean = base - %w[src/parse.c src/post_process.c]
 kissat = IS_WINDOWS ? [] : %w[build/kissat/build/libkissat.a]
 nest_lex = ["#{BUILDDIR}/nest_lex.o"]
@@ -119,6 +119,14 @@ exe "parse_gen",
 exe "llir_parse_gen",
   srcs: %w[src/llir_parse_gen.c src/re.c src/aut.c src/irwriter.c src/symtab.c src/bitset.c src/darray.c src/xmalloc.c],
   deps: %w[ustr]
+
+g4_grammar_ll = ["#{BUILDDIR}/g4_grammar.ll.o"]
+
+exe "g4",
+  srcs: %w[src/g4.c],
+  deps: %w[ustr],
+  extra_objs: g4_grammar_ll,
+  order_deps: ["#{BUILDDIR}/g4_grammar.h"]
 
 gen_str_header "build/nest_syntax.inc",
   from: "doc/nest_syntax.md"

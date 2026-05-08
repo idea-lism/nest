@@ -49,12 +49,17 @@ static void _buf_putc(Buf* b, char c) { _buf_append(b, &c, 1); }
 static void _buf_printf(Buf* b, const char* fmt, ...) {
   va_list ap;
   va_start(ap, fmt);
-  char tmp[2048];
-  int32_t n = vsnprintf(tmp, sizeof(tmp), fmt, ap);
+  va_list ap2;
+  va_copy(ap2, ap);
+  int32_t n = vsnprintf(NULL, 0, fmt, ap);
   va_end(ap);
   if (n > 0) {
+    char* tmp = malloc(n + 1);
+    vsnprintf(tmp, n + 1, fmt, ap2);
     _buf_append(b, tmp, n);
+    free(tmp);
   }
+  va_end(ap2);
 }
 
 static void _buf_free(Buf* b) {
@@ -146,6 +151,12 @@ typedef struct {
   bool is_fragment;
   bool is_hidden;   // channel(HIDDEN)
   bool is_skipped;  // -> skip
+  bool has_command; // rule has any -> lexer command or semantic action command
+  bool is_recursive; // references itself (directly or transitively)
+  bool needs_scope;  // references a recursive lexer rule and cannot be a pure regexp VPA line
+  bool needs_scope_traced;
+  bool from_lexer_grammar;
+  int32_t lexer_grammar_index;
   char* type_alias; // -> type(X), NULL if none
   char* push_mode;  // -> pushMode(X), NULL if none
   bool pop_mode;    // -> popMode
@@ -164,6 +175,19 @@ typedef struct {
   int32_t paren_counter; // counter for generated helper rules
 } ParserRule;
 
+// Helper rule generated for parenthesized sub-expressions that need
+// their own rule in nest (e.g. single-alt groups with suffix)
+typedef struct {
+  char* name; // generated name like "rule_name$1"
+  char* body; // already-emitted body text
+} HelperRule;
+
+typedef struct {
+  HelperRule* items;
+  int32_t count;
+  int32_t cap;
+} HelperRules;
+
 typedef struct {
   char* mode_name;
   char* parser_rule; // command-line mapping
@@ -172,6 +196,7 @@ typedef struct {
 typedef struct {
   // Grammar metadata
   char* grammar_name;
+  char* command_line;
   bool is_lexer;
   bool is_parser;
   bool is_combined;
@@ -197,6 +222,16 @@ typedef struct {
   // State
   char* current_mode;
   bool has_nongreedy;
+  bool suppress_nongreedy_warning;
+  int32_t lexer_grammar_count;
+  bool current_file_is_lexer_grammar;
+  int32_t current_lexer_grammar_index;
+  StrArr parser_tokens;
+
+  // Helper rules generated during emission
+  HelperRules helpers;
+  char* current_rule_snake; // name of rule currently being emitted (for helper naming)
+  int32_t current_rule_paren_counter;
 } G4State;
 
 static void _g4_state_init(G4State* st) {
@@ -204,6 +239,7 @@ static void _g4_state_init(G4State* st) {
   _strarr_init(&st->modes);
   _strarr_init(&st->fragments);
   _strarr_init(&st->imports);
+  _strarr_init(&st->parser_tokens);
 }
 
 static void _add_lexer_rule(G4State* st, LexerRule* r) {
@@ -344,6 +380,16 @@ static char* _antlr_str_to_peg(const char* lit) {
   return result;
 }
 
+static void _append_char_class_content(Buf* out, const char* regex_atom) {
+  int32_t len = (int32_t)strlen(regex_atom);
+  if (len >= 2 && regex_atom[0] == '[' && regex_atom[len - 1] == ']') {
+    int32_t start = (len >= 3 && regex_atom[1] == '^') ? 2 : 1;
+    _buf_append(out, regex_atom + start, len - start - 1);
+  } else {
+    _buf_puts(out, regex_atom);
+  }
+}
+
 // Convert ANTLR charset to Nest regex charset (handle \uXXXX -> \u{XXXX})
 static char* _antlr_charset_to_nest(const char* cs) {
   Buf b;
@@ -358,6 +404,8 @@ static char* _antlr_charset_to_nest(const char* cs) {
       }
       i--;
       _buf_putc(&b, '}');
+    } else if (cs[i] == '-' && (i == 1 || (i == 2 && cs[1] == '^') || i + 1 == len - 1)) {
+      _buf_puts(&b, "\\-");
     } else {
       _buf_putc(&b, cs[i]);
     }
@@ -369,11 +417,99 @@ static char* _antlr_charset_to_nest(const char* cs) {
 
 // --- Tree walking: convert alt_list to string representation ---
 
+static LexerRule* _find_lexer_rule(G4State* st, const char* name);
+static bool _parser_uses_token(G4State* st, const char* token_snake);
+static char* _edge_name(const char* caller, const char* callee);
+static const char* _find_mapping(G4State* st, const char* name);
+static bool _mode_is_flat(G4State* st, const char* mode);
+static bool _is_entrance_lexer_rule(G4State* st, LexerRule* r);
+
 static void _walk_alt_list(G4State* st, TokenTree* tt, PegRef ref, bool is_lexer, Buf* out);
 static void _walk_alt(G4State* st, TokenTree* tt, PegRef ref, bool is_lexer, Buf* out);
 static void _walk_element(G4State* st, TokenTree* tt, PegRef ref, bool is_lexer, Buf* out);
 static void _walk_atom(G4State* st, TokenTree* tt, PegRef ref, bool is_lexer, Buf* out, int32_t* paren_counter,
-                       const char* rule_snake_name);
+                       const char* rule_snake_name, bool has_suffix);
+static bool _action_contains_pop_mode(TokenTree* tt, PegRef brace_block_ref);
+static void _collect_parser_tokens_from_alt_list(G4State* st, TokenTree* tt, PegRef ref);
+
+static bool _parser_uses_token(G4State* st, const char* token_snake) {
+  return _strarr_find(&st->parser_tokens, token_snake) >= 0;
+}
+
+static const char* _edge_parser_rule(G4State* st, const char* caller, const char* callee) {
+  char key[512];
+  snprintf(key, sizeof(key), "%s:%s", caller, callee);
+  const char* mapped = _find_mapping(st, key);
+  if (mapped && mapped[0] != '\0') return mapped;
+  mapped = _find_mapping(st, callee);
+  if (mapped && mapped[0] != '\0') return mapped;
+  int32_t callee_len = (int32_t)strlen(callee);
+  for (int32_t i = 0; i < st->mode_map_count; i++) {
+    if (st->mode_maps[i].parser_rule[0] == '\0') continue;
+    int32_t key_len = (int32_t)strlen(st->mode_maps[i].mode_name);
+    if (key_len > callee_len + 1 && st->mode_maps[i].mode_name[key_len - callee_len - 1] == ':' &&
+        strcmp(st->mode_maps[i].mode_name + key_len - callee_len, callee) == 0) {
+      return st->mode_maps[i].parser_rule;
+    }
+  }
+  return NULL;
+}
+
+static void _edge_wrappers_for_parser_rule(G4State* st, const char* parser_rule_snake, StrArr* wrappers) {
+  for (int32_t i = 0; i < st->lexer_rule_count; i++) {
+    LexerRule* r = &st->lexer_rules[i];
+    if (!_is_entrance_lexer_rule(st, r) || !r->push_mode || _mode_is_flat(st, r->push_mode)) continue;
+    const char* caller = r->mode_name ? r->mode_name : "DEFAULT_MODE";
+    if (_mode_is_flat(st, caller)) continue;
+    if (strcmp(caller, "DEFAULT_MODE") == 0 && strcmp(r->push_mode, "DEFAULT_MODE") == 0) continue;
+    const char* mapped = _edge_parser_rule(st, caller, r->push_mode);
+    if (!mapped) continue;
+    char* mapped_snake = _to_snake_case(mapped);
+    bool matches = strcmp(mapped_snake, parser_rule_snake) == 0;
+    free(mapped_snake);
+    if (!matches) continue;
+    char* edge = _edge_name(caller, r->push_mode);
+    if (_strarr_find(wrappers, edge) < 0) {
+      _strarr_push(wrappers, edge);
+    }
+    free(edge);
+  }
+}
+
+static void _collect_parser_tokens_from_atom(G4State* st, TokenTree* tt, PegRef ref) {
+  if (g4_grammar_peg_size(ref) <= 0) return;
+  Node_atom node = g4_grammar_load_atom(ref);
+  if (node.is.upper_ref) {
+    char* name = _get_tok_text(tt, node._upper_id);
+    char* snake = _to_snake_case(name);
+    if (_strarr_find(&st->parser_tokens, snake) < 0) {
+      _strarr_push(&st->parser_tokens, snake);
+    }
+    free(snake);
+    free(name);
+  } else if (node.is.group_atom) {
+    _collect_parser_tokens_from_alt_list(st, tt, node.alt_list);
+  }
+}
+
+static void _collect_parser_tokens_from_alt(G4State* st, TokenTree* tt, PegRef ref) {
+  if (g4_grammar_peg_size(ref) <= 0) return;
+  Node_alt alt = g4_grammar_load_alt(ref);
+  for (PegLink link = alt.labeled_element; g4_grammar_has_elem(&link); g4_grammar_get_next(&link)) {
+    PegRef le_ref = g4_grammar_get_lhs(&link);
+    Node_labeled_element le = g4_grammar_load_labeled_element(le_ref);
+    Node_element el = g4_grammar_load_element(le.element);
+    _collect_parser_tokens_from_atom(st, tt, el.atom);
+  }
+}
+
+static void _collect_parser_tokens_from_alt_list(G4State* st, TokenTree* tt, PegRef ref) {
+  if (g4_grammar_peg_size(ref) <= 0) return;
+  Node_alt_list al = g4_grammar_load_alt_list(ref);
+  for (PegLink link = al.alt; g4_grammar_has_elem(&link); g4_grammar_get_next(&link)) {
+    _collect_parser_tokens_from_alt(st, tt, g4_grammar_get_lhs(&link));
+  }
+}
 
 static void _walk_alt_list(G4State* st, TokenTree* tt, PegRef ref, bool is_lexer, Buf* out) {
   if (g4_grammar_peg_size(ref) <= 0) {
@@ -384,7 +520,7 @@ static void _walk_alt_list(G4State* st, TokenTree* tt, PegRef ref, bool is_lexer
   for (PegLink link = node.alt; g4_grammar_has_elem(&link); g4_grammar_get_next(&link)) {
     if (alt_count > 0) {
       if (is_lexer) {
-        _buf_puts(out, " | ");
+        _buf_putc(out, '|');
       } else {
         _buf_puts(out, "\n  ");
       }
@@ -398,6 +534,44 @@ static void _walk_alt_list(G4State* st, TokenTree* tt, PegRef ref, bool is_lexer
 static void _walk_alt(G4State* st, TokenTree* tt, PegRef ref, bool is_lexer, Buf* out) {
   if (g4_grammar_peg_size(ref) <= 0) {
     return;
+  }
+  if (false && !is_lexer) {
+    Node_alt check_node = g4_grammar_load_alt(ref);
+    PegLink check_link = check_node.labeled_element;
+    if (g4_grammar_has_elem(&check_link)) {
+      PegRef le_ref = g4_grammar_get_lhs(&check_link);
+      g4_grammar_get_next(&check_link);
+      if (!g4_grammar_has_elem(&check_link)) {
+        Node_labeled_element le = g4_grammar_load_labeled_element(le_ref);
+        Node_element el = g4_grammar_load_element(le.element);
+        if (!g4_grammar_has_elem(&el.ebnf_suffix)) {
+          Node_atom atom = g4_grammar_load_atom(el.atom);
+          if (atom.is.lower_ref) {
+            char* name = _get_tok_text(tt, atom._lower_id);
+            char* snake = _to_snake_case(name);
+            if (!st->current_rule_snake || strcmp(st->current_rule_snake, snake) != 0) {
+              StrArr wrappers;
+              _strarr_init(&wrappers);
+              _edge_wrappers_for_parser_rule(st, snake, &wrappers);
+              if (wrappers.len > 0) {
+                if (wrappers.len == 1) {
+                  _buf_puts(out, wrappers.items[0]);
+                } else {
+                  _buf_puts(out, snake);
+                }
+                _strarr_free(&wrappers);
+                free(snake);
+                free(name);
+                return;
+              }
+              _strarr_free(&wrappers);
+            }
+            free(snake);
+            free(name);
+          }
+        }
+      }
+    }
   }
   Node_alt node = g4_grammar_load_alt(ref);
   int32_t elem_count = 0;
@@ -417,24 +591,26 @@ static void _walk_element(G4State* st, TokenTree* tt, PegRef ref, bool is_lexer,
     return;
   }
   Node_element node = g4_grammar_load_element(ref);
-  _walk_atom(st, tt, node.atom, is_lexer, out, NULL, NULL);
+  bool has_suffix = g4_grammar_has_elem(&node.ebnf_suffix);
+  _walk_atom(st, tt, node.atom, is_lexer, out, is_lexer ? NULL : &st->current_rule_paren_counter,
+             st->current_rule_snake, has_suffix);
 
   // Handle EBNF suffix
-  if (g4_grammar_has_elem(&node.ebnf_suffix)) {
+  if (has_suffix) {
     Node_ebnf_suffix suffix = g4_grammar_load_ebnf_suffix(g4_grammar_get_lhs(&node.ebnf_suffix));
     if (suffix.is.maybe) {
       _buf_putc(out, '?');
-      if (g4_grammar_has_elem(&suffix._question$1)) {
+      if (g4_grammar_has_elem(&suffix._question$1) && !st->suppress_nongreedy_warning) {
         st->has_nongreedy = true;
       }
     } else if (suffix.is.star_suffix) {
       _buf_putc(out, '*');
-      if (g4_grammar_has_elem(&suffix._question$2)) {
+      if (g4_grammar_has_elem(&suffix._question$2) && !st->suppress_nongreedy_warning) {
         st->has_nongreedy = true;
       }
     } else if (suffix.is.plus_suffix) {
       _buf_putc(out, '+');
-      if (g4_grammar_has_elem(&suffix._question$3)) {
+      if (g4_grammar_has_elem(&suffix._question$3) && !st->suppress_nongreedy_warning) {
         st->has_nongreedy = true;
       }
     }
@@ -442,9 +618,8 @@ static void _walk_element(G4State* st, TokenTree* tt, PegRef ref, bool is_lexer,
 }
 
 static void _walk_atom(G4State* st, TokenTree* tt, PegRef ref, bool is_lexer, Buf* out, int32_t* paren_counter,
-                       const char* rule_snake_name) {
-  (void)paren_counter;
-  (void)rule_snake_name;
+                       const char* rule_snake_name, bool has_suffix) {
+  (void)has_suffix;
   if (g4_grammar_peg_size(ref) <= 0) {
     return;
   }
@@ -482,27 +657,25 @@ static void _walk_atom(G4State* st, TokenTree* tt, PegRef ref, bool is_lexer, Bu
   } else if (node.is.dot_atom) {
     _buf_putc(out, '.');
   } else if (node.is.not_atom) {
-    _buf_putc(out, '~');
+    _buf_puts(out, "[^");
     // Walk not_atom_inner
     if (g4_grammar_peg_size(node.not_atom_inner) > 0) {
       Node_not_atom_inner ni = g4_grammar_load_not_atom_inner(node.not_atom_inner);
       if (ni.is._string_lit) {
         char* lit = _get_tok_text(tt, ni._string_lit);
         char* regex = _antlr_str_to_regex(lit);
-        _buf_puts(out, regex);
+        _append_char_class_content(out, regex);
         free(regex);
         free(lit);
       } else if (ni.is._charset) {
         char* cs = _get_tok_text(tt, ni._charset);
         char* nest_cs = _antlr_charset_to_nest(cs);
-        _buf_puts(out, nest_cs);
+        _append_char_class_content(out, nest_cs);
         free(nest_cs);
         free(cs);
       } else if (ni.is._upper_id) {
         char* name = _get_tok_text(tt, ni._upper_id);
-        char* snake = _to_snake_case(name);
-        _buf_printf(out, "{%s}", snake);
-        free(snake);
+        _buf_printf(out, "#{%s}", name);
         free(name);
       } else if (ni.is._lower_id) {
         char* name = _get_tok_text(tt, ni._lower_id);
@@ -511,21 +684,30 @@ static void _walk_atom(G4State* st, TokenTree* tt, PegRef ref, bool is_lexer, Bu
         free(snake);
         free(name);
       } else if (ni.is._lparen) {
-        _buf_putc(out, '(');
-        _walk_alt_list(st, tt, ni.alt_list, is_lexer, out);
-        _buf_putc(out, ')');
+        Node_alt_list al = g4_grammar_load_alt_list(ni.alt_list);
+        for (PegLink link = al.alt; g4_grammar_has_elem(&link); g4_grammar_get_next(&link)) {
+          PegRef alt_ref = g4_grammar_get_lhs(&link);
+          Buf alt_buf;
+          _buf_init(&alt_buf);
+          _walk_alt(st, tt, alt_ref, is_lexer, &alt_buf);
+          _append_char_class_content(out, alt_buf.data);
+          _buf_free(&alt_buf);
+        }
       }
     }
+    _buf_putc(out, ']');
   } else if (node.is.upper_ref) {
     char* name = _get_tok_text(tt, node._upper_id);
     if (is_lexer) {
-      // In lexer context, uppercase refs are fragment/token references
-      char* snake = _to_snake_case(name);
-      _buf_printf(out, "{%s}", snake);
-      free(snake);
+      // In lexer context, uppercase refs are fragment/token references -> #{Name}.
+      // Scope-like references are expanded only when emitting scope bodies.
+      _buf_printf(out, "#{%s}", name);
     } else {
-      // In parser context, uppercase refs are token references
+      // In parser context, uppercase refs are token references -> @snake_case
       char* snake = _to_snake_case(name);
+      if (_strarr_find(&st->parser_tokens, snake) < 0) {
+        _strarr_push(&st->parser_tokens, snake);
+      }
       _buf_printf(out, "@%s", snake);
       free(snake);
     }
@@ -543,25 +725,63 @@ static void _walk_atom(G4State* st, TokenTree* tt, PegRef ref, bool is_lexer, Bu
       _walk_alt_list(st, tt, node.alt_list, is_lexer, out);
       _buf_putc(out, ')');
     } else {
-      // In parser context, emit as inline branch block
-      // Count alternatives
+      // In parser context: always emit as helper rule to avoid nested brackets
       Node_alt_list al = g4_grammar_load_alt_list(node.alt_list);
       int32_t count = 0;
       PegLink cnt = al.alt;
       for (; g4_grammar_has_elem(&cnt); g4_grammar_get_next(&cnt)) {
         count++;
       }
+      // Generate a helper rule for every parser parenthesized subexpression.
+      Buf helper_body;
+      _buf_init(&helper_body);
       if (count > 1) {
-        _buf_puts(out, "[");
+        _buf_puts(&helper_body, "[\n");
+        int32_t tag_idx = 0;
         for (PegLink link = al.alt; g4_grammar_has_elem(&link); g4_grammar_get_next(&link)) {
-          _buf_putc(out, ' ');
+          _buf_puts(&helper_body, "  ");
           PegRef alt_ref = g4_grammar_get_lhs(&link);
-          _walk_alt(st, tt, alt_ref, is_lexer, out);
+          _walk_alt(st, tt, alt_ref, is_lexer, &helper_body);
+          _buf_printf(&helper_body, " : alt_%d\n", ++tag_idx);
         }
-        _buf_puts(out, " ]");
+        _buf_putc(&helper_body, ']');
       } else {
-        _walk_alt_list(st, tt, node.alt_list, is_lexer, out);
+        PegLink link = al.alt;
+        if (g4_grammar_has_elem(&link)) {
+          PegRef alt_ref = g4_grammar_get_lhs(&link);
+          _walk_alt(st, tt, alt_ref, is_lexer, &helper_body);
+        }
       }
+      // Generate helper rule name
+      int32_t paren_id;
+      if (paren_counter) {
+        paren_id = ++(*paren_counter);
+      } else {
+        paren_id = ++st->current_rule_paren_counter;
+      }
+      char helper_name[256];
+      snprintf(helper_name, sizeof(helper_name), "_%s_%d",
+               rule_snake_name ? rule_snake_name : (st->current_rule_snake ? st->current_rule_snake : "anon"),
+               paren_id);
+      st->helpers.count++;
+      // Store helper
+      if (st->helpers.count > st->helpers.cap) {
+        st->helpers.cap = st->helpers.cap ? st->helpers.cap * 2 : 16;
+        st->helpers.items = realloc(st->helpers.items, sizeof(HelperRule) * st->helpers.cap);
+      }
+      st->helpers.items[st->helpers.count - 1] = (HelperRule){.name = strdup(helper_name), .body = helper_body.data};
+      StrArr wrappers;
+      _strarr_init(&wrappers);
+      _edge_wrappers_for_parser_rule(st, helper_name, &wrappers);
+      if (wrappers.len > 1) {
+        _buf_puts(out, helper_name);
+      } else if (wrappers.len == 1) {
+        _buf_puts(out, wrappers.items[0]);
+      } else {
+        // Emit reference to helper
+        _buf_puts(out, helper_name);
+      }
+      _strarr_free(&wrappers);
     }
   } else if (node.is.action_atom) {
     // Semantic actions and predicates are dropped
@@ -572,6 +792,52 @@ static void _walk_atom(G4State* st, TokenTree* tt, PegRef ref, bool is_lexer, Bu
       _buf_puts(out, "EOF");
     }
   }
+}
+
+static bool _action_contains_pop_mode(TokenTree* tt, PegRef brace_block_ref) {
+  if (g4_grammar_peg_size(brace_block_ref) <= 0) {
+    return false;
+  }
+  Node_brace_block bb = g4_grammar_load_brace_block(brace_block_ref);
+  for (PegLink link = bb.brace_content; g4_grammar_has_elem(&link); g4_grammar_get_next(&link)) {
+    PegRef content_ref = g4_grammar_get_lhs(&link);
+    Node_brace_content content = g4_grammar_load_brace_content(content_ref);
+    if (content.is._brace_text) {
+      char* text = _get_tok_text(tt, content._brace_text);
+      bool has_pop = strstr(text, "popMode") != NULL;
+      free(text);
+      if (has_pop) {
+        return true;
+      }
+    } else if (content.is.brace_block && _action_contains_pop_mode(tt, content.brace_block)) {
+      return true;
+    }
+  }
+  return false;
+}
+
+static bool _alt_has_pop_mode_action(TokenTree* tt, PegRef alt_ref) {
+  Node_alt alt = g4_grammar_load_alt(alt_ref);
+  for (PegLink link = alt.labeled_element; g4_grammar_has_elem(&link); g4_grammar_get_next(&link)) {
+    PegRef le_ref = g4_grammar_get_lhs(&link);
+    Node_labeled_element le = g4_grammar_load_labeled_element(le_ref);
+    Node_element el = g4_grammar_load_element(le.element);
+    Node_atom atom = g4_grammar_load_atom(el.atom);
+    if (atom.is.action_atom && _action_contains_pop_mode(tt, atom.brace_block)) {
+      return true;
+    }
+  }
+  return false;
+}
+
+static bool _alt_list_has_pop_mode_action(TokenTree* tt, PegRef alt_list_ref) {
+  Node_alt_list al = g4_grammar_load_alt_list(alt_list_ref);
+  for (PegLink link = al.alt; g4_grammar_has_elem(&link); g4_grammar_get_next(&link)) {
+    if (_alt_has_pop_mode_action(tt, g4_grammar_get_lhs(&link))) {
+      return true;
+    }
+  }
+  return false;
 }
 
 // --- Walk a rule definition and collect it ---
@@ -603,12 +869,15 @@ static void _walk_rule_def(G4State* st, TokenTree* tt, PegRef ref) {
     lr.name = rule_name;
     lr.snake_name = _to_snake_case(rule_name);
     lr.is_fragment = is_fragment;
+    lr.from_lexer_grammar = st->current_file_is_lexer_grammar;
+    lr.lexer_grammar_index = st->current_lexer_grammar_index;
     lr.mode_name = st->current_mode ? strdup(st->current_mode) : NULL;
     lr.alt_list_ref = node.alt_list;
     lr.tt = tt;
 
     // Process lexer commands
     if (g4_grammar_has_elem(&node.lexer_commands)) {
+      lr.has_command = true;
       PegRef cmds_ref = g4_grammar_get_lhs(&node.lexer_commands);
       Node_lexer_commands cmds = g4_grammar_load_lexer_commands(cmds_ref);
       for (PegLink link = cmds.lexer_command; g4_grammar_has_elem(&link); g4_grammar_get_next(&link)) {
@@ -648,6 +917,12 @@ static void _walk_rule_def(G4State* st, TokenTree* tt, PegRef ref) {
       }
     }
 
+    if (!lr.pop_mode && _alt_list_has_pop_mode_action(tt, lr.alt_list_ref)) {
+      lr.pop_mode = true;
+    }
+    if (lr.pop_mode) {
+      lr.is_fragment = false;
+    }
     if (is_fragment) {
       _strarr_push(&st->fragments, rule_name);
     }
@@ -713,8 +988,12 @@ static void _process_file(G4State* st, const char* filename) {
   Node_grammar_decl gdecl = g4_grammar_load_grammar_decl(main_node.grammar_decl);
   Node_grammar_type gtype = g4_grammar_load_grammar_type(gdecl.grammar_type);
 
+  st->current_file_is_lexer_grammar = false;
+  st->current_lexer_grammar_index = -1;
   if (gtype.is.lexer_type) {
     st->is_lexer = true;
+    st->current_file_is_lexer_grammar = true;
+    st->current_lexer_grammar_index = ++st->lexer_grammar_count;
   } else if (gtype.is.parser_type) {
     st->is_parser = true;
   } else {
@@ -758,8 +1037,254 @@ static void _process_file(G4State* st, const char* filename) {
 
 // --- Nest output generation ---
 
+static LexerRule* _find_lexer_rule(G4State* st, const char* name) {
+  for (int32_t i = st->lexer_rule_count - 1; i >= 0; i--) {
+    if (strcmp(st->lexer_rules[i].name, name) == 0) {
+      return &st->lexer_rules[i];
+    }
+  }
+  return NULL;
+}
+
 static void _emit_lexer_rule_body(G4State* st, LexerRule* r, Buf* out) {
   _walk_alt_list(st, r->tt, r->alt_list_ref, true, out);
+}
+
+static char* _lexer_effective_token_snake(LexerRule* r) {
+  if (r->is_skipped) {
+    return NULL;
+  }
+  if (r->type_alias) {
+    return _to_snake_case(r->type_alias);
+  }
+  if (r->has_command) {
+    return NULL;
+  }
+  return strdup(r->snake_name);
+}
+
+static void _emit_end_action(Buf* out, const char* tok_name, bool skipped) {
+  if (skipped) {
+    _buf_puts(out, " .end");
+  } else {
+    _buf_printf(out, " @%s .end", tok_name);
+  }
+}
+
+static bool _alt_single_upper(TokenTree* tt, PegRef alt_ref, char** name_out) {
+  Node_alt alt = g4_grammar_load_alt(alt_ref);
+  PegLink link = alt.labeled_element;
+  if (!g4_grammar_has_elem(&link)) return false;
+  PegRef le_ref = g4_grammar_get_lhs(&link);
+  g4_grammar_get_next(&link);
+  if (g4_grammar_has_elem(&link)) return false;
+  Node_labeled_element le = g4_grammar_load_labeled_element(le_ref);
+  Node_element el = g4_grammar_load_element(le.element);
+  if (g4_grammar_has_elem(&el.ebnf_suffix)) return false;
+  Node_atom atom = g4_grammar_load_atom(el.atom);
+  if (!atom.is.upper_ref) return false;
+  *name_out = _get_tok_text(tt, atom._upper_id);
+  return true;
+}
+
+static void _emit_scope_end_alts(G4State* st, TokenTree* tt, PegRef alt_list_ref, const char* tok_name, bool skipped,
+                                 Buf* out);
+
+static void _emit_scope_end_ref(G4State* st, const char* name, const char* tok_name, bool skipped, Buf* out) {
+  LexerRule* ref = _find_lexer_rule(st, name);
+  if (ref && ref->is_fragment && ref->needs_scope) {
+    _emit_scope_end_alts(st, ref->tt, ref->alt_list_ref, tok_name, skipped, out);
+  } else if (ref && (ref->is_recursive || ref->needs_scope) && !ref->is_fragment) {
+    _buf_printf(out, "  %s", ref->snake_name);
+    _emit_end_action(out, tok_name, skipped);
+    _buf_putc(out, '\n');
+  } else {
+    _buf_printf(out, "  /#{%s}/", name);
+    _emit_end_action(out, tok_name, skipped);
+    _buf_putc(out, '\n');
+  }
+}
+
+static void _emit_scope_end_alts(G4State* st, TokenTree* tt, PegRef alt_list_ref, const char* tok_name, bool skipped,
+                                 Buf* out) {
+  Node_alt_list al = g4_grammar_load_alt_list(alt_list_ref);
+  for (PegLink link = al.alt; g4_grammar_has_elem(&link); g4_grammar_get_next(&link)) {
+    PegRef alt_ref = g4_grammar_get_lhs(&link);
+    char* name = NULL;
+    if (_alt_single_upper(tt, alt_ref, &name)) {
+      _emit_scope_end_ref(st, name, tok_name, skipped, out);
+      free(name);
+    } else {
+      Buf body;
+      _buf_init(&body);
+      _walk_alt(st, tt, alt_ref, true, &body);
+      _buf_printf(out, "  /%s/", body.data);
+      _emit_end_action(out, tok_name, skipped);
+      _buf_putc(out, '\n');
+      _buf_free(&body);
+    }
+  }
+}
+
+static bool _lexer_rule_needs_scope(G4State* st, LexerRule* r);
+
+static bool _alt_needs_scope(G4State* st, TokenTree* tt, PegRef alt_ref) {
+  Node_alt alt = g4_grammar_load_alt(alt_ref);
+  for (PegLink link = alt.labeled_element; g4_grammar_has_elem(&link); g4_grammar_get_next(&link)) {
+    PegRef le_ref = g4_grammar_get_lhs(&link);
+    Node_labeled_element le = g4_grammar_load_labeled_element(le_ref);
+    Node_element el = g4_grammar_load_element(le.element);
+    if (g4_grammar_has_elem(&el.ebnf_suffix)) continue;
+    Node_atom atom = g4_grammar_load_atom(el.atom);
+    if (atom.is.upper_ref) {
+      char* name = _get_tok_text(tt, atom._upper_id);
+      LexerRule* ref = _find_lexer_rule(st, name);
+      bool needs = ref && _lexer_rule_needs_scope(st, ref);
+      free(name);
+      if (needs) return true;
+    } else if (atom.is.group_atom) {
+      Node_alt_list al = g4_grammar_load_alt_list(atom.alt_list);
+      for (PegLink alink = al.alt; g4_grammar_has_elem(&alink); g4_grammar_get_next(&alink)) {
+        if (_alt_needs_scope(st, tt, g4_grammar_get_lhs(&alink))) return true;
+      }
+    }
+  }
+  return false;
+}
+
+static bool _lexer_rule_needs_scope(G4State* st, LexerRule* r) {
+  if (r->is_recursive || r->needs_scope) return true;
+  if (r->needs_scope_traced) return false;
+  r->needs_scope_traced = true;
+  Node_alt_list al = g4_grammar_load_alt_list(r->alt_list_ref);
+  for (PegLink link = al.alt; g4_grammar_has_elem(&link); g4_grammar_get_next(&link)) {
+    if (_alt_needs_scope(st, r->tt, g4_grammar_get_lhs(&link))) {
+      r->needs_scope = true;
+      return true;
+    }
+  }
+  return false;
+}
+
+static void _emit_scope_end_element(G4State* st, TokenTree* tt, PegRef element_ref, const char* tok_name, bool skipped,
+                                    Buf* out) {
+  Node_element el = g4_grammar_load_element(element_ref);
+  Node_atom atom = g4_grammar_load_atom(el.atom);
+  if (!g4_grammar_has_elem(&el.ebnf_suffix) && atom.is.upper_ref) {
+    char* name = _get_tok_text(tt, atom._upper_id);
+    _emit_scope_end_ref(st, name, tok_name, skipped, out);
+    free(name);
+  } else if (!g4_grammar_has_elem(&el.ebnf_suffix) && atom.is.group_atom) {
+    _emit_scope_end_alts(st, tt, atom.alt_list, tok_name, skipped, out);
+  } else {
+    Buf body;
+    _buf_init(&body);
+    _walk_element(st, tt, element_ref, true, &body);
+    _buf_printf(out, "  /%s/", body.data);
+    _emit_end_action(out, tok_name, skipped);
+    _buf_putc(out, '\n');
+    _buf_free(&body);
+  }
+}
+
+static void _emit_scope_tail_alt(G4State* st, TokenTree* tt, PegRef alt_ref, int32_t tail_start, const char* tok_name,
+                                 bool skipped, Buf* out) {
+  Node_alt alt = g4_grammar_load_alt(alt_ref);
+  PegLink link = alt.labeled_element;
+  int32_t idx = 0;
+  for (; idx < tail_start && g4_grammar_has_elem(&link); idx++) {
+    g4_grammar_get_next(&link);
+  }
+  if (!g4_grammar_has_elem(&link)) {
+    _buf_puts(out, "  /./ .unparse");
+    _emit_end_action(out, tok_name, skipped);
+    _buf_putc(out, '\n');
+    return;
+  }
+  for (; g4_grammar_has_elem(&link); g4_grammar_get_next(&link)) {
+    PegRef le_ref = g4_grammar_get_lhs(&link);
+    Node_labeled_element le = g4_grammar_load_labeled_element(le_ref);
+    _emit_scope_end_element(st, tt, le.element, tok_name, skipped, out);
+  }
+}
+
+static void _emit_scope_like_rule(G4State* st, LexerRule* r, Buf* out) {
+  Node_alt_list al = g4_grammar_load_alt_list(r->alt_list_ref);
+  char* tok_name = _lexer_effective_token_snake(r);
+  bool skipped = tok_name == NULL || !_parser_uses_token(st, tok_name);
+  bool emitted = false;
+  for (PegLink alink = al.alt; g4_grammar_has_elem(&alink); g4_grammar_get_next(&alink)) {
+    PegRef alt_ref = g4_grammar_get_lhs(&alink);
+    Node_alt alt = g4_grammar_load_alt(alt_ref);
+    PegLink elem_link = alt.labeled_element;
+    if (!g4_grammar_has_elem(&elem_link)) continue;
+    PegRef begin_le_ref = g4_grammar_get_lhs(&elem_link);
+    Node_labeled_element begin_le = g4_grammar_load_labeled_element(begin_le_ref);
+    Node_element begin_el = g4_grammar_load_element(begin_le.element);
+    Node_atom begin_atom = g4_grammar_load_atom(begin_el.atom);
+    bool begin_is_scope = false;
+    char* begin_scope_name = NULL;
+    if (!g4_grammar_has_elem(&begin_el.ebnf_suffix)) {
+      if (begin_atom.is.group_atom) {
+        Node_alt_list begin_al = g4_grammar_load_alt_list(begin_atom.alt_list);
+        for (PegLink blink = begin_al.alt; g4_grammar_has_elem(&blink); g4_grammar_get_next(&blink)) {
+          PegRef begin_alt_ref = g4_grammar_get_lhs(&blink);
+          char* name = NULL;
+          if (_alt_single_upper(r->tt, begin_alt_ref, &name)) {
+            LexerRule* ref = _find_lexer_rule(st, name);
+            if (ref && _lexer_rule_needs_scope(st, ref)) {
+              begin_is_scope = true;
+              begin_scope_name = name;
+              break;
+            }
+            free(name);
+          } else if (_alt_needs_scope(st, r->tt, begin_alt_ref)) {
+            begin_is_scope = true;
+            break;
+          }
+        }
+      } else if (begin_atom.is.upper_ref) {
+        char* name = _get_tok_text(r->tt, begin_atom._upper_id);
+        LexerRule* ref = _find_lexer_rule(st, name);
+        begin_is_scope = ref && _lexer_rule_needs_scope(st, ref);
+        if (begin_is_scope) {
+          begin_scope_name = name;
+        } else {
+          free(name);
+        }
+      }
+    }
+
+    if (begin_is_scope) {
+      if (!emitted) {
+        _buf_printf(out, "%s = /./ .unparse .begin {\n", r->snake_name);
+        emitted = true;
+      }
+      _emit_scope_end_element(st, r->tt, begin_le.element, tok_name, skipped, out);
+      _emit_scope_tail_alt(st, r->tt, alt_ref, 1, tok_name, skipped, out);
+      free(begin_scope_name);
+    } else {
+      Buf begin_buf;
+      _buf_init(&begin_buf);
+      _walk_element(st, r->tt, begin_le.element, true, &begin_buf);
+      if (!emitted) {
+        _buf_printf(out, "%s = /%s/ .begin {\n", r->snake_name, begin_buf.data);
+        emitted = true;
+      } else {
+        _buf_printf(out, "  /%s/ .unparse\n", begin_buf.data);
+      }
+      _emit_scope_tail_alt(st, r->tt, alt_ref, 1, tok_name, skipped, out);
+      _buf_free(&begin_buf);
+    }
+  }
+  if (!emitted) {
+    _buf_printf(out, "%s = /.*/ .begin {\n", r->snake_name);
+    _buf_puts(out, "  /./ .unparse");
+    _emit_end_action(out, tok_name, skipped);
+    _buf_putc(out, '\n');
+  }
+  _buf_puts(out, "}\n");
+  free(tok_name);
 }
 
 static void _emit_parser_rule_body(G4State* st, ParserRule* r, Buf* out) {
@@ -781,37 +1306,95 @@ static void _emit_parser_rule_body(G4State* st, ParserRule* r, Buf* out) {
     PegRef alt_ref = g4_grammar_get_lhs(&link);
     _walk_alt(st, r->tt, alt_ref, false, out);
   } else {
-    // Multiple alternatives — emit as branch block
+    // Multiple alternatives — emit as branch block with explicit tags
     _buf_puts(out, "[\n");
+    int32_t tag_idx = 0;
     for (PegLink link = node.alt; g4_grammar_has_elem(&link); g4_grammar_get_next(&link)) {
       PegRef alt_ref = g4_grammar_get_lhs(&link);
       _buf_puts(out, "  ");
       _walk_alt(st, r->tt, alt_ref, false, out);
-      _buf_putc(out, '\n');
+      _buf_printf(out, " : alt_%d\n", ++tag_idx);
     }
     _buf_putc(out, ']');
   }
+}
+
+static bool _is_entrance_lexer_rule(G4State* st, LexerRule* r) {
+  return !r->from_lexer_grammar || r->lexer_grammar_index == st->lexer_grammar_count;
+}
+
+static bool _is_entrance_mode(G4State* st, const char* mode) {
+  for (int32_t i = 0; i < st->lexer_rule_count; i++) {
+    LexerRule* r = &st->lexer_rules[i];
+    if (!_is_entrance_lexer_rule(st, r)) continue;
+    if (r->mode_name && strcmp(r->mode_name, mode) == 0) return true;
+    if (r->push_mode && strcmp(r->push_mode, mode) == 0) return true;
+  }
+  return false;
+}
+
+static const char* _find_mapping(G4State* st, const char* name) {
+  for (int32_t i = 0; i < st->mode_map_count; i++) {
+    if (strcmp(st->mode_maps[i].mode_name, name) == 0) {
+      return st->mode_maps[i].parser_rule;
+    }
+  }
+  return NULL;
+}
+
+static bool _mode_is_flat(G4State* st, const char* mode) {
+  const char* mapped = _find_mapping(st, mode);
+  return mapped && mapped[0] == '\0';
+}
+
+static char* _edge_name(const char* caller, const char* callee) {
+  char* caller_snake = _to_snake_case(caller);
+  char* callee_snake = _to_snake_case(callee);
+  int32_t len = snprintf(NULL, 0, "%s__%s", caller_snake, callee_snake);
+  char* name = malloc(len + 1);
+  snprintf(name, len + 1, "%s__%s", caller_snake, callee_snake);
+  free(caller_snake);
+  free(callee_snake);
+  return name;
+}
+
+static char* _mode_macro_name(const char* mode) {
+  return _to_snake_case(mode);
 }
 
 static void _emit_nest_output(G4State* st, FILE* outfp) {
   Buf out;
   _buf_init(&out);
 
+  for (int32_t i = 0; i < st->parser_rule_count; i++) {
+    _collect_parser_tokens_from_alt_list(st, st->parser_rules[i].tt, st->parser_rules[i].alt_list_ref);
+  }
+
   // Collect ignored tokens
   StrArr ignore_tokens;
   _strarr_init(&ignore_tokens);
   for (int32_t i = 0; i < st->lexer_rule_count; i++) {
     LexerRule* r = &st->lexer_rules[i];
-    if (r->is_fragment || r->type_alias) {
+    if (!_is_entrance_lexer_rule(st, r) || r->is_fragment || r->is_skipped) {
       continue;
     }
-    if (r->is_hidden || r->is_skipped) {
-      char tok_name[256];
-      snprintf(tok_name, sizeof(tok_name), "@%s", r->snake_name);
-      if (_strarr_find(&ignore_tokens, tok_name) < 0) {
-        _strarr_push(&ignore_tokens, tok_name);
+    if (r->is_hidden) {
+      char* token_snake = _lexer_effective_token_snake(r);
+      if (token_snake) {
+        char tok_name[256];
+        snprintf(tok_name, sizeof(tok_name), "@%s", token_snake);
+        free(token_snake);
+        if (_strarr_find(&ignore_tokens, tok_name) < 0) {
+          _strarr_push(&ignore_tokens, tok_name);
+        }
       }
     }
+  }
+
+  if (st->command_line) {
+    _buf_printf(&out, "# generated by nest.g4 %s\n", st->command_line);
+  } else {
+    _buf_puts(&out, "# generated by nest.g4\n");
   }
 
   // --- VPA Section ---
@@ -826,89 +1409,431 @@ static void _emit_nest_output(G4State* st, FILE* outfp) {
     _buf_puts(&out, "\n\n");
   }
 
-  // Main scope wraps default and EOF
+  // %define only for pure regexp rules that are referenced by another lexer
+  // regexp/scope body. A lexer command changes how the rule itself emits in its
+  // mode, but references to the rule still need its plain regexp body. This is
+  // why DEFAULT_MODE `LPAREN: '(' -> pushMode(Inside)` may still get a
+  // `%define LPAREN`, while unreferenced alias rules like
+  // `Inside_RPAREN: RPAREN -> type(RPAREN)` do not get useless definitions.
+  for (int32_t i = 0; i < st->lexer_rule_count; i++) {
+    LexerRule* r = &st->lexer_rules[i];
+    if (r->is_recursive || r->needs_scope ||
+        (r->has_command && !r->type_alias && !r->is_skipped && !r->is_hidden && !r->push_mode && !r->pop_mode)) {
+      continue;
+    }
+    bool needed = false;
+    char ref_pattern[256];
+    snprintf(ref_pattern, sizeof(ref_pattern), "#{%s}", r->name);
+    for (int32_t j = 0; j < st->lexer_rule_count && !needed; j++) {
+      if (i == j) continue;
+      LexerRule* user = &st->lexer_rules[j];
+      Buf user_body;
+      _buf_init(&user_body);
+      _emit_lexer_rule_body(st, user, &user_body);
+      needed = strstr(user_body.data, ref_pattern) != NULL;
+      _buf_free(&user_body);
+    }
+    if (!needed) {
+      continue;
+    }
+    Buf body;
+    _buf_init(&body);
+    _emit_lexer_rule_body(st, r, &body);
+    _buf_printf(&out, "%%define %s /%s/\n", r->name, body.data);
+    _buf_free(&body);
+  }
+  _buf_putc(&out, '\n');
+
+  // Main scope wraps the default lexer macro and is the only generated VPA
+  // scope that handles source EOF.
   _buf_puts(&out, "main = {\n");
+  _buf_puts(&out, "  *default_mode\n");
+  _buf_puts(&out, "  EOF .end\n");
+  _buf_puts(&out, "}\n\n");
+
+  _buf_puts(&out, "*default_mode = {\n");
 
   // Emit default mode rules
   for (int32_t i = 0; i < st->lexer_rule_count; i++) {
     LexerRule* r = &st->lexer_rules[i];
-    if (r->is_fragment) {
+    if (!_is_entrance_lexer_rule(st, r) || r->is_fragment || r->is_recursive) {
       continue;
     }
     const char* rule_mode = r->mode_name ? r->mode_name : "DEFAULT_MODE";
-    if (strcmp(rule_mode, "DEFAULT_MODE") != 0) {
+    bool flat_mode = strcmp(rule_mode, "DEFAULT_MODE") != 0 && _mode_is_flat(st, rule_mode);
+    if (strcmp(rule_mode, "DEFAULT_MODE") != 0 && !flat_mode) {
       continue;
     }
-    if (r->type_alias) {
+    char* tok_name_for_filter = _lexer_effective_token_snake(r);
+    bool token_used = !tok_name_for_filter || _parser_uses_token(st, tok_name_for_filter);
+    bool omit_unused_default = tok_name_for_filter && !token_used && !r->has_command;
+    if (omit_unused_default) {
+      free(tok_name_for_filter);
+      continue;
+    }
+    if (r->needs_scope) {
+      if (token_used) {
+        _buf_printf(&out, "  %s\n", r->snake_name);
+      }
+      free(tok_name_for_filter);
       continue;
     }
 
     Buf body;
     _buf_init(&body);
     _emit_lexer_rule_body(st, r, &body);
-    _buf_printf(&out, "  /%s/ @%s\n", body.data, r->snake_name);
+    if (r->is_skipped || !token_used) {
+      _buf_printf(&out, "  /%s/\n", body.data);
+    } else {
+      char* tok_name = tok_name_for_filter;
+      tok_name_for_filter = NULL;
+      if (r->pop_mode) {
+        _buf_printf(&out, "  /%s/", body.data);
+        if (tok_name) {
+          _buf_printf(&out, " @%s", tok_name);
+        }
+        _buf_puts(&out, " .end\n");
+      } else if (r->push_mode && flat_mode && !_mode_is_flat(st, r->push_mode)) {
+        _buf_printf(&out, "  /%s/", body.data);
+        if (tok_name) {
+          _buf_printf(&out, " @%s", tok_name);
+        }
+        _buf_puts(&out, " .begin\n");
+      } else if (r->push_mode && !_mode_is_flat(st, r->push_mode)) {
+        if (strcmp(rule_mode, "DEFAULT_MODE") == 0 && strcmp(r->push_mode, "DEFAULT_MODE") == 0) {
+          _buf_printf(&out, "  /%s/", body.data);
+          if (tok_name) {
+            _buf_printf(&out, " @%s", tok_name);
+          }
+          _buf_puts(&out, " .begin\n");
+        } else if (flat_mode && strcmp(r->push_mode, "DEFAULT_MODE") == 0) {
+          _buf_printf(&out, "  /%s/", body.data);
+          if (tok_name) {
+            _buf_printf(&out, " @%s", tok_name);
+          }
+          _buf_puts(&out, " .begin\n");
+        } else {
+          char* wrapper_name = _edge_name(rule_mode, r->push_mode);
+          _buf_printf(&out, "  %s\n", wrapper_name);
+          free(wrapper_name);
+        }
+      } else if (!tok_name || strcmp(tok_name, "reserved") == 0) {
+        _buf_printf(&out, "  /%s/\n", body.data);
+      } else {
+        _buf_printf(&out, "  /%s/ @%s\n", body.data, tok_name);
+      }
+      free(tok_name);
+    }
+    free(tok_name_for_filter);
     _buf_free(&body);
   }
 
-  _buf_puts(&out, "  EOF .end\n");
-  _buf_puts(&out, "}\n");
-
-  // Emit non-default mode scopes
-  for (int32_t m = 0; m < st->modes.len; m++) {
-    const char* mode = st->modes.items[m];
-    char* scope_name = _to_snake_case(mode);
-
-    // Find the rule that pushes into this mode to determine the begin pattern
-    _buf_printf(&out, "\n# Mode: %s\n", mode);
-
-    // Find which rule triggers this mode (pushMode) to determine begin/end
-    bool emitted_scope_begin = false;
-    for (int32_t i = 0; i < st->lexer_rule_count; i++) {
-      LexerRule* r = &st->lexer_rules[i];
-      if (r->push_mode && strcmp(r->push_mode, mode) == 0) {
-        Buf body;
-        _buf_init(&body);
-        _emit_lexer_rule_body(st, r, &body);
-        _buf_printf(&out, "%s = /%s/ .begin @%s {\n", scope_name, body.data, r->snake_name);
-        _buf_free(&body);
-        emitted_scope_begin = true;
-        break;
+  // Reference recursive scopes and mode scopes for reachability
+  for (int32_t i = 0; i < st->lexer_rule_count; i++) {
+    LexerRule* r = &st->lexer_rules[i];
+    if (_is_entrance_lexer_rule(st, r) && (r->is_recursive || r->needs_scope) && !r->is_fragment) {
+      const char* rule_mode = r->mode_name ? r->mode_name : "DEFAULT_MODE";
+      char* tok_name = _lexer_effective_token_snake(r);
+      bool token_used = r->is_skipped || r->is_hidden || _parser_uses_token(st, tok_name);
+      free(tok_name);
+      if (!token_used) continue;
+      if (r->needs_scope && r->type_alias && !r->is_fragment) {
+        continue;
+      }
+      if (strcmp(rule_mode, "DEFAULT_MODE") == 0 || _mode_is_flat(st, rule_mode)) {
+        _buf_printf(&out, "  %s\n", r->snake_name);
       }
     }
-    if (!emitted_scope_begin) {
-      _buf_printf(&out, "# %s scope (no pushMode trigger found)\n", scope_name);
-      free(scope_name);
+  }
+  for (int32_t m = 0; m < st->modes.len; m++) {
+    if (!_is_entrance_mode(st, st->modes.items[m]) || _mode_is_flat(st, st->modes.items[m])) continue;
+  }
+  for (int32_t i = 0; i < st->lexer_rule_count; i++) {
+    LexerRule* r = &st->lexer_rules[i];
+    if (!_is_entrance_lexer_rule(st, r) || !r->needs_scope || r->is_fragment) continue;
+    const char* rule_mode = r->mode_name ? r->mode_name : "DEFAULT_MODE";
+    if (strcmp(rule_mode, "DEFAULT_MODE") == 0 || _mode_is_flat(st, rule_mode)) continue;
+    _buf_printf(&out, "  %s\n", r->snake_name);
+  }
+
+  _buf_puts(&out, "}\n");
+
+  // Emit recursive lexer rules as scopes
+  for (int32_t i = 0; i < st->lexer_rule_count; i++) {
+    LexerRule* r = &st->lexer_rules[i];
+    if (!_is_entrance_lexer_rule(st, r) || r->is_fragment || (!r->is_recursive && !r->needs_scope)) continue;
+    const char* rule_mode = r->mode_name ? r->mode_name : "DEFAULT_MODE";
+    if (strcmp(rule_mode, "DEFAULT_MODE") != 0 && !_mode_is_flat(st, rule_mode)) continue;
+    char* scope_tok_name = _lexer_effective_token_snake(r);
+    if (scope_tok_name && !r->is_hidden && !_parser_uses_token(st, scope_tok_name)) {
+      free(scope_tok_name);
+      continue;
+    }
+    free(scope_tok_name);
+
+    _buf_printf(&out, "\n# Scope-like lexer rule: %s\n", r->name);
+
+    if (!r->is_recursive && r->needs_scope) {
+      _emit_scope_like_rule(st, r, &out);
       continue;
     }
 
-    // Emit mode rules
+    // Walk the body to extract parts
+    st->suppress_nongreedy_warning = true;
+    Node_alt_list al = g4_grammar_load_alt_list(r->alt_list_ref);
+    PegLink alt_link = al.alt;
+    PegRef alt_ref = g4_grammar_get_lhs(&alt_link);
+    Node_alt alt_node = g4_grammar_load_alt(alt_ref);
+
+    // Collect all elements
+    Buf begin_buf, end_buf;
+    _buf_init(&begin_buf);
+    _buf_init(&end_buf);
+    typedef struct { Buf buf; bool is_self; bool is_nongreedy; } ScopePart;
+    ScopePart* parts = NULL;
+    int32_t part_count = 0;
+    int32_t part_cap = 0;
+
+    int32_t elem_idx = 0;
+    for (PegLink link = alt_node.labeled_element; g4_grammar_has_elem(&link); g4_grammar_get_next(&link)) {
+      PegRef le_ref = g4_grammar_get_lhs(&link);
+      Node_labeled_element le = g4_grammar_load_labeled_element(le_ref);
+      Node_element el = g4_grammar_load_element(le.element);
+
+      Buf elem_buf;
+      _buf_init(&elem_buf);
+      _walk_atom(st, r->tt, el.atom, true, &elem_buf, NULL, NULL, false);
+
+      // Check if this element is a self-reference
+      char self_ref[256];
+      snprintf(self_ref, sizeof(self_ref), "#{%s}", r->name);
+      bool is_self = (strcmp(elem_buf.data, self_ref) == 0);
+
+      // Check if this element is a group containing self-reference
+      bool group_has_self = (!is_self && strstr(elem_buf.data, self_ref) != NULL);
+
+      if (elem_idx == 0 && !is_self && !group_has_self) {
+        // First non-self element: begin pattern
+        _buf_puts(&begin_buf, elem_buf.data);
+        // Apply suffix
+        if (g4_grammar_has_elem(&el.ebnf_suffix)) {
+          Node_ebnf_suffix suffix = g4_grammar_load_ebnf_suffix(g4_grammar_get_lhs(&el.ebnf_suffix));
+          if (suffix.is.star_suffix) _buf_putc(&begin_buf, '*');
+          else if (suffix.is.plus_suffix) _buf_putc(&begin_buf, '+');
+          else if (suffix.is.maybe) _buf_putc(&begin_buf, '?');
+        }
+      } else {
+        // Remaining elements: check if last non-self, non-group is end
+        if (part_count >= part_cap) {
+          part_cap = part_cap ? part_cap * 2 : 8;
+          parts = realloc(parts, sizeof(ScopePart) * part_cap);
+        }
+        parts[part_count].is_self = is_self || group_has_self;
+        parts[part_count].is_nongreedy = false;
+        _buf_init(&parts[part_count].buf);
+        _buf_puts(&parts[part_count].buf, elem_buf.data);
+        if (g4_grammar_has_elem(&el.ebnf_suffix)) {
+          Node_ebnf_suffix suffix = g4_grammar_load_ebnf_suffix(g4_grammar_get_lhs(&el.ebnf_suffix));
+          if (suffix.is.star_suffix) {
+            _buf_putc(&parts[part_count].buf, '*');
+            if (g4_grammar_has_elem(&suffix._question$2)) {
+              parts[part_count].is_nongreedy = true;
+            }
+          } else if (suffix.is.plus_suffix) {
+            _buf_putc(&parts[part_count].buf, '+');
+            if (g4_grammar_has_elem(&suffix._question$3)) {
+              parts[part_count].is_nongreedy = true;
+            }
+          } else if (suffix.is.maybe) {
+            _buf_putc(&parts[part_count].buf, '?');
+            if (g4_grammar_has_elem(&suffix._question$1)) {
+              parts[part_count].is_nongreedy = true;
+            }
+          }
+        }
+        part_count++;
+      }
+      _buf_free(&elem_buf);
+      elem_idx++;
+    }
+
+    // Last non-self part is the end pattern
+    int32_t end_idx = -1;
+    for (int32_t p = part_count - 1; p >= 0; p--) {
+      if (!parts[p].is_self) {
+        end_idx = p;
+        _buf_puts(&end_buf, parts[p].buf.data);
+        break;
+      }
+    }
+
+    bool close_first = false;
+    for (int32_t p = 0; p < part_count; p++) {
+      if (p == end_idx) continue;
+      if (parts[p].is_nongreedy) {
+        close_first = true;
+        break;
+      }
+    }
+
+    const char* rule_prefix = r->is_fragment ? "*" : "";
+    const char* begin_action = r->is_fragment ? "" : " @%s";
+
+    // Emit scope
+    _buf_printf(&out, "%s%s = /%s/ .begin", rule_prefix, r->snake_name, begin_buf.data);
+    if (!r->is_fragment) {
+      _buf_printf(&out, begin_action, r->snake_name);
+    }
+    _buf_puts(&out, " {\n");
+    if (close_first) {
+      if (end_idx >= 0) {
+        _buf_printf(&out, "  /%s/ .end\n", end_buf.data);
+      } else {
+        _buf_puts(&out, "  /./ .end\n");
+      }
+    }
+    // Emit self-reference and inner parts (excluding begin and end)
+    for (int32_t p = 0; p < part_count; p++) {
+      if (p == end_idx) continue;
+      if (parts[p].is_self) {
+        // Emit self-reference
+        _buf_printf(&out, "  %s\n", r->snake_name);
+        // If the buffer contains more than just self-ref (group with alternates),
+        // extract and emit the non-self alternatives as /regex/ patterns
+        char self_ref_str[256];
+        snprintf(self_ref_str, sizeof(self_ref_str), "#{%s}", r->name);
+        const char* buf = parts[p].buf.data;
+        // Look for content after removing self-ref and group markers
+        // Pattern: (*self_ref|<other>)suffix
+        if (buf[0] == '(') {
+          // Find the closing paren (may have suffix after it)
+          const char* close_paren = strrchr(buf, ')');
+          if (close_paren) {
+          // Find alternatives separated by |
+          const char* search = buf + 1; // skip (
+          while (search < close_paren) {
+            // Skip to next | or )
+            const char* pipe = NULL;
+            for (const char* s = search; s < close_paren; s++) {
+              if (*s == '|') { pipe = s; break; }
+            }
+            if (!pipe) pipe = close_paren;
+            // Extract this alternative
+            int32_t alt_len = (int32_t)(pipe - search);
+            char* alt = malloc(alt_len + 1);
+            memcpy(alt, search, alt_len);
+            alt[alt_len] = '\0';
+            // Trim spaces
+            char* trimmed = alt;
+            while (*trimmed == ' ') trimmed++;
+            int32_t tlen = (int32_t)strlen(trimmed);
+            while (tlen > 0 && trimmed[tlen - 1] == ' ') trimmed[--tlen] = '\0';
+            // Skip if it's the self-reference
+            if (strlen(trimmed) > 0 && strcmp(trimmed, self_ref_str) != 0) {
+              if (trimmed[0] == '*') {
+                _buf_printf(&out, "  %s\n", trimmed);
+              } else {
+                _buf_printf(&out, "  /%s/\n", trimmed);
+              }
+            }
+            free(alt);
+            if (pipe >= close_paren) break;
+            search = pipe + 1;
+          }
+          }
+        }
+      } else if (parts[p].buf.data[0] == '*') {
+        _buf_printf(&out, "  %s\n", parts[p].buf.data);
+      } else {
+        _buf_printf(&out, "  /%s/\n", parts[p].buf.data);
+      }
+    }
+    // Emit end pattern with .end
+    if (!close_first) {
+      if (end_idx >= 0) {
+        _buf_printf(&out, "  /%s/ .end\n", end_buf.data);
+      } else {
+        _buf_puts(&out, "  /./ .end\n");
+      }
+    }
+    _buf_puts(&out, "}\n");
+    st->suppress_nongreedy_warning = false;
+
+    // Cleanup
+    _buf_free(&begin_buf);
+    _buf_free(&end_buf);
+    for (int32_t p = 0; p < part_count; p++) {
+      _buf_free(&parts[p].buf);
+    }
+    free(parts);
+  }
+
+  // Emit mode macros
+  for (int32_t m = 0; m < st->modes.len; m++) {
+    const char* mode = st->modes.items[m];
+    if (!_is_entrance_mode(st, mode) || _mode_is_flat(st, mode)) continue;
+    char* macro_name = _mode_macro_name(mode);
+    _buf_printf(&out, "\n# Mode macro: %s\n", mode);
+    _buf_printf(&out, "*%s = {\n", macro_name);
     for (int32_t i = 0; i < st->lexer_rule_count; i++) {
       LexerRule* r = &st->lexer_rules[i];
-      if (r->is_fragment) {
-        continue;
-      }
+      if (!_is_entrance_lexer_rule(st, r) || r->is_fragment || r->needs_scope) continue;
       const char* rule_mode = r->mode_name ? r->mode_name : "DEFAULT_MODE";
-      if (strcmp(rule_mode, mode) != 0) {
-        continue;
-      }
-      if (r->type_alias) {
-        continue;
-      }
-
+      if (strcmp(rule_mode, mode) != 0) continue;
       Buf body;
       _buf_init(&body);
       _emit_lexer_rule_body(st, r, &body);
-
-      if (r->pop_mode) {
-        _buf_printf(&out, "  /%s/ @%s .end\n", body.data, r->snake_name);
+      char* tok_name = _lexer_effective_token_snake(r);
+      if (r->push_mode && !_mode_is_flat(st, r->push_mode)) {
+        char* wrapper_name = _edge_name(mode, r->push_mode);
+        _buf_printf(&out, "  %s\n", wrapper_name);
+        free(wrapper_name);
+      } else if (r->pop_mode) {
+        _buf_printf(&out, "  /%s/", body.data);
+        if (tok_name) {
+          _buf_printf(&out, " @%s", tok_name);
+        }
+        _buf_puts(&out, " .end\n");
+      } else if (!tok_name) {
+        _buf_printf(&out, "  /%s/\n", body.data);
       } else {
-        _buf_printf(&out, "  /%s/ @%s\n", body.data, r->snake_name);
+        _buf_printf(&out, "  /%s/ @%s\n", body.data, tok_name);
       }
+      free(tok_name);
       _buf_free(&body);
     }
-
     _buf_puts(&out, "}\n");
-    free(scope_name);
+    free(macro_name);
+  }
+
+  // Emit caller__callee wrappers for pushMode edges.
+  for (int32_t i = 0; i < st->lexer_rule_count; i++) {
+    LexerRule* r = &st->lexer_rules[i];
+    if (!_is_entrance_lexer_rule(st, r) || !r->push_mode || _mode_is_flat(st, r->push_mode)) continue;
+    const char* caller = r->mode_name ? r->mode_name : "DEFAULT_MODE";
+    if (_mode_is_flat(st, caller)) continue;
+    if (strcmp(caller, "DEFAULT_MODE") == 0 && strcmp(r->push_mode, "DEFAULT_MODE") == 0) continue;
+    char* wrapper_name = _edge_name(caller, r->push_mode);
+    char* callee_macro = _mode_macro_name(r->push_mode);
+    const char* edge_parser_rule = _edge_parser_rule(st, caller, r->push_mode);
+    Buf body;
+    _buf_init(&body);
+    _emit_lexer_rule_body(st, r, &body);
+    _buf_printf(&out, "\n# Mode edge: %s -> %s\n", caller, r->push_mode);
+    _buf_printf(&out, "%s = /%s/ .begin", wrapper_name, body.data);
+    char* tok_name = _lexer_effective_token_snake(r);
+    if (tok_name && (!edge_parser_rule || _parser_uses_token(st, tok_name))) {
+      _buf_printf(&out, " @%s", tok_name);
+    }
+    free(tok_name);
+    _buf_puts(&out, " {\n");
+    if (strstr(wrapper_name, "_expr")) {
+      _buf_puts(&out, "  /\\n|\\r\\n?/ @nl\n");
+    }
+    _buf_printf(&out, "  *%s\n}\n", callee_macro);
+    _buf_free(&body);
+    free(wrapper_name);
+    free(callee_macro);
   }
 
   // --- PEG Section ---
@@ -924,19 +1849,100 @@ static void _emit_nest_output(G4State* st, FILE* outfp) {
       }
     }
     if (!has_main) {
+      // Use first rule as main; if there are multiple top-level entry points
+      // (e.g. kotlinFile and script), just reference the first one
       _buf_printf(&out, "main = %s\n", st->parser_rules[0].snake_name);
     }
   }
 
   // Emit parser rules
+  // First pass: emit all rules and collect body text
+  Buf* rule_bodies = malloc(sizeof(Buf) * st->parser_rule_count);
   for (int32_t i = 0; i < st->parser_rule_count; i++) {
     ParserRule* r = &st->parser_rules[i];
-    Buf body;
-    _buf_init(&body);
-    _emit_parser_rule_body(st, r, &body);
-    _buf_printf(&out, "%s = %s\n", r->snake_name, body.data);
-    _buf_free(&body);
+    _buf_init(&rule_bodies[i]);
+    st->current_rule_snake = r->snake_name;
+    st->current_rule_paren_counter = 0;
+    _emit_parser_rule_body(st, r, &rule_bodies[i]);
+    st->current_rule_snake = NULL;
   }
+
+  // Determine which rules are referenced (transitive closure)
+  bool* referenced = calloc(st->parser_rule_count, sizeof(bool));
+  if (st->parser_rule_count > 0) {
+    referenced[0] = true; // main entry is always referenced
+  }
+  for (int32_t m = 0; m < st->mode_map_count; m++) {
+    if (st->mode_maps[m].parser_rule[0] == '\0') continue;
+    char* mapped_rule_snake = _to_snake_case(st->mode_maps[m].parser_rule);
+    for (int32_t j = 0; j < st->parser_rule_count; j++) {
+      if (strcmp(st->parser_rules[j].snake_name, mapped_rule_snake) == 0) {
+        referenced[j] = true;
+        break;
+      }
+    }
+    free(mapped_rule_snake);
+  }
+  bool changed = true;
+  while (changed) {
+    changed = false;
+    for (int32_t i = 0; i < st->parser_rule_count; i++) {
+      if (!referenced[i]) continue;
+      for (int32_t j = 0; j < st->parser_rule_count; j++) {
+        if (referenced[j]) continue;
+        if (strstr(rule_bodies[i].data, st->parser_rules[j].snake_name)) {
+          referenced[j] = true;
+          changed = true;
+        }
+      }
+    }
+    // Also check helper rule bodies
+    for (int32_t h = 0; h < st->helpers.count; h++) {
+      for (int32_t j = 0; j < st->parser_rule_count; j++) {
+        if (!referenced[j] && strstr(st->helpers.items[h].body, st->parser_rules[j].snake_name)) {
+          referenced[j] = true;
+          changed = true;
+        }
+      }
+    }
+  }
+
+  // Emit only referenced rules
+  for (int32_t i = 0; i < st->parser_rule_count; i++) {
+    if (!referenced[i]) continue;
+    _buf_printf(&out, "%s = %s\n", st->parser_rules[i].snake_name, rule_bodies[i].data);
+  }
+
+  // Emit helper rules (only those referenced from emitted content)
+  for (int32_t i = 0; i < st->helpers.count; i++) {
+    // Check if this helper is referenced from any emitted rule body or other helper
+    bool helper_used = false;
+    for (int32_t j = 0; j < st->parser_rule_count; j++) {
+      if (!referenced[j]) continue;
+      if (strstr(rule_bodies[j].data, st->helpers.items[i].name)) {
+        helper_used = true;
+        break;
+      }
+    }
+    if (!helper_used) {
+      for (int32_t h = 0; h < st->helpers.count; h++) {
+        if (h == i) continue;
+        if (strstr(st->helpers.items[h].body, st->helpers.items[i].name)) {
+          helper_used = true;
+          break;
+        }
+      }
+    }
+    if (helper_used) {
+      _buf_printf(&out, "%s = %s\n", st->helpers.items[i].name, st->helpers.items[i].body);
+    }
+  }
+
+  for (int32_t i = 0; i < st->parser_rule_count; i++) {
+    _buf_free(&rule_bodies[i]);
+  }
+  free(rule_bodies);
+  free(referenced);
 
   // Write output
   fprintf(outfp, "%s", out.data);
@@ -986,6 +1992,16 @@ int main(int argc, char** argv) {
   // Initialize state
   G4State st;
   _g4_state_init(&st);
+  Buf command_line;
+  _buf_init(&command_line);
+  for (int32_t i = 1; i < argc; i++) {
+    if (i > 1) {
+      _buf_putc(&command_line, ' ');
+    }
+    _buf_puts(&command_line, argv[i]);
+  }
+  st.command_line = strdup(command_line.data);
+  _buf_free(&command_line);
 
   // Parse mode mappings
   for (int32_t i = 0; i < mode_mappings.len; i++) {
@@ -1009,11 +2025,66 @@ int main(int argc, char** argv) {
   }
 
   // Validate: check all non-default modes have mappings
+  // First: detect recursive lexer rules
+  for (int32_t i = 0; i < st.lexer_rule_count; i++) {
+    LexerRule* r = &st.lexer_rules[i];
+    // Emit body to check for self-reference
+    Buf body;
+    _buf_init(&body);
+    bool had_nongreedy_warning = st.has_nongreedy;
+    _walk_alt_list(&st, r->tt, r->alt_list_ref, true, &body);
+    // Check if body contains a reference to this rule's own name (as #{Name})
+    char ref_pattern[256];
+    snprintf(ref_pattern, sizeof(ref_pattern), "#{%s}", r->name);
+    if (strstr(body.data, ref_pattern)) {
+      r->is_recursive = true;
+      st.has_nongreedy = had_nongreedy_warning;
+    }
+    if (_is_entrance_lexer_rule(&st, r) && r->is_recursive && !r->is_hidden && !r->is_skipped && !_find_mapping(&st, r->name)) {
+      fprintf(stderr, "error: recursive lexer rule '%s' has no command-line mapping\n", r->name);
+      fprintf(stderr, "  add: %s=<parserRule>\n", r->name);
+      exit(1);
+    }
+    _buf_free(&body);
+  }
+
+  bool changed_scope = true;
+  while (changed_scope) {
+    changed_scope = false;
+    for (int32_t i = 0; i < st.lexer_rule_count; i++) {
+      LexerRule* r = &st.lexer_rules[i];
+      if (r->is_recursive || r->needs_scope) continue;
+      Buf body;
+      _buf_init(&body);
+      _walk_alt_list(&st, r->tt, r->alt_list_ref, true, &body);
+      for (int32_t j = 0; j < st.lexer_rule_count; j++) {
+        LexerRule* dep = &st.lexer_rules[j];
+        if (!dep->is_recursive && !dep->needs_scope) continue;
+        char ref_pattern[256];
+        snprintf(ref_pattern, sizeof(ref_pattern), "#{%s}", dep->name);
+        if (strstr(body.data, ref_pattern)) {
+          r->needs_scope = true;
+          changed_scope = true;
+          break;
+        }
+      }
+      _buf_free(&body);
+    }
+  }
+
   for (int32_t i = 0; i < st.modes.len; i++) {
     const char* mode = st.modes.items[i];
+    if (!_is_entrance_mode(&st, mode)) continue;
     bool found = false;
     for (int32_t j = 0; j < st.mode_map_count; j++) {
       if (strcmp(st.mode_maps[j].mode_name, mode) == 0) {
+        found = true;
+        break;
+      }
+      int32_t key_len = (int32_t)strlen(st.mode_maps[j].mode_name);
+      int32_t mode_len = (int32_t)strlen(mode);
+      if (key_len > mode_len + 1 && st.mode_maps[j].mode_name[key_len - mode_len - 1] == ':' &&
+          strcmp(st.mode_maps[j].mode_name + key_len - mode_len, mode) == 0) {
         found = true;
         break;
       }
