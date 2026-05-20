@@ -32,9 +32,7 @@ typedef Token* Tokens;
 typedef struct { // matches a scope
   int32_t scope_id;
   int32_t parent_id; // parent chunk_id, -1 for root chunk, can be used by "pop"
-  int64_t memoize_sizeof_col;          // byte size of one PEG memoize column; 0 before PEG table allocation
-  int64_t memoize_slots_offset_in_i32; // slots_start_ptr = (int32_t*)col + memoize_slots_offset_in_i32
-  int64_t memoize_slots_size;          // physical slot count in one memoize column
+  MemoizeTable* memtab; // owned PEG memoize table; NULL before allocation (see memtab.md)
   void* value;       // parser associate a value to it after parse, `struct ScopeXxx`
   void* aux_value;   // parser associate another value to it
   int64_t has_parse_error;
@@ -96,7 +94,7 @@ Since all valid token_id and scope_id are non-zero (see [parse.md](parse.md)), a
 
 **tt_add**: not use `darray_push` directly, instead call `darray_grow` with `size+2` then set the ptr value, so there's always at least a sentinel token with id=0 at the end.
 
-**tt_alloc_memoize_table**: allocates `sizeof_col * (token_count + 1)` bytes and stores `sizeof_col`, `slots_offset_in_i32`, and `slots_size` in the `TokenChunk`. Naturally the end memoize slot has `-1`. The returned table pointer must remain 64-bit aligned.
+**tt_alloc_memoize_table**: allocates a `MemoizeTable` via `memtab_new(token_count, sizeof_col, slots_offset_in_i32, slots_size)` (see [memtab.md](memtab.md)) and stores it in `chunk->memtab`. The chunk's `value` is aliased to `memtab->t` (the column buffer) so generated parser code can keep accessing the table through `tc->value`. The returned pointer is `memtab->t`, which is 64-bit aligned and points to `sizeof_col * (token_count + 1)` bytes initialized to `-1` (the trailing column is the sentinel).
 
 This eliminates bounds checks in:
 - **PEG IR term matching** (`_emit_term`): reading `tokens[col].term_id` at end-of-stream returns 0, which never equals any valid term_id → natural mismatch, branches to fail. No explicit `col < token_size` check needed.
@@ -123,7 +121,7 @@ PEG backtracking means the final stopped column is often not the most useful dia
 For benchmarking memoize table memory, `token_tree.c` can opt into tracking the total bytes allocated by `tt_alloc_memoize_table` via the macro `TRACE_TOTAL_MALLOC`.
 
 When `TRACE_TOTAL_MALLOC` is defined (manually, in `src/token_tree.c`):
-- A file-local `int64_t` counter accumulates `bytesize` on each `tt_alloc_memoize_table` call.
+- A file-local `int64_t` counter accumulates `sizeof_col * (token_count + 1)` (the column-buffer bytesize) on each `tt_alloc_memoize_table` call.
 - An `atexit` handler prints the final value to stderr in the form:
   ```
   TRACE_TOTAL_MALLOC=<bytes>

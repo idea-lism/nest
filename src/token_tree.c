@@ -1,5 +1,6 @@
 #include "token_tree.h"
 #include "darray.h"
+#include "memtab.h"
 #include "ustr.h"
 #include "xmalloc.h"
 #include <assert.h>
@@ -42,10 +43,16 @@ void tt_tree_del(TokenTree* tree, bool free_values) {
   }
   size_t chunk_count = darray_size(tree->table);
   for (size_t i = 0; i < chunk_count; i++) {
-    if (free_values && tree->table[i].value) {
-      XFREE(tree->table[i].value);
+    TokenChunk* chunk = &tree->table[i];
+    if (chunk->memtab) {
+      // memtab owns the memoize buffer; chunk->value aliases memtab->t and must not be freed separately
+      memtab_del(chunk->memtab);
+      chunk->memtab = NULL;
+      chunk->value = NULL;
+    } else if (free_values && chunk->value) {
+      XFREE(chunk->value);
     }
-    darray_del(tree->table[i].tokens);
+    darray_del(chunk->tokens);
   }
   darray_del(tree->table);
   XFREE(tree->newline_map);
@@ -156,12 +163,12 @@ void tt_collect_parse_errors(TokenTree* tree,
     int64_t best_reach = -1;
     int64_t best_col = -1;
     int64_t best_slot_index = -1;
-    if (chunk->value && chunk->memoize_sizeof_col > 0 && chunk->memoize_slots_size > 0) {
+    MemoizeTable* mt = chunk->memtab;
+    if (mt && mt->sizeof_col > 0 && mt->slots_size > 0) {
       int64_t token_size = (int64_t)darray_size(chunk->tokens);
       for (int64_t col = 0; col <= token_size; col++) {
-        int32_t* slots = (int32_t*)((uint8_t*)chunk->value + (size_t)col * (size_t)chunk->memoize_sizeof_col) +
-                         chunk->memoize_slots_offset_in_i32;
-        for (int64_t slot = 0; slot < chunk->memoize_slots_size; slot++) {
+        int32_t* slots = memtab_col(mt, (size_t)col) + mt->slots_offset_in_i32;
+        for (int64_t slot = 0; slot < mt->slots_size; slot++) {
           int32_t parsed_size = slots[slot];
           if (parsed_size <= 0) {
             continue;
@@ -196,8 +203,8 @@ void tt_collect_parse_errors(TokenTree* tree,
     size_t scope_ids_size = 0;
     _collect_scope_ids(tree, (int32_t)chunk_id, scope_ids, &scope_ids_size);
     uint64_t* col_ptr = NULL;
-    if (best_reach >= 0 && best_col >= 0 && chunk->value && chunk->memoize_sizeof_col > 0) {
-      col_ptr = (uint64_t*)((uint8_t*)chunk->value + (size_t)best_col * (size_t)chunk->memoize_sizeof_col);
+    if (best_reach >= 0 && best_col >= 0 && mt && mt->sizeof_col > 0) {
+      col_ptr = (uint64_t*)memtab_col(mt, (size_t)best_col);
     }
     collect_func(userdata, scope_ids, scope_ids_size, col_ptr, best_slot_index, cp_offset, cp_size);
     XFREE(scope_ids);
@@ -207,17 +214,13 @@ void tt_collect_parse_errors(TokenTree* tree,
 void* tt_alloc_memoize_table(TokenChunk* chunk, int64_t sizeof_col, int64_t slots_offset_in_i32, int64_t slots_size) {
   // sizeof_col must be multiple of 8, returned address must be 64-bit aligned
   assert(sizeof_col % 8 == 0);
-  chunk->memoize_sizeof_col = sizeof_col;
-  chunk->memoize_slots_offset_in_i32 = slots_offset_in_i32;
-  chunk->memoize_slots_size = slots_size;
-  // +1 for sentinel column
-  size_t bytesize = (darray_size(chunk->tokens) + 1) * (size_t)sizeof_col;
+  size_t size = darray_size(chunk->tokens);
+  MemoizeTable* mt = memtab_new(size, sizeof_col, slots_offset_in_i32, slots_size);
 #ifdef TRACE_TOTAL_MALLOC
-  _trace_total_malloc += (int64_t)bytesize;
+  // +1 sentinel column matches memtab_new
+  _trace_total_malloc += (int64_t)((size + 1) * (size_t)sizeof_col);
 #endif
-  void* v = XMALLOC(bytesize);
-  assert(((uintptr_t)v & 7) == 0); // XMALLOC guarantees 8-byte alignment
-  memset(v, -1, bytesize);
-  chunk->value = v;
-  return v;
+  chunk->memtab = mt;
+  chunk->value = mt->t;
+  return mt->t;
 }

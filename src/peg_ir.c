@@ -294,7 +294,9 @@ static void _emit_star(PegIrCtx* ctx, ScopedUnit* unit, IrLabel fail_label) {
     irwriter_br(w, loop_bb);
     irwriter_bb_at(w, loop_bb);
 
-    if (body_nullable) irwriter_store(w, "i64", irwriter_load(w, "i64", ctx->col), ctx->col_before);
+    if (body_nullable) {
+      irwriter_store(w, "i64", irwriter_load(w, "i64", ctx->col), ctx->col_before);
+    }
 
     peg_ir_emit_parse(ctx, unit->as.interlace.lhs, end_bb);
 
@@ -322,7 +324,9 @@ static void _emit_star(PegIrCtx* ctx, ScopedUnit* unit, IrLabel fail_label) {
     // loop
     irwriter_bb_at(w, loop_bb);
 
-    if (body_nullable) irwriter_store(w, "i64", irwriter_load(w, "i64", ctx->col), ctx->col_before);
+    if (body_nullable) {
+      irwriter_store(w, "i64", irwriter_load(w, "i64", ctx->col), ctx->col_before);
+    }
 
     _emit_call_save(ctx);
     peg_ir_emit_parse(ctx, unit->as.interlace.rhs, sep_fail_bb);
@@ -371,7 +375,9 @@ static void _emit_plus(PegIrCtx* ctx, ScopedUnit* unit, IrLabel fail_label) {
     irwriter_br(w, loop_bb);
     irwriter_bb_at(w, loop_bb);
 
-    if (body_nullable) irwriter_store(w, "i64", irwriter_load(w, "i64", ctx->col), ctx->col_before);
+    if (body_nullable) {
+      irwriter_store(w, "i64", irwriter_load(w, "i64", ctx->col), ctx->col_before);
+    }
 
     peg_ir_emit_parse(ctx, unit->as.interlace.lhs, end_bb);
 
@@ -394,7 +400,9 @@ static void _emit_plus(PegIrCtx* ctx, ScopedUnit* unit, IrLabel fail_label) {
     irwriter_br(w, loop_bb);
     irwriter_bb_at(w, loop_bb);
 
-    if (body_nullable) irwriter_store(w, "i64", irwriter_load(w, "i64", ctx->col), ctx->col_before);
+    if (body_nullable) {
+      irwriter_store(w, "i64", irwriter_load(w, "i64", ctx->col), ctx->col_before);
+    }
 
     _emit_call_save(ctx);
     peg_ir_emit_parse(ctx, unit->as.interlace.rhs, sep_fail_bb);

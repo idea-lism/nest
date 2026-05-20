@@ -1,5 +1,7 @@
 #pragma once
 
+#include "memtab.h"
+
 #include <stddef.h>
 #include <stdint.h>
 
@@ -18,12 +20,10 @@ typedef Token* Tokens;
 
 typedef struct __attribute__((packed, aligned(8))) TokenChunk {
   int32_t scope_id;
-  int32_t parent_id; // parent chunk_id, -1 for root chunk, can be used by "pop"
-  int64_t memoize_sizeof_col;
-  int64_t memoize_slots_offset_in_i32;
-  int64_t memoize_slots_size;
-  void* value;     // parser associate a value to it after parse, `struct ScopeXxx`
-  void* aux_value; // parser associate another value to it
+  int32_t parent_id;    // parent chunk_id, -1 for root chunk, can be used by "pop"
+  MemoizeTable* memtab; // owned PEG memoize table; NULL before allocation
+  void* value;          // parser associate a value to it after parse, `struct ScopeXxx`
+  void* aux_value;      // parser associate another value to it
   int64_t has_parse_error;
   Tokens tokens; // darray fat pointer
 } TokenChunk;

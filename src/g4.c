@@ -149,8 +149,8 @@ typedef struct {
   char* name;       // ANTLR name (original)
   char* snake_name; // snake_case converted
   bool is_fragment;
-  bool is_hidden;   // channel(HIDDEN)
-  bool is_skipped;  // -> skip
+  bool is_hidden;    // channel(HIDDEN)
+  bool is_skipped;   // -> skip
   bool is_recursive; // references itself (directly or transitively)
   bool needs_scope;  // references a recursive lexer rule and cannot be a pure regexp VPA line
   bool needs_scope_traced;
@@ -439,12 +439,18 @@ static const char* _edge_parser_rule(G4State* st, const char* caller, const char
   char key[512];
   snprintf(key, sizeof(key), "%s:%s", caller, callee);
   const char* mapped = _find_mapping(st, key);
-  if (mapped && mapped[0] != '\0') return mapped;
+  if (mapped && mapped[0] != '\0') {
+    return mapped;
+  }
   mapped = _find_mapping(st, callee);
-  if (mapped && mapped[0] != '\0') return mapped;
+  if (mapped && mapped[0] != '\0') {
+    return mapped;
+  }
   int32_t callee_len = (int32_t)strlen(callee);
   for (int32_t i = 0; i < st->mode_map_count; i++) {
-    if (st->mode_maps[i].parser_rule[0] == '\0') continue;
+    if (st->mode_maps[i].parser_rule[0] == '\0') {
+      continue;
+    }
     int32_t key_len = (int32_t)strlen(st->mode_maps[i].mode_name);
     if (key_len > callee_len + 1 && st->mode_maps[i].mode_name[key_len - callee_len - 1] == ':' &&
         strcmp(st->mode_maps[i].mode_name + key_len - callee_len, callee) == 0) {
@@ -457,16 +463,26 @@ static const char* _edge_parser_rule(G4State* st, const char* caller, const char
 static void _edge_wrappers_for_parser_rule(G4State* st, const char* parser_rule_snake, StrArr* wrappers) {
   for (int32_t i = 0; i < st->lexer_rule_count; i++) {
     LexerRule* r = &st->lexer_rules[i];
-    if (!_is_entrance_lexer_rule(st, r) || !r->push_mode || _mode_is_flat(st, r->push_mode)) continue;
+    if (!_is_entrance_lexer_rule(st, r) || !r->push_mode || _mode_is_flat(st, r->push_mode)) {
+      continue;
+    }
     const char* caller = r->mode_name ? r->mode_name : "DEFAULT_MODE";
-    if (_mode_is_flat(st, caller)) continue;
-    if (strcmp(caller, "DEFAULT_MODE") == 0 && strcmp(r->push_mode, "DEFAULT_MODE") == 0) continue;
+    if (_mode_is_flat(st, caller)) {
+      continue;
+    }
+    if (strcmp(caller, "DEFAULT_MODE") == 0 && strcmp(r->push_mode, "DEFAULT_MODE") == 0) {
+      continue;
+    }
     const char* mapped = _edge_parser_rule(st, caller, r->push_mode);
-    if (!mapped) continue;
+    if (!mapped) {
+      continue;
+    }
     char* mapped_snake = _to_snake_case(mapped);
     bool matches = strcmp(mapped_snake, parser_rule_snake) == 0;
     free(mapped_snake);
-    if (!matches) continue;
+    if (!matches) {
+      continue;
+    }
     char* edge = _edge_name(caller, r->push_mode);
     if (_strarr_find(wrappers, edge) < 0) {
       _strarr_push(wrappers, edge);
@@ -476,7 +492,9 @@ static void _edge_wrappers_for_parser_rule(G4State* st, const char* parser_rule_
 }
 
 static void _collect_parser_tokens_from_atom(G4State* st, TokenTree* tt, PegRef ref) {
-  if (g4_grammar_peg_size(ref) <= 0) return;
+  if (g4_grammar_peg_size(ref) <= 0) {
+    return;
+  }
   Node_atom node = g4_grammar_load_atom(ref);
   if (node.is.upper_ref) {
     char* name = _get_tok_text(tt, node._upper_id);
@@ -492,7 +510,9 @@ static void _collect_parser_tokens_from_atom(G4State* st, TokenTree* tt, PegRef 
 }
 
 static void _collect_parser_tokens_from_alt(G4State* st, TokenTree* tt, PegRef ref) {
-  if (g4_grammar_peg_size(ref) <= 0) return;
+  if (g4_grammar_peg_size(ref) <= 0) {
+    return;
+  }
   Node_alt alt = g4_grammar_load_alt(ref);
   for (PegLink link = alt.labeled_element; g4_grammar_has_elem(&link); g4_grammar_get_next(&link)) {
     PegRef le_ref = g4_grammar_get_lhs(&link);
@@ -503,7 +523,9 @@ static void _collect_parser_tokens_from_alt(G4State* st, TokenTree* tt, PegRef r
 }
 
 static void _collect_parser_tokens_from_alt_list(G4State* st, TokenTree* tt, PegRef ref) {
-  if (g4_grammar_peg_size(ref) <= 0) return;
+  if (g4_grammar_peg_size(ref) <= 0) {
+    return;
+  }
   Node_alt_list al = g4_grammar_load_alt_list(ref);
   for (PegLink link = al.alt; g4_grammar_has_elem(&link); g4_grammar_get_next(&link)) {
     _collect_parser_tokens_from_alt(st, tt, g4_grammar_get_lhs(&link));
@@ -1069,15 +1091,23 @@ static void _emit_end_action(Buf* out, const char* tok_name, bool skipped) {
 static bool _alt_single_upper(TokenTree* tt, PegRef alt_ref, char** name_out) {
   Node_alt alt = g4_grammar_load_alt(alt_ref);
   PegLink link = alt.labeled_element;
-  if (!g4_grammar_has_elem(&link)) return false;
+  if (!g4_grammar_has_elem(&link)) {
+    return false;
+  }
   PegRef le_ref = g4_grammar_get_lhs(&link);
   g4_grammar_get_next(&link);
-  if (g4_grammar_has_elem(&link)) return false;
+  if (g4_grammar_has_elem(&link)) {
+    return false;
+  }
   Node_labeled_element le = g4_grammar_load_labeled_element(le_ref);
   Node_element el = g4_grammar_load_element(le.element);
-  if (g4_grammar_has_elem(&el.ebnf_suffix)) return false;
+  if (g4_grammar_has_elem(&el.ebnf_suffix)) {
+    return false;
+  }
   Node_atom atom = g4_grammar_load_atom(el.atom);
-  if (!atom.is.upper_ref) return false;
+  if (!atom.is.upper_ref) {
+    return false;
+  }
   *name_out = _get_tok_text(tt, atom._upper_id);
   return true;
 }
@@ -1129,18 +1159,24 @@ static bool _alt_needs_scope(G4State* st, TokenTree* tt, PegRef alt_ref) {
     PegRef le_ref = g4_grammar_get_lhs(&link);
     Node_labeled_element le = g4_grammar_load_labeled_element(le_ref);
     Node_element el = g4_grammar_load_element(le.element);
-    if (g4_grammar_has_elem(&el.ebnf_suffix)) continue;
+    if (g4_grammar_has_elem(&el.ebnf_suffix)) {
+      continue;
+    }
     Node_atom atom = g4_grammar_load_atom(el.atom);
     if (atom.is.upper_ref) {
       char* name = _get_tok_text(tt, atom._upper_id);
       LexerRule* ref = _find_lexer_rule(st, name);
       bool needs = ref && _lexer_rule_needs_scope(st, ref);
       free(name);
-      if (needs) return true;
+      if (needs) {
+        return true;
+      }
     } else if (atom.is.group_atom) {
       Node_alt_list al = g4_grammar_load_alt_list(atom.alt_list);
       for (PegLink alink = al.alt; g4_grammar_has_elem(&alink); g4_grammar_get_next(&alink)) {
-        if (_alt_needs_scope(st, tt, g4_grammar_get_lhs(&alink))) return true;
+        if (_alt_needs_scope(st, tt, g4_grammar_get_lhs(&alink))) {
+          return true;
+        }
       }
     }
   }
@@ -1148,8 +1184,12 @@ static bool _alt_needs_scope(G4State* st, TokenTree* tt, PegRef alt_ref) {
 }
 
 static bool _lexer_rule_needs_scope(G4State* st, LexerRule* r) {
-  if (r->is_recursive || r->needs_scope) return true;
-  if (r->needs_scope_traced) return false;
+  if (r->is_recursive || r->needs_scope) {
+    return true;
+  }
+  if (r->needs_scope_traced) {
+    return false;
+  }
   r->needs_scope_traced = true;
   Node_alt_list al = g4_grammar_load_alt_list(r->alt_list_ref);
   for (PegLink link = al.alt; g4_grammar_has_elem(&link); g4_grammar_get_next(&link)) {
@@ -1212,7 +1252,9 @@ static void _emit_scope_like_rule(G4State* st, LexerRule* r, Buf* out) {
     PegRef alt_ref = g4_grammar_get_lhs(&alink);
     Node_alt alt = g4_grammar_load_alt(alt_ref);
     PegLink elem_link = alt.labeled_element;
-    if (!g4_grammar_has_elem(&elem_link)) continue;
+    if (!g4_grammar_has_elem(&elem_link)) {
+      continue;
+    }
     PegRef begin_le_ref = g4_grammar_get_lhs(&elem_link);
     Node_labeled_element begin_le = g4_grammar_load_labeled_element(begin_le_ref);
     Node_element begin_el = g4_grammar_load_element(begin_le.element);
@@ -1321,9 +1363,15 @@ static bool _is_entrance_lexer_rule(G4State* st, LexerRule* r) {
 static bool _is_entrance_mode(G4State* st, const char* mode) {
   for (int32_t i = 0; i < st->lexer_rule_count; i++) {
     LexerRule* r = &st->lexer_rules[i];
-    if (!_is_entrance_lexer_rule(st, r)) continue;
-    if (r->mode_name && strcmp(r->mode_name, mode) == 0) return true;
-    if (r->push_mode && strcmp(r->push_mode, mode) == 0) return true;
+    if (!_is_entrance_lexer_rule(st, r)) {
+      continue;
+    }
+    if (r->mode_name && strcmp(r->mode_name, mode) == 0) {
+      return true;
+    }
+    if (r->push_mode && strcmp(r->push_mode, mode) == 0) {
+      return true;
+    }
   }
   return false;
 }
@@ -1353,9 +1401,7 @@ static char* _edge_name(const char* caller, const char* callee) {
   return name;
 }
 
-static char* _mode_macro_name(const char* mode) {
-  return _to_snake_case(mode);
-}
+static char* _mode_macro_name(const char* mode) { return _to_snake_case(mode); }
 
 static ParserRule* _find_parser_rule_snake(G4State* st, const char* snake_name) {
   for (int32_t i = 0; i < st->parser_rule_count; i++) {
@@ -1371,7 +1417,9 @@ static void _collect_rule_token_set_from_alt_list(G4State* st, TokenTree* tt, Pe
 
 static void _collect_rule_token_set_from_atom(G4State* st, TokenTree* tt, PegRef ref, StrArr* tokens,
                                               StrArr* visited_rules) {
-  if (g4_grammar_peg_size(ref) <= 0) return;
+  if (g4_grammar_peg_size(ref) <= 0) {
+    return;
+  }
   Node_atom node = g4_grammar_load_atom(ref);
   if (node.is.upper_ref) {
     char* name = _get_tok_text(tt, node._upper_id);
@@ -1400,7 +1448,9 @@ static void _collect_rule_token_set_from_atom(G4State* st, TokenTree* tt, PegRef
 
 static void _collect_rule_token_set_from_alt(G4State* st, TokenTree* tt, PegRef ref, StrArr* tokens,
                                              StrArr* visited_rules) {
-  if (g4_grammar_peg_size(ref) <= 0) return;
+  if (g4_grammar_peg_size(ref) <= 0) {
+    return;
+  }
   Node_alt alt = g4_grammar_load_alt(ref);
   for (PegLink link = alt.labeled_element; g4_grammar_has_elem(&link); g4_grammar_get_next(&link)) {
     PegRef le_ref = g4_grammar_get_lhs(&link);
@@ -1412,7 +1462,9 @@ static void _collect_rule_token_set_from_alt(G4State* st, TokenTree* tt, PegRef 
 
 static void _collect_rule_token_set_from_alt_list(G4State* st, TokenTree* tt, PegRef ref, StrArr* tokens,
                                                   StrArr* visited_rules) {
-  if (g4_grammar_peg_size(ref) <= 0) return;
+  if (g4_grammar_peg_size(ref) <= 0) {
+    return;
+  }
   Node_alt_list al = g4_grammar_load_alt_list(ref);
   for (PegLink link = al.alt; g4_grammar_has_elem(&link); g4_grammar_get_next(&link)) {
     _collect_rule_token_set_from_alt(st, tt, g4_grammar_get_lhs(&link), tokens, visited_rules);
@@ -1435,10 +1487,14 @@ static void _collect_parser_rule_token_set(G4State* st, const char* parser_rule_
 static void _emit_default_mode_subset(G4State* st, StrArr* tokens, Buf* out) {
   for (int32_t i = 0; i < st->lexer_rule_count; i++) {
     LexerRule* r = &st->lexer_rules[i];
-    if (!_is_entrance_lexer_rule(st, r) || r->is_fragment || r->is_recursive || r->needs_scope) continue;
+    if (!_is_entrance_lexer_rule(st, r) || r->is_fragment || r->is_recursive || r->needs_scope) {
+      continue;
+    }
     const char* rule_mode = r->mode_name ? r->mode_name : "DEFAULT_MODE";
     bool flat_mode = strcmp(rule_mode, "DEFAULT_MODE") != 0 && _mode_is_flat(st, rule_mode);
-    if (strcmp(rule_mode, "DEFAULT_MODE") != 0 && !flat_mode) continue;
+    if (strcmp(rule_mode, "DEFAULT_MODE") != 0 && !flat_mode) {
+      continue;
+    }
     char* tok_name = _lexer_effective_token_snake(r);
     bool token_in_set = tok_name && _strarr_find(tokens, tok_name) >= 0;
     bool keep = r->is_skipped || r->is_hidden || token_in_set;
@@ -1538,7 +1594,9 @@ static void _emit_nest_output(G4State* st, FILE* outfp) {
     char ref_pattern[256];
     snprintf(ref_pattern, sizeof(ref_pattern), "#{%s}", r->name);
     for (int32_t j = 0; j < st->lexer_rule_count && !needed; j++) {
-      if (i == j) continue;
+      if (i == j) {
+        continue;
+      }
       LexerRule* user = &st->lexer_rules[j];
       Buf user_body;
       _buf_init(&user_body);
@@ -1579,7 +1637,8 @@ static void _emit_nest_output(G4State* st, FILE* outfp) {
     }
     char* tok_name_for_filter = _lexer_effective_token_snake(r);
     bool token_used = !tok_name_for_filter || _parser_uses_token(st, tok_name_for_filter);
-    bool omit_unused_default = tok_name_for_filter && !token_used && !r->is_skipped && !r->is_hidden && !r->push_mode && !r->pop_mode;
+    bool omit_unused_default =
+        tok_name_for_filter && !token_used && !r->is_skipped && !r->is_hidden && !r->push_mode && !r->pop_mode;
     if (omit_unused_default) {
       free(tok_name_for_filter);
       continue;
@@ -1599,33 +1658,34 @@ static void _emit_nest_output(G4State* st, FILE* outfp) {
     tok_name_for_filter = NULL;
     bool emit_token = tok_name && !r->is_skipped && token_used && strcmp(tok_name, "reserved") != 0;
     if (r->pop_mode) {
+      _buf_printf(&out, "  /%s/", body.data);
+      if (emit_token) {
+        _buf_printf(&out, " @%s", tok_name);
+      }
+      _buf_puts(&out, " .end\n");
+    } else if (r->push_mode && flat_mode && !_mode_is_flat(st, r->push_mode) &&
+               strcmp(r->push_mode, "DEFAULT_MODE") != 0) {
+      char* wrapper_name = _edge_name("DEFAULT_MODE", r->push_mode);
+      _buf_printf(&out, "  %s\n", wrapper_name);
+      free(wrapper_name);
+    } else if (r->push_mode && !_mode_is_flat(st, r->push_mode)) {
+      if (strcmp(rule_mode, "DEFAULT_MODE") == 0 && strcmp(r->push_mode, "DEFAULT_MODE") == 0) {
         _buf_printf(&out, "  /%s/", body.data);
         if (emit_token) {
           _buf_printf(&out, " @%s", tok_name);
         }
-        _buf_puts(&out, " .end\n");
-      } else if (r->push_mode && flat_mode && !_mode_is_flat(st, r->push_mode) && strcmp(r->push_mode, "DEFAULT_MODE") != 0) {
-        char* wrapper_name = _edge_name("DEFAULT_MODE", r->push_mode);
+        _buf_puts(&out, " .begin\n");
+      } else if (flat_mode && strcmp(r->push_mode, "DEFAULT_MODE") == 0) {
+        _buf_printf(&out, "  /%s/", body.data);
+        if (emit_token) {
+          _buf_printf(&out, " @%s", tok_name);
+        }
+        _buf_puts(&out, " .begin\n");
+      } else {
+        char* wrapper_name = _edge_name(rule_mode, r->push_mode);
         _buf_printf(&out, "  %s\n", wrapper_name);
         free(wrapper_name);
-      } else if (r->push_mode && !_mode_is_flat(st, r->push_mode)) {
-        if (strcmp(rule_mode, "DEFAULT_MODE") == 0 && strcmp(r->push_mode, "DEFAULT_MODE") == 0) {
-          _buf_printf(&out, "  /%s/", body.data);
-          if (emit_token) {
-            _buf_printf(&out, " @%s", tok_name);
-          }
-          _buf_puts(&out, " .begin\n");
-        } else if (flat_mode && strcmp(r->push_mode, "DEFAULT_MODE") == 0) {
-          _buf_printf(&out, "  /%s/", body.data);
-          if (emit_token) {
-            _buf_printf(&out, " @%s", tok_name);
-          }
-          _buf_puts(&out, " .begin\n");
-        } else {
-          char* wrapper_name = _edge_name(rule_mode, r->push_mode);
-          _buf_printf(&out, "  %s\n", wrapper_name);
-          free(wrapper_name);
-        }
+      }
     } else if (emit_token) {
       _buf_printf(&out, "  /%s/ @%s\n", body.data, tok_name);
     } else {
@@ -1644,7 +1704,9 @@ static void _emit_nest_output(G4State* st, FILE* outfp) {
       char* tok_name = _lexer_effective_token_snake(r);
       bool token_used = r->is_skipped || r->is_hidden || _parser_uses_token(st, tok_name);
       free(tok_name);
-      if (!token_used) continue;
+      if (!token_used) {
+        continue;
+      }
       if (r->needs_scope && r->type_alias && !r->is_fragment) {
         continue;
       }
@@ -1654,13 +1716,19 @@ static void _emit_nest_output(G4State* st, FILE* outfp) {
     }
   }
   for (int32_t m = 0; m < st->modes.len; m++) {
-    if (!_is_entrance_mode(st, st->modes.items[m]) || _mode_is_flat(st, st->modes.items[m])) continue;
+    if (!_is_entrance_mode(st, st->modes.items[m]) || _mode_is_flat(st, st->modes.items[m])) {
+      continue;
+    }
   }
   for (int32_t i = 0; i < st->lexer_rule_count; i++) {
     LexerRule* r = &st->lexer_rules[i];
-    if (!_is_entrance_lexer_rule(st, r) || !r->needs_scope || r->is_fragment) continue;
+    if (!_is_entrance_lexer_rule(st, r) || !r->needs_scope || r->is_fragment) {
+      continue;
+    }
     const char* rule_mode = r->mode_name ? r->mode_name : "DEFAULT_MODE";
-    if (strcmp(rule_mode, "DEFAULT_MODE") == 0 || _mode_is_flat(st, rule_mode)) continue;
+    if (strcmp(rule_mode, "DEFAULT_MODE") == 0 || _mode_is_flat(st, rule_mode)) {
+      continue;
+    }
     _buf_printf(&out, "  %s\n", r->snake_name);
   }
 
@@ -1669,9 +1737,13 @@ static void _emit_nest_output(G4State* st, FILE* outfp) {
   // Emit recursive lexer rules as scopes
   for (int32_t i = 0; i < st->lexer_rule_count; i++) {
     LexerRule* r = &st->lexer_rules[i];
-    if (!_is_entrance_lexer_rule(st, r) || r->is_fragment || (!r->is_recursive && !r->needs_scope)) continue;
+    if (!_is_entrance_lexer_rule(st, r) || r->is_fragment || (!r->is_recursive && !r->needs_scope)) {
+      continue;
+    }
     const char* rule_mode = r->mode_name ? r->mode_name : "DEFAULT_MODE";
-    if (strcmp(rule_mode, "DEFAULT_MODE") != 0 && !_mode_is_flat(st, rule_mode)) continue;
+    if (strcmp(rule_mode, "DEFAULT_MODE") != 0 && !_mode_is_flat(st, rule_mode)) {
+      continue;
+    }
     char* scope_tok_name = _lexer_effective_token_snake(r);
     if (scope_tok_name && !r->is_hidden && !_parser_uses_token(st, scope_tok_name)) {
       free(scope_tok_name);
@@ -1697,7 +1769,11 @@ static void _emit_nest_output(G4State* st, FILE* outfp) {
     Buf begin_buf, end_buf;
     _buf_init(&begin_buf);
     _buf_init(&end_buf);
-    typedef struct { Buf buf; bool is_self; bool is_nongreedy; } ScopePart;
+    typedef struct {
+      Buf buf;
+      bool is_self;
+      bool is_nongreedy;
+    } ScopePart;
     ScopePart* parts = NULL;
     int32_t part_count = 0;
     int32_t part_cap = 0;
@@ -1726,9 +1802,13 @@ static void _emit_nest_output(G4State* st, FILE* outfp) {
         // Apply suffix
         if (g4_grammar_has_elem(&el.ebnf_suffix)) {
           Node_ebnf_suffix suffix = g4_grammar_load_ebnf_suffix(g4_grammar_get_lhs(&el.ebnf_suffix));
-          if (suffix.is.star_suffix) _buf_putc(&begin_buf, '*');
-          else if (suffix.is.plus_suffix) _buf_putc(&begin_buf, '+');
-          else if (suffix.is.maybe) _buf_putc(&begin_buf, '?');
+          if (suffix.is.star_suffix) {
+            _buf_putc(&begin_buf, '*');
+          } else if (suffix.is.plus_suffix) {
+            _buf_putc(&begin_buf, '+');
+          } else if (suffix.is.maybe) {
+            _buf_putc(&begin_buf, '?');
+          }
         }
       } else {
         // Remaining elements: check if last non-self, non-group is end
@@ -1777,7 +1857,9 @@ static void _emit_nest_output(G4State* st, FILE* outfp) {
 
     bool close_first = false;
     for (int32_t p = 0; p < part_count; p++) {
-      if (p == end_idx) continue;
+      if (p == end_idx) {
+        continue;
+      }
       if (parts[p].is_nongreedy) {
         close_first = true;
         break;
@@ -1802,7 +1884,9 @@ static void _emit_nest_output(G4State* st, FILE* outfp) {
     }
     // Emit self-reference and inner parts (excluding begin and end)
     for (int32_t p = 0; p < part_count; p++) {
-      if (p == end_idx) continue;
+      if (p == end_idx) {
+        continue;
+      }
       if (parts[p].is_self) {
         // Emit self-reference
         _buf_printf(&out, "  %s\n", r->snake_name);
@@ -1817,37 +1901,48 @@ static void _emit_nest_output(G4State* st, FILE* outfp) {
           // Find the closing paren (may have suffix after it)
           const char* close_paren = strrchr(buf, ')');
           if (close_paren) {
-          // Find alternatives separated by |
-          const char* search = buf + 1; // skip (
-          while (search < close_paren) {
-            // Skip to next | or )
-            const char* pipe = NULL;
-            for (const char* s = search; s < close_paren; s++) {
-              if (*s == '|') { pipe = s; break; }
-            }
-            if (!pipe) pipe = close_paren;
-            // Extract this alternative
-            int32_t alt_len = (int32_t)(pipe - search);
-            char* alt = malloc(alt_len + 1);
-            memcpy(alt, search, alt_len);
-            alt[alt_len] = '\0';
-            // Trim spaces
-            char* trimmed = alt;
-            while (*trimmed == ' ') trimmed++;
-            int32_t tlen = (int32_t)strlen(trimmed);
-            while (tlen > 0 && trimmed[tlen - 1] == ' ') trimmed[--tlen] = '\0';
-            // Skip if it's the self-reference
-            if (strlen(trimmed) > 0 && strcmp(trimmed, self_ref_str) != 0) {
-              if (trimmed[0] == '*') {
-                _buf_printf(&out, "  %s\n", trimmed);
-              } else {
-                _buf_printf(&out, "  /%s/\n", trimmed);
+            // Find alternatives separated by |
+            const char* search = buf + 1; // skip (
+            while (search < close_paren) {
+              // Skip to next | or )
+              const char* pipe = NULL;
+              for (const char* s = search; s < close_paren; s++) {
+                if (*s == '|') {
+                  pipe = s;
+                  break;
+                }
               }
+              if (!pipe) {
+                pipe = close_paren;
+              }
+              // Extract this alternative
+              int32_t alt_len = (int32_t)(pipe - search);
+              char* alt = malloc(alt_len + 1);
+              memcpy(alt, search, alt_len);
+              alt[alt_len] = '\0';
+              // Trim spaces
+              char* trimmed = alt;
+              while (*trimmed == ' ') {
+                trimmed++;
+              }
+              int32_t tlen = (int32_t)strlen(trimmed);
+              while (tlen > 0 && trimmed[tlen - 1] == ' ') {
+                trimmed[--tlen] = '\0';
+              }
+              // Skip if it's the self-reference
+              if (strlen(trimmed) > 0 && strcmp(trimmed, self_ref_str) != 0) {
+                if (trimmed[0] == '*') {
+                  _buf_printf(&out, "  %s\n", trimmed);
+                } else {
+                  _buf_printf(&out, "  /%s/\n", trimmed);
+                }
+              }
+              free(alt);
+              if (pipe >= close_paren) {
+                break;
+              }
+              search = pipe + 1;
             }
-            free(alt);
-            if (pipe >= close_paren) break;
-            search = pipe + 1;
-          }
           }
         }
       } else if (parts[p].buf.data[0] == '*') {
@@ -1879,20 +1974,27 @@ static void _emit_nest_output(G4State* st, FILE* outfp) {
   // Emit mode macros
   for (int32_t m = 0; m < st->modes.len; m++) {
     const char* mode = st->modes.items[m];
-    if (!_is_entrance_mode(st, mode) || _mode_is_flat(st, mode)) continue;
+    if (!_is_entrance_mode(st, mode) || _mode_is_flat(st, mode)) {
+      continue;
+    }
     char* macro_name = _mode_macro_name(mode);
     _buf_printf(&out, "\n# Mode macro: %s\n", mode);
     _buf_printf(&out, "*%s = {\n", macro_name);
     for (int32_t i = 0; i < st->lexer_rule_count; i++) {
       LexerRule* r = &st->lexer_rules[i];
-      if (!_is_entrance_lexer_rule(st, r) || r->is_fragment || r->needs_scope) continue;
+      if (!_is_entrance_lexer_rule(st, r) || r->is_fragment || r->needs_scope) {
+        continue;
+      }
       const char* rule_mode = r->mode_name ? r->mode_name : "DEFAULT_MODE";
-      if (strcmp(rule_mode, mode) != 0) continue;
+      if (strcmp(rule_mode, mode) != 0) {
+        continue;
+      }
       Buf body;
       _buf_init(&body);
       _emit_lexer_rule_body(st, r, &body);
       char* tok_name = _lexer_effective_token_snake(r);
-      bool emit_token = tok_name && !r->is_skipped && _parser_uses_token(st, tok_name) && strcmp(tok_name, "reserved") != 0;
+      bool emit_token =
+          tok_name && !r->is_skipped && _parser_uses_token(st, tok_name) && strcmp(tok_name, "reserved") != 0;
       if (r->push_mode && !_mode_is_flat(st, r->push_mode)) {
         char* wrapper_name = _edge_name(mode, r->push_mode);
         _buf_printf(&out, "  %s\n", wrapper_name);
@@ -1918,10 +2020,16 @@ static void _emit_nest_output(G4State* st, FILE* outfp) {
   // Emit caller__callee wrappers for pushMode edges.
   for (int32_t i = 0; i < st->lexer_rule_count; i++) {
     LexerRule* r = &st->lexer_rules[i];
-    if (!_is_entrance_lexer_rule(st, r) || !r->push_mode || _mode_is_flat(st, r->push_mode)) continue;
+    if (!_is_entrance_lexer_rule(st, r) || !r->push_mode || _mode_is_flat(st, r->push_mode)) {
+      continue;
+    }
     const char* caller = r->mode_name ? r->mode_name : "DEFAULT_MODE";
-    if (_mode_is_flat(st, caller)) continue;
-    if (strcmp(caller, "DEFAULT_MODE") == 0 && strcmp(r->push_mode, "DEFAULT_MODE") == 0) continue;
+    if (_mode_is_flat(st, caller)) {
+      continue;
+    }
+    if (strcmp(caller, "DEFAULT_MODE") == 0 && strcmp(r->push_mode, "DEFAULT_MODE") == 0) {
+      continue;
+    }
     char* wrapper_name = _edge_name(caller, r->push_mode);
     char* callee_macro = _mode_macro_name(r->push_mode);
     const char* edge_parser_rule = _edge_parser_rule(st, caller, r->push_mode);
@@ -1942,7 +2050,9 @@ static void _emit_nest_output(G4State* st, FILE* outfp) {
       _collect_parser_rule_token_set(st, edge_parser_rule, &tokens);
       for (int32_t i = 0; i < st->lexer_rule_count; i++) {
         LexerRule* tr = &st->lexer_rules[i];
-        if (!_is_entrance_lexer_rule(st, tr) || tr->is_fragment || !tr->needs_scope) continue;
+        if (!_is_entrance_lexer_rule(st, tr) || tr->is_fragment || !tr->needs_scope) {
+          continue;
+        }
         char* ts = _lexer_effective_token_snake(tr);
         if (ts && _strarr_find(&tokens, ts) >= 0) {
           _buf_printf(&out, "  %s\n", tr->snake_name);
@@ -1997,7 +2107,9 @@ static void _emit_nest_output(G4State* st, FILE* outfp) {
     referenced[0] = true; // main entry is always referenced
   }
   for (int32_t m = 0; m < st->mode_map_count; m++) {
-    if (st->mode_maps[m].parser_rule[0] == '\0') continue;
+    if (st->mode_maps[m].parser_rule[0] == '\0') {
+      continue;
+    }
     char* mapped_rule_snake = _to_snake_case(st->mode_maps[m].parser_rule);
     for (int32_t j = 0; j < st->parser_rule_count; j++) {
       if (strcmp(st->parser_rules[j].snake_name, mapped_rule_snake) == 0) {
@@ -2011,9 +2123,13 @@ static void _emit_nest_output(G4State* st, FILE* outfp) {
   while (changed) {
     changed = false;
     for (int32_t i = 0; i < st->parser_rule_count; i++) {
-      if (!referenced[i]) continue;
+      if (!referenced[i]) {
+        continue;
+      }
       for (int32_t j = 0; j < st->parser_rule_count; j++) {
-        if (referenced[j]) continue;
+        if (referenced[j]) {
+          continue;
+        }
         if (strstr(rule_bodies[i].data, st->parser_rules[j].snake_name)) {
           referenced[j] = true;
           changed = true;
@@ -2033,7 +2149,9 @@ static void _emit_nest_output(G4State* st, FILE* outfp) {
 
   // Emit only referenced rules
   for (int32_t i = 0; i < st->parser_rule_count; i++) {
-    if (!referenced[i]) continue;
+    if (!referenced[i]) {
+      continue;
+    }
     _buf_printf(&out, "%s = %s\n", st->parser_rules[i].snake_name, rule_bodies[i].data);
   }
 
@@ -2043,12 +2161,20 @@ static void _emit_nest_output(G4State* st, FILE* outfp) {
   _strarr_init(&emitted_peg_edges);
   for (int32_t i = 0; i < st->lexer_rule_count; i++) {
     LexerRule* lr = &st->lexer_rules[i];
-    if (!_is_entrance_lexer_rule(st, lr) || !lr->push_mode || _mode_is_flat(st, lr->push_mode)) continue;
+    if (!_is_entrance_lexer_rule(st, lr) || !lr->push_mode || _mode_is_flat(st, lr->push_mode)) {
+      continue;
+    }
     const char* caller = lr->mode_name ? lr->mode_name : "DEFAULT_MODE";
-    if (_mode_is_flat(st, caller)) continue;
-    if (strcmp(caller, "DEFAULT_MODE") == 0 && strcmp(lr->push_mode, "DEFAULT_MODE") == 0) continue;
+    if (_mode_is_flat(st, caller)) {
+      continue;
+    }
+    if (strcmp(caller, "DEFAULT_MODE") == 0 && strcmp(lr->push_mode, "DEFAULT_MODE") == 0) {
+      continue;
+    }
     const char* mapped = _edge_parser_rule(st, caller, lr->push_mode);
-    if (!mapped) continue;
+    if (!mapped) {
+      continue;
+    }
     char* edge = _edge_name(caller, lr->push_mode);
     if (_strarr_find(&emitted_peg_edges, edge) >= 0) {
       free(edge);
@@ -2067,7 +2193,9 @@ static void _emit_nest_output(G4State* st, FILE* outfp) {
     // Check if this helper is referenced from any emitted rule body or other helper
     bool helper_used = false;
     for (int32_t j = 0; j < st->parser_rule_count; j++) {
-      if (!referenced[j]) continue;
+      if (!referenced[j]) {
+        continue;
+      }
       if (strstr(rule_bodies[j].data, st->helpers.items[i].name)) {
         helper_used = true;
         break;
@@ -2075,7 +2203,9 @@ static void _emit_nest_output(G4State* st, FILE* outfp) {
     }
     if (!helper_used) {
       for (int32_t h = 0; h < st->helpers.count; h++) {
-        if (h == i) continue;
+        if (h == i) {
+          continue;
+        }
         if (strstr(st->helpers.items[h].body, st->helpers.items[i].name)) {
           helper_used = true;
           break;
@@ -2189,7 +2319,8 @@ int main(int argc, char** argv) {
       r->is_recursive = true;
       st.has_nongreedy = had_nongreedy_warning;
     }
-    if (_is_entrance_lexer_rule(&st, r) && r->is_recursive && !r->is_hidden && !r->is_skipped && !_find_mapping(&st, r->name)) {
+    if (_is_entrance_lexer_rule(&st, r) && r->is_recursive && !r->is_hidden && !r->is_skipped &&
+        !_find_mapping(&st, r->name)) {
       fprintf(stderr, "error: recursive lexer rule '%s' has no command-line mapping\n", r->name);
       fprintf(stderr, "  add: %s=<parserRule>\n", r->name);
       exit(1);
@@ -2202,13 +2333,17 @@ int main(int argc, char** argv) {
     changed_scope = false;
     for (int32_t i = 0; i < st.lexer_rule_count; i++) {
       LexerRule* r = &st.lexer_rules[i];
-      if (r->is_recursive || r->needs_scope) continue;
+      if (r->is_recursive || r->needs_scope) {
+        continue;
+      }
       Buf body;
       _buf_init(&body);
       _walk_alt_list(&st, r->tt, r->alt_list_ref, true, &body);
       for (int32_t j = 0; j < st.lexer_rule_count; j++) {
         LexerRule* dep = &st.lexer_rules[j];
-        if (!dep->is_recursive && !dep->needs_scope) continue;
+        if (!dep->is_recursive && !dep->needs_scope) {
+          continue;
+        }
         char ref_pattern[256];
         snprintf(ref_pattern, sizeof(ref_pattern), "#{%s}", dep->name);
         if (strstr(body.data, ref_pattern)) {
@@ -2223,7 +2358,9 @@ int main(int argc, char** argv) {
 
   for (int32_t i = 0; i < st.modes.len; i++) {
     const char* mode = st.modes.items[i];
-    if (!_is_entrance_mode(&st, mode)) continue;
+    if (!_is_entrance_mode(&st, mode)) {
+      continue;
+    }
     bool found = false;
     for (int32_t j = 0; j < st.mode_map_count; j++) {
       if (strcmp(st.mode_maps[j].mode_name, mode) == 0) {

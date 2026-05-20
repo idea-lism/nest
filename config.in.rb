@@ -29,6 +29,9 @@ exe "test_bitset",
 exe "test_symtab",
   srcs: %w[test/test_symtab.c src/symtab.c src/darray.c src/xmalloc.c]
 
+exe "test_memtab",
+  srcs: %w[test/test_memtab.c src/memtab.c src/xmalloc.c]
+
 exe "test_aut",
   srcs: %w[test/test_aut.c test/compat.c src/aut.c src/irwriter.c src/symtab.c src/bitset.c src/darray.c src/xmalloc.c]
 
@@ -44,7 +47,7 @@ exe "test_parse_gen",
   srcs: %w[test/test_parse_gen.c test/compat.c src/xmalloc.c]
 
 exe "test_token_tree",
-  srcs: %w[test/test_token_tree.c src/token_tree.c src/darray.c src/xmalloc.c],
+  srcs: %w[test/test_token_tree.c src/token_tree.c src/memtab.c src/darray.c src/xmalloc.c],
   deps: %w[ustr]
 
 exe "test_coloring",
@@ -145,7 +148,7 @@ gen_str_header "build/nest_rt_impl.inc",
   from: "build/nest_rt.c"
 
 amalgamate "build/nest_rt.c",
-  src: %w[src/darray.c src/bitset.c src/token_tree.c src/parse_result.c src/ustr.c src/ustr_avx.c src/ustr_neon.c src/xmalloc.c],
+  src: %w[src/darray.c src/bitset.c src/memtab.c src/token_tree.c src/parse_result.c src/ustr.c src/ustr_avx.c src/ustr_neon.c src/xmalloc.c],
   include_dirs: %w[src]
 
 debug    cflags: "-O0 -g -fsanitize=address -fsanitize=undefined -DXMALLOC_TRACE"
