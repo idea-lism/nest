@@ -104,7 +104,7 @@ So only the `last_set` is cachable on rule, `first_set`, `min_size`, `max_size` 
 
 Vertices = rules in the closure. Edge (A, B) iff A and B are **not** exclusive.
 
-Hand to [coloring](coloring.md): it runs kissat (DSatur fallback on Windows), applies symmetry breaking via max-clique, and returns segmented color groups with each segment ≤ 64 vertices so a segment's bits fit in one `uint64_t`.
+Hand to [coloring](coloring.md): it runs DSatur and returns segmented color groups with each segment ≤ 64 vertices so a segment's bits fit in one `uint64_t`.
 
 #### Slot encoding (negated-bitset)
 

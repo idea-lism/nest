@@ -33,13 +33,13 @@ static int32_t get_max_color(ColoringResult* cr) {
   return max_c + 1; // return number of colors used
 }
 
-static double run_solve(Graph* g, bool use_product, bool* solved, bool* valid, int32_t* colors_used) {
+static double run_solve(Graph* g, bool* solved, bool* valid, int32_t* colors_used) {
   int32_t n = graph_n_vertices(g);
   int32_t* edges = graph_edges(g);
   int32_t n_edges = graph_n_edges(g);
 
   clock_t start = clock();
-  ColoringResult* res = coloring_solve(n, edges, n_edges, 10000, 42, use_product, NULL);
+  ColoringResult* res = coloring_solve(n, edges, n_edges, 10000, 42, false, NULL);
   clock_t end = clock();
 
   if (res) {
@@ -56,49 +56,31 @@ static double run_solve(Graph* g, bool use_product, bool* solved, bool* valid, i
   return (double)(end - start) / CLOCKS_PER_SEC;
 }
 
-// Benchmark naive (pairwise) vs product (Heule grid) AMO encoding at a given
-// graph density.  For each random Erdős–Rényi graph we binary-search for the
-// minimal chromatic number under the SAT conflict limit, then report:
-//   Avg Colors  – average k found (lower is better; encodings may differ
-//                 because one can prove a smaller k within the conflict budget)
-//   Avg Time    – wall-clock seconds per solve
-//   Speedup     – naive_time / product_time  (>1 means product is faster)
 static void benchmark_density(int32_t n, double p, int32_t iterations) {
   printf("Testing density p=%.3f (n=%d)\n", p, n);
-  double t_naive = 0, t_product = 0;
-  int32_t total_c_naive = 0, total_c_product = 0;
+  double total_time = 0;
+  int32_t total_colors = 0;
   int32_t valid_runs = 0;
 
   for (int i = 0; i < iterations; i++) {
     Graph* g = graph_random_erdos_renyi(n, p);
-    bool s_n = false, s_p = false, v_n = false, v_p = false;
-    int32_t c_n = 0, c_p = 0;
+    bool solved = false, valid = false;
+    int32_t colors = 0;
 
-    double dt_n = run_solve(g, false, &s_n, &v_n, &c_n);
-    double dt_p = run_solve(g, true, &s_p, &v_p, &c_p);
+    double dt = run_solve(g, &solved, &valid, &colors);
 
-    if ((s_n && !v_n) || (s_p && !v_p)) {
-      // solved but adjacency constraint violated — SAT bug
-      printf("  INVALID coloring at iter %d: Naive(solved=%d,valid=%d,colors=%d)"
-             " Product(solved=%d,valid=%d,colors=%d)\n",
-             i, s_n, v_n, c_n, s_p, v_p, c_p);
-    } else if (s_n && s_p) {
-      t_naive += dt_n;
-      t_product += dt_p;
-      total_c_naive += c_n;
-      total_c_product += c_p;
+    if (solved && valid) {
+      total_time += dt;
+      total_colors += colors;
       valid_runs++;
     } else {
-      // at least one encoding failed to find any coloring within the conflict limit
-      printf("  Unsolved at iter %d: Naive(solved=%d,colors=%d) Product(solved=%d,colors=%d)\n", i, s_n, c_n, s_p, c_p);
+      printf("  Invalid coloring at iter %d: solved=%d valid=%d colors=%d\n", i, solved, valid, colors);
     }
     graph_del(g);
   }
   if (valid_runs > 0) {
-    printf("  Avg Colors: Naive=%.1f, Product=%.1f\n", (double)total_c_naive / valid_runs,
-           (double)total_c_product / valid_runs);
-    printf("  Avg Time:   Naive=%.4fs, Product=%.4fs, Speedup=%.2fx\n\n", t_naive / valid_runs, t_product / valid_runs,
-           t_naive / t_product);
+    printf("  Avg Colors: %.1f\n", (double)total_colors / valid_runs);
+    printf("  Avg Time:   %.4fs\n\n", total_time / valid_runs);
   } else {
     printf("  No valid runs\n\n");
   }

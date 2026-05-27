@@ -56,30 +56,7 @@ def sh *cmd, **opts
   system *cmd, out: $stdout, err: $stderr, **opts or abort "sh failed"
 end
 
-# --- Ensure kissat is built (not needed on Windows, DSatur fallback used instead) ---
 IS_WINDOWS = RUBY_PLATFORM =~ /mingw|mswin|cygwin/
-KISSAT_LIB = "build/kissat/build/libkissat.a"
-unless IS_WINDOWS || File.exist?(KISSAT_LIB)
-  require 'tmpdir'
-  require 'open-uri'
-  version  = "rel-4.0.4"
-  url      = "https://github.com/arminbiere/kissat/archive/refs/tags/#{version}.tar.gz"
-  dest     = "build/kissat"
-  FileUtils.mkdir_p("build")
-  FileUtils.rm_rf(dest)
-  puts "Downloading kissat #{version}..."
-  tarball = "build/kissat.tar.gz"
-  URI.open(url) { |src| File.binwrite(tarball, src.read) }
-  sh "tar", "xzf", tarball, "-C", "build", "--exclude=*/test/cnf/hard.cnf"
-  File.delete(tarball)
-  File.rename("build/kissat-#{version}", dest)
-  Dir.chdir dest do
-    sh "./configure"
-    sh "make"
-  end
-  puts "Done: #{KISSAT_LIB}"
-end
-
 # --- Ensure subprocess.h is available ---
 SUBPROCESS_H = "build/subprocess.h"
 unless File.exist?(SUBPROCESS_H)
