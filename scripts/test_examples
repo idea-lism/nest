@@ -22,7 +22,11 @@ NEST="$ROOT/build/${MODE}/nest"
 CC="${CC:-clang}"
 # Note: -mllvm --enable-gvn-memdep=false works around a clang crash on large
 # PEG grammars at -O2. See README.md "Known issues".
-CFLAGS="${CFLAGS:--std=c23 -O2 -mllvm --enable-gvn-memdep=false}"
+if [ "$MODE" = "debug" ]; then
+  CFLAGS="${CFLAGS:--std=c23 -O0 -g -fsanitize=address -fsanitize=undefined}"
+else
+  CFLAGS="${CFLAGS:--std=c23 -O2 -mllvm --enable-gvn-memdep=false}"
+fi
 WORKDIR="$ROOT/build/test_examples"
 rm -rf "$WORKDIR"
 mkdir -p "$WORKDIR"
@@ -126,7 +130,7 @@ for dir in "$ROOT"/test/examples/*/; do
 
     # Compile (use mode-specific binary name to avoid macOS dyld caching issues)
     bin="$case_dir/${name}_${mode}"
-    if ! run $CC $CFLAGS "$case_dir/${name}.c" "$case_dir/${name}.ll" -o "$bin" 2>"$case_dir/cc_err"; then
+    if ! run $CC $CFLAGS "$case_dir/${name}.c" "$case_dir/${name}.ll" "$ROOT/build/${MODE}/libnest_rt.a" "$ROOT/build/${MODE}/libustr.a" -o "$bin" 2>"$case_dir/cc_err"; then
       echo "FAIL $name ($mode): compile failed"
       cat "$case_dir/cc_err" >&2
       fail=$((fail + 1))

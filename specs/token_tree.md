@@ -104,7 +104,7 @@ This eliminates bounds checks in:
 
 ### Syntax error best-try detection
 
-PEG backtracking means the final stopped column is often not the most useful diagnostic location. For continuable PEG error reporting, generated VPA code must inspect the current `TokenChunk` before `tt_pop()` and use the memoize table to find the farthest successful parse prefix.
+PEG backtracking means the final stopped column is often not the most useful diagnostic location. For continuable PEG error reporting, the generated C parse API lexes the full input into `TokenTree`, then walks materializable `TokenChunk`s, allocates memoize tables, invokes parser function pointers from `{Prefix}Parser`, and records syntax failures on chunks. `tt_collect_parse_errors` uses the memoize table to find the farthest successful parse prefix.
 
 `tt_collect_parse_errors` collect and builds the error by invoking callback.
 - first calculate the max depth, so it can alloc a `scope_ids` VLA for scope path for the memoize table.

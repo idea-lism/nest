@@ -14,8 +14,9 @@ typedef struct {
   int32_t tag_bit_count;  // total tag bits for current rule
 
   // shared registers, they won't be re-assigned
-  IrVal tc; // TokenChunk %tc
-  IrVal tokens; // %tc->tokens
+  IrVal tokens;
+  IrVal tokens_size;
+  IrVal peg_table;
 
   // shared allocas
   IrVal col; // current %col

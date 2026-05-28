@@ -3,9 +3,15 @@
 #include "memtab.h"
 #include "ustr.h"
 
-// read-only functions of darray / token_tree
+#include <stdbool.h>
 
+// darray / token_tree functions used by generated headers
+
+void* darray_new_(uint32_t elem_size, size_t elem_count);
+void* darray_grow_(void* a, size_t new_elem_count);
 size_t darray_size(void* a);
+void darray_del_(void* a);
+MemoizeTable* memtab_new(size_t size, int64_t sizeof_col, int64_t slots_offset_in_i32, int64_t slots_size);
 
 // 16 bytes a token
 typedef struct __attribute__((packed, aligned(8))) {
@@ -48,6 +54,12 @@ typedef struct __attribute__((packed, aligned(8))) {
   int32_t col;  // 1-based
 } Location;
 Location tt_locate(TokenTree* tree, int32_t cp_offset);
+TokenTree* tt_tree_new(const char* ustr);
+void tt_tree_del(TokenTree* tree, bool free_values);
+void tt_mark_newline(TokenTree* tree, int32_t cp_offset);
+void tt_add(TokenTree* tree, int32_t tok_id, int32_t cp_start, int32_t cp_size, int32_t chunk_id);
+TokenChunk* tt_push_assoc(TokenTree* tree, int32_t scope_id);
+TokenChunk* tt_pop(TokenTree* tree, int32_t cp_end);
 void tt_collect_parse_errors(TokenTree* tree,
                              void (*collect_func)(void* userdata, int64_t* scope_ids, size_t scope_ids_size,
                                                   uint64_t* col, int64_t slot_index, int64_t cp_offset,

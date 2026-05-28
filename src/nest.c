@@ -635,6 +635,76 @@ static void _gen_example_c(FILE* f, const char* prefix, ParseState* ps, ScopeClo
   fprintf(f, "}\n");
 }
 
+
+static void _gen_final_api(HeaderWriter* hw, const char* prefix) {
+  hdwriter_printf(hw, "static inline %sParseFn %s_parse_fn_for_scope(%sParser* parser, int32_t scope_id) {\n", prefix, prefix, prefix);
+  hdwriter_puts(hw, "  for (int64_t $i = 0; $i < ");
+  hdwriter_printf(hw, "%s_peg_scopes_size; $i++) {\n", prefix);
+  hdwriter_printf(hw, "    if (%s_peg_scopes[$i].scope_id == scope_id) return ((%sParseFn*)parser)[$i];\n", prefix, prefix);
+  hdwriter_puts(hw, "  }\n  return NULL;\n}\n\n");
+
+  hdwriter_puts(hw, "static inline void $nest_free_parse_errors(ParseErrors errors) {\n");
+  hdwriter_puts(hw, "  for (size_t $i = 0; $i < darray_size(errors); $i++) free(errors[$i].message);\n");
+  hdwriter_puts(hw, "  darray_del_(errors);\n");
+  hdwriter_puts(hw, "}\n\n");
+
+  hdwriter_puts(hw, "typedef struct { ParseErrors errors; TokenTree* tt; } $NestParseErrorCtx;\n");
+  hdwriter_puts(hw, "static inline void $nest_parse_error_collect(void* userdata, int64_t* scope_ids, size_t scope_ids_size, uint64_t* col, int64_t slot_index, int64_t cp_offset, int64_t cp_size) {\n");
+  hdwriter_puts(hw, "  (void)scope_ids; (void)scope_ids_size; (void)col; (void)slot_index;\n");
+  hdwriter_puts(hw, "  $NestParseErrorCtx* $ctx = ($NestParseErrorCtx*)userdata;\n");
+  hdwriter_puts(hw, "  if (!$ctx->errors) $ctx->errors = darray_new_(sizeof(ParseError), 0);\n");
+  hdwriter_puts(hw, "  size_t $n = darray_size($ctx->errors);\n");
+  hdwriter_puts(hw, "  $ctx->errors = darray_grow_($ctx->errors, $n + 1);\n");
+  hdwriter_puts(hw, "  ParseError* $e = &$ctx->errors[$n];\n");
+  hdwriter_puts(hw, "  *$e = (ParseError){0};\n");
+  hdwriter_puts(hw, "  $e->type = PARSE_ERROR_INVALID_SYNTAX;\n");
+  hdwriter_puts(hw, "  $e->cp_offset = (int32_t)cp_offset;\n  $e->cp_size = (int32_t)cp_size;\n");
+  hdwriter_puts(hw, "  const char* $msg = \"syntax error\";\n");
+  hdwriter_puts(hw, "  size_t $len = strlen($msg);\n  $e->message = malloc($len + 1);\n  memcpy($e->message, $msg, $len + 1);\n");
+  hdwriter_puts(hw, "}\n\n");
+
+  hdwriter_printf(hw, "static inline void %s_parse_chunks(%sParser* parser, TokenTree* tt) {\n", prefix, prefix);
+  hdwriter_puts(hw, "  for (size_t $i = 0; $i < darray_size(tt->table); $i++) {\n");
+  hdwriter_puts(hw, "    TokenChunk* $chunk = &tt->table[$i];\n");
+  hdwriter_printf(hw, "    for (int64_t $j = 0; $j < %s_peg_scopes_size; $j++) {\n", prefix);
+  hdwriter_printf(hw, "      %sPegScopeInfo $info = %s_peg_scopes[$j];\n", prefix, prefix);
+  hdwriter_puts(hw, "      if ($info.scope_id != $chunk->scope_id) continue;\n");
+  hdwriter_puts(hw, "      MemoizeTable* $mt = memtab_new(darray_size($chunk->tokens), $info.sizeof_col, $info.slots_offset_in_i32, $info.slots_size);\n");
+  hdwriter_puts(hw, "      $chunk->memtab = $mt;\n      $chunk->value = $mt->t;\n");
+  hdwriter_printf(hw, "      %sParseFn $parse = %s_parse_fn_for_scope(parser, $chunk->scope_id);\n", prefix, prefix);
+  hdwriter_puts(hw, "      bool $ok = $parse ? $parse($chunk->tokens, (int64_t)darray_size($chunk->tokens), $mt->t) : true;\n");
+  hdwriter_puts(hw, "      if (!$ok) { $chunk->has_parse_error = 1; tt->has_parse_error = 1; }\n");
+  hdwriter_puts(hw, "      break;\n");
+  hdwriter_puts(hw, "    }\n");
+  hdwriter_puts(hw, "  }\n");
+  hdwriter_puts(hw, "}\n\n");
+
+  hdwriter_printf(hw, "static inline ParseResult %s_parse(ParseContext* ctx, const char* input) {\n", prefix);
+  hdwriter_puts(hw, "  ParseResult res = {0};\n");
+  hdwriter_puts(hw, "  res.tt = tt_tree_new(input);\n");
+  hdwriter_printf(hw, "  %sLexer lexer = {0};\n", prefix);
+  hdwriter_printf(hw, "  %s_init_lexers(&lexer);\n", prefix);
+  hdwriter_printf(hw, "  %sParser parser = {0};\n", prefix);
+  hdwriter_printf(hw, "  %s_init_parsers(&parser);\n", prefix);
+  hdwriter_puts(hw, "  if (res.tt->root) { res.tt->root->scope_id = SCOPE_MAIN; res.tt->root->aux_value = res.tt; }\n");
+  hdwriter_printf(hw, "  res.parse_end_col = %s_lex(ctx, &lexer, input, res.tt);\n", prefix);
+  hdwriter_printf(hw, "  if (res.parse_end_col < 0) %s_parse_chunks(&parser, res.tt);\n", prefix);
+  hdwriter_puts(hw, "  if (res.tt->has_parse_error) { $NestParseErrorCtx $ec = {res.errors, res.tt}; tt_collect_parse_errors(res.tt, $nest_parse_error_collect, &$ec); res.errors = $ec.errors; }\n");
+  hdwriter_puts(hw, "  if (darray_size(res.tt->table) > 0) {\n");
+  hdwriter_puts(hw, "    TokenChunk* $main = &res.tt->table[0];\n");
+  hdwriter_printf(hw, "    for (int64_t $i = 0; $i < %s_peg_scopes_size; $i++) if (%s_peg_scopes[$i].scope_id == $main->scope_id) { res.main = (PegRef){$main, 0, %s_peg_scopes[$i].main_rule_row}; break; }\n", prefix, prefix, prefix);
+  hdwriter_puts(hw, "  }\n");
+  hdwriter_puts(hw, "  return res;\n");
+  hdwriter_puts(hw, "}\n\n");
+
+  hdwriter_printf(hw, "static inline void %s_cleanup(ParseResult* res) {\n", prefix);
+  hdwriter_puts(hw, "  if (!res) return;\n");
+  hdwriter_puts(hw, "  tt_tree_del(res->tt, false);\n");
+  hdwriter_puts(hw, "  $nest_free_parse_errors(res->errors);\n");
+  hdwriter_puts(hw, "  res->tt = NULL;\n  res->errors = NULL;\n");
+  hdwriter_puts(hw, "}\n\n");
+}
+
 static int32_t _cmd_compile(int32_t argc, char** argv) {
 #define OPTION(s, l, n, d) const char* arg_##s = 0;
 #include "compile_opts.inc"
@@ -717,7 +787,7 @@ static int32_t _cmd_compile(int32_t argc, char** argv) {
   }
 
   IrWriter* w = irwriter_new(fout);
-  irwriter_gen_rt(w, input, ".");
+  irwriter_gen_rt_simple(w);
   HeaderWriter* hw = hdwriter_new(fhdr);
 
   // 1. Common header (runtime types, PegRef, PegLink)
@@ -787,14 +857,6 @@ static int32_t _cmd_compile(int32_t argc, char** argv) {
   if (verbose) {
     fprintf(stderr, "[nest] vpa_gen\n");
   }
-  // compute main rule row for PegRef
-  int32_t main_rule_row = 0;
-  if (darray_size(gen_input.scope_closures) > 0) {
-    ScopeClosure* cl0 = &gen_input.scope_closures[0];
-    if (darray_size(cl0->scoped_rules) > 0) {
-      main_rule_row = (int32_t)(cl0->bits_bucket_size * 2 + cl0->scoped_rules[0].slot_index);
-    }
-  }
   vpa_gen(
       &(VpaGenInput){
           .scopes = ps->vpa_scopes,
@@ -805,7 +867,8 @@ static int32_t _cmd_compile(int32_t argc, char** argv) {
           .source_file_name = input,
           .re_frags = ps->re_frags,
       },
-      hw, w, prefix, main_rule_row);
+      hw, w, prefix);
+  _gen_final_api(hw, prefix);
 
   {
     FILE* fc = fopen(c_path, "w");

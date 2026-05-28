@@ -14,8 +14,9 @@ typedef struct {
   const char* fn_name; // enclosing function name for blockaddress
 
   // shared registers
-  IrVal tc;
   IrVal tokens;
+  IrVal tokens_size;
+  IrVal peg_table;
 
   // shared allocas
   IrVal col;

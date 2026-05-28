@@ -79,4 +79,4 @@ typedef struct {
   ReFrags re_frags; // owned by ParseState, indexed by frag_id
 } VpaGenInput;
 
-void vpa_gen(VpaGenInput* input, HeaderWriter* hw, IrWriter* w, const char* prefix, int32_t main_rule_row);
+void vpa_gen(VpaGenInput* input, HeaderWriter* hw, IrWriter* w, const char* prefix);

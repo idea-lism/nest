@@ -6,6 +6,9 @@ llir_lex = ["#{BUILDDIR}/llir_lex.o"]
 lib "ustr",
   srcs: %w[src/ustr.c src/ustr_neon.c src/ustr_avx.c src/xmalloc.c]
 
+lib "nest_rt",
+  srcs: %w[src/darray.c src/bitset.c src/memtab.c src/token_tree.c src/parse_result.c src/xmalloc.c]
+
 exe "bench_ustr",
   srcs: %w[test/bench_ustr.c src/ustr_naive.c],
   deps: %w[ustr]

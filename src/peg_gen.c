@@ -394,6 +394,30 @@ static void _gen_header(PegGenInput* input, HeaderWriter* hw, RuleScopeMap* scop
   int32_t closure_size = (int32_t)darray_size(closures);
   const char* prefix = input->prefix;
 
+  hdwriter_printf(hw, "typedef bool (*%sParseFn)(void* tokens, int64_t tokens_size, void* memoize_table);\n", prefix);
+  hdwriter_puts(hw, "typedef struct {\n");
+  for (int32_t c = 0; c < closure_size; c++) {
+    hdwriter_printf(hw, "  %sParseFn parse_%s;\n", prefix, closures[c].scope_name);
+  }
+  hdwriter_printf(hw, "} %sParser;\n", prefix);
+  hdwriter_printf(hw, "extern void %s_init_parsers(%sParser* parser);\n\n", prefix, prefix);
+
+  hdwriter_puts(hw, "typedef struct { int32_t scope_id; int64_t sizeof_col; int64_t slots_offset_in_i32; int64_t slots_size; int64_t main_rule_row; } ");
+  hdwriter_printf(hw, "%sPegScopeInfo;\n", prefix);
+  hdwriter_printf(hw, "static const %sPegScopeInfo %s_peg_scopes[] = {\n", prefix, prefix);
+  for (int32_t c = 0; c < closure_size; c++) {
+    ScopeClosure* cl = &closures[c];
+    int64_t sizeof_col = cl->bits_bucket_size * 8 + _aligned_slots_size(cl->slots_size) * 4;
+    int64_t main_rule_row = 0;
+    if (darray_size(cl->scoped_rules) > 0) {
+      main_rule_row = cl->bits_bucket_size * 2 + (int64_t)cl->scoped_rules[0].slot_index;
+    }
+    hdwriter_printf(hw, "  {%d, %lld, %lld, %lld, %lld},\n", cl->scope_id, (long long)sizeof_col,
+                    (long long)(cl->bits_bucket_size * 2), (long long)cl->slots_size, (long long)main_rule_row);
+  }
+  hdwriter_puts(hw, "};\n");
+  hdwriter_printf(hw, "static const int64_t %s_peg_scopes_size = %d;\n\n", prefix, closure_size);
+
   // emit node structs and loaders for each distinct global rule
   for (int32_t gid = 0; gid < scope_map->size; gid++) {
     if (scope_map->counts[gid] == 0) {
@@ -587,29 +611,15 @@ static MemoizeDenyFn _memoize_deny_fns[] = {
 };
 
 // Emit a minimal `parse_{scope_name}` stub for `= TODO` scopes.
-// It allocates an 8-byte-per-column memoize table so downstream code that
-// expects `tc->value` to be non-NULL keeps working, then returns
-// `{chunk_size, chunk_size}` — i.e., "successfully consumed every token".
 static void _gen_todo_scope_ir(IrWriter* w, ScopeClosure* cl) {
-  irwriter_declare(w, "ptr", "tt_current", "ptr");
-  irwriter_declare(w, "ptr", "tt_alloc_memoize_table", "ptr, i64, i64, i64");
-  irwriter_declare(w, "i64", "tt_current_size", "ptr");
-
-  int64_t sizeof_col = cl->bits_bucket_size * 8 + _aligned_slots_size(cl->slots_size) * 4;
-
   char* fn_name = _asprintf("parse_%s", cl->scope_name);
-  irwriter_define_startf(w, fn_name, "{i64, i64} @%s(ptr %%tt, ptr %%stack_ptr_in) sspreq", fn_name);
+  irwriter_define_startf(w, fn_name, "i1 @%s(ptr %%tokens, i64 %%tokens_size, ptr %%memoize_table) sspreq", fn_name);
   irwriter_bb(w);
   irwriter_dbg(w, cl->source_line, cl->source_col);
-
-  (void)irwriter_imm(w, "%stack_ptr_in"); // unused but part of signature
-  IrVal tc = irwriter_call_retf(w, "ptr", "tt_current", "ptr %%tt");
-  (void)irwriter_call_retf(w, "ptr", "tt_alloc_memoize_table", "ptr %%r%d, i64 %lld, i64 %lld, i64 %lld", (int)tc,
-                           (long long)sizeof_col, (long long)(cl->bits_bucket_size * 2), (long long)cl->slots_size);
-  IrVal sz = irwriter_call_retf(w, "i64", "tt_current_size", "ptr %%tt");
-  IrVal r0 = irwriter_insertvalue(w, "{i64, i64}", -1, "i64", sz, 0);
-  IrVal r1 = irwriter_insertvalue(w, "{i64, i64}", r0, "i64", sz, 1);
-  irwriter_ret(w, "{i64, i64}", r1);
+  (void)irwriter_imm(w, "%tokens");
+  (void)irwriter_imm(w, "%tokens_size");
+  (void)irwriter_imm(w, "%memoize_table");
+  irwriter_ret(w, "i1", irwriter_imm_int(w, 1));
   irwriter_define_end(w);
   XFREE(fn_name);
 }
@@ -625,26 +635,34 @@ static void _gen_scope_ir(IrWriter* w, ScopeClosure* cl, int memoize_mode) {
   }
   int64_t sizeof_col = cl->bits_bucket_size * 8 + _aligned_slots_size(cl->slots_size) * 4;
 
-  irwriter_declare(w, "ptr", "tt_current", "ptr");
-  irwriter_declare(w, "ptr", "tt_alloc_memoize_table", "ptr, i64, i64, i64");
-
   char* fn_name = _asprintf("parse_%s", cl->scope_name);
-  irwriter_define_startf(w, fn_name, "{i64, i64} @%s(ptr %%tt, ptr %%stack_ptr_in) sspreq", fn_name);
+  irwriter_define_startf(w, fn_name, "i1 @%s(ptr %%tokens, i64 %%tokens_size, ptr %%memoize_table) sspreq", fn_name);
   irwriter_bb(w);
   irwriter_dbg(w, cl->source_line, cl->source_col);
 
-  IrVal tc = irwriter_call_retf(w, "ptr", "tt_current", "ptr %%tt");
-  IrVal peg_table =
-      irwriter_call_retf(w, "ptr", "tt_alloc_memoize_table", "ptr %%r%d, i64 %lld, i64 %lld, i64 %lld", (int)tc,
-                         (long long)sizeof_col, (long long)(cl->bits_bucket_size * 2), (long long)cl->slots_size);
+  IrVal tokens_arg = irwriter_imm(w, "%tokens");
+  IrVal tokens_size = irwriter_imm(w, "%tokens_size");
+  IrVal peg_table_arg = irwriter_imm(w, "%memoize_table");
+  irwriter_rawf(w, "  %%r%d = getelementptr i8, ptr ", irwriter_next_reg(w));
+  irwriter_emit_val(w, tokens_arg);
+  irwriter_raw(w, ", i64 0\n");
+  IrVal tokens = (IrVal)(irwriter_next_reg(w) - 1);
+  irwriter_rawf(w, "  %%r%d = getelementptr i8, ptr ", irwriter_next_reg(w));
+  irwriter_emit_val(w, peg_table_arg);
+  irwriter_raw(w, ", i64 0\n");
+  IrVal peg_table = (IrVal)(irwriter_next_reg(w) - 1);
 
   irwriter_raw(w, "  %col = alloca i64\n");
   IrVal col = irwriter_imm(w, "%col");
   irwriter_store(w, "i64", irwriter_imm_int(w, 0), col);
   irwriter_raw(w, "  %col_before = alloca i64\n");
   IrVal col_before = irwriter_imm(w, "%col_before");
+  IrVal stack_buf = irwriter_alloca(w, "[1048576 x i8]");
+  irwriter_rawf(w, "  %%r%d = getelementptr [1048576 x i8], ptr %%r%d, i64 0, i64 524288\n", irwriter_next_reg(w),
+                (int)stack_buf);
+  IrVal stack_ptr_in = (IrVal)(irwriter_next_reg(w) - 1);
   IrVal stack_ptr = irwriter_alloca(w, "ptr");
-  irwriter_store(w, "ptr", irwriter_imm(w, "%stack_ptr_in"), stack_ptr);
+  irwriter_store(w, "ptr", stack_ptr_in, stack_ptr);
   IrVal parse_result = irwriter_alloca(w, "i64");
   irwriter_store(w, "i64", irwriter_imm_int(w, -1), parse_result);
   IrVal parsed_tokens = irwriter_alloca(w, "i64");
@@ -678,15 +696,12 @@ static void _gen_scope_ir(IrWriter* w, ScopeClosure* cl, int memoize_mode) {
     }
   }
 
-  irwriter_rawf(w, "  %%r%d = getelementptr i8, ptr %%r%d, i64 %zu\n", irwriter_next_reg(w), (int)tc,
-                offsetof(TokenChunk, tokens));
-  IrVal tokens = irwriter_load(w, "ptr", (IrVal)(irwriter_next_reg(w) - 1));
-
   PegIrCtx ctx = {
       .ir_writer = w,
       .fn_name = fn_name,
-      .tc = tc,
       .tokens = tokens,
+      .tokens_size = tokens_size,
+      .peg_table = peg_table,
       .col = col,
       .col_before = col_before,
       .stack_ptr = stack_ptr,
@@ -799,9 +814,10 @@ static void _gen_scope_ir(IrWriter* w, ScopeClosure* cl, int memoize_mode) {
   irwriter_bb_at(w, final_ret);
   IrVal final_result = irwriter_load(w, "i64", parse_result);
   IrVal final_col = irwriter_load(w, "i64", col);
-  IrVal ret_with_result = irwriter_insertvalue(w, "{i64, i64}", -1, "i64", final_result, 0);
-  IrVal ret_with_col = irwriter_insertvalue(w, "{i64, i64}", ret_with_result, "i64", final_col, 1);
-  irwriter_ret(w, "{i64, i64}", ret_with_col);
+  IrVal consumed_all = irwriter_icmp(w, "eq", "i64", final_col, tokens_size);
+  IrVal matched = irwriter_icmp(w, "sge", "i64", final_result, irwriter_imm_int(w, 0));
+  IrVal ok = irwriter_binop(w, "and", "i1", matched, consumed_all);
+  irwriter_ret(w, "i1", ok);
   irwriter_define_end(w);
   XFREE(tag_bits_extra);
   XFREE(fn_name);
@@ -835,6 +851,26 @@ void peg_gen(PegGenInput* input, HeaderWriter* hw, IrWriter* w) {
       _gen_scope_ir(w, &closures[c], input->memoize_mode);
     }
   }
+
+  char* init_name = _asprintf("%s_init_parsers", input->prefix);
+  irwriter_define_startf(w, init_name, "void @%s(ptr %%parser)", init_name);
+  irwriter_bb(w);
+  irwriter_dbg(w, 0, 0);
+  for (int32_t c = 0; c < closure_size; c++) {
+    IrVal gep = irwriter_next_reg(w);
+    irwriter_rawf(w, "  %%r%d = getelementptr {", (int)gep);
+    for (int32_t i = 0; i < closure_size; i++) {
+      if (i > 0) {
+        irwriter_raw(w, ", ");
+      }
+      irwriter_raw(w, "ptr");
+    }
+    irwriter_rawf(w, "}, ptr %%parser, i32 0, i32 %d\n", c);
+    irwriter_rawf(w, "  store ptr @parse_%s, ptr %%r%d\n", closures[c].scope_name, (int)gep);
+  }
+  irwriter_ret_void(w);
+  irwriter_define_end(w);
+  XFREE(init_name);
 
   RuleScopeMap scope_map = _build_scope_map(input);
   _gen_header(input, hw, &scope_map);

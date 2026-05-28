@@ -2,10 +2,10 @@
 
 Create `src/vpa.c` (`void vpa_gen(VpaGenInput* input, HeaderWriter* hw, IrWriter* w, const char* prefix)`):
 - `prefix` comes from `nest` command arg `-p`.
-- define functions to generates visibly pushdown automata in LLVM IR, using Parser's processed-data
-- generate helpers for result C header
+- emit LLVM IR only for DFA functions and `{prefix}_init_lexers`.
+- emit C header declarations/helpers for the lexer.
 
-It iterates the parsed & desugared AST, utilize src/re.h to generate DFA, utilize src/irwriter.h to generate the upper level visibly pushdown machine.
+It iterates the parsed & desugared AST, utilize src/re.h to generate DFA, utilize src/irwriter.h to emit automata definitions.
 
 ### Input & input processing
 
@@ -93,9 +93,7 @@ Every scope, except the `main`, has a starting regex. After the starting regex i
 
 For all scopes, the built-in hook `.begin` / `.end` will push / pop the VPA stack.
 
-For scopes with `.has_parser`, the built-in hook `.begin` / `.end` also denotes when to push / pop a TokenChunk too.
-We push chunk with `tt_push_assoc()` instead, so the chunk will have the tree ref.
-When popping a chunk (scope), invoke the internal PEG parsing function `parse_{scope_name}` defined in [PEG GEN](peg_gen.md) -- this is known in compile time, so generated code will hard-code the parsing funciton call for the `.end` action.
+For scopes with `.has_parser`, the built-in hook `.begin` / `.end` also denotes when to push / pop a TokenChunk too. No PEG parser is invoked by VPA.
 
 Sub-scope calls inlines the leader regexp as matcher. Assume we have a scope like this:
 
@@ -123,7 +121,7 @@ The automata's `action_id` is the index in actions array, codegen will create ba
 
 ### Usage interface for generated code
 
-generated header defines interface to interact with the LLVM-IR defined parser.
+generated header defines the lexer interface and hook context.
 
 Assume there are 2 hooks `.foo` and `.bar` in lexer definition, generated header should have this interface
 
@@ -131,37 +129,34 @@ Assume there are 2 hooks `.foo` and `.bar` in lexer definition, generated header
 // common data structures emit by common_header_gen
 ...
 
-// vpa generated header declarations
+typedef struct {
+  int64_t state;
+  int64_t action_id;
+} {Prefix}AutResult;
+
+typedef struct {
+  int64_t state;
+  int64_t action_id;
+} (*{Prefix}AutFn)(int64_t state, int64_t cp);
+
+typedef struct {
+  {Prefix}AutFn aut_{scope_or_dfa_name_1};
+  {Prefix}AutFn aut_{scope_or_dfa_name_2};
+  ...
+} {Prefix}Lexer;
+
+// defined in LLVM IR
+extern void {prefix}_init_lexers({Prefix}Lexer* lexer);
+
 typedef struct {
   void* user_data;
   const char* source_file_name;
   LexHook foo;
   LexHook bar;
 } ParseContext;
-
-// defined by IR
-extern void {prefix}_parse_splat(const char* src,
-  /* ParseContext fields */ void* user_data, const char* source_file_name, LexHook foo, LexHook bar,
-  /* ParseResult fields */ PegRef*, TokenTree**, ParseErrors*, int64_t*
-);
-// user interface
-static inline ParseResult {prefix}_parse(ParseContext* ctx, const char* input) {
-  ParseResult res = {0};
-  {prefix}_parse_splat(input,
-    ctx->user_data, ctx->source_file_name, ctx->foo, ctx->bar,
-    &res.main, &res.tt, &res.errors, &res.parse_end_col
-  );
-  ... // Error reporting logic, see below
-  return res;
-}
-
-// defined in IR, del token tree / dynamic array
-extern void {prefix}_cleanup_splat(TokenTree** tt, ParseError** errors);
-// user interface
-static inline void {prefix}_cleanup(ParseResult* res) {
-  {prefix}_cleanup_splat(&res->tt, &res->errors);
-}
 ```
+
+The final `{prefix}_parse` / `{prefix}_cleanup` API is emitted in the generated header after both [PEG GEN](peg_gen.md) and VPA declarations exist.
 
 If a user hook emits some token or some action, user should define it like this:
 
@@ -202,27 +197,28 @@ if (res.error) {
 {prefix}_cleanup(res);
 ```
 
-### Interaction with peg parsers
+### Generated LLVM IR
 
-In LLVM-IR: define the main function `{prefix}_parse_splat`. Args depend on nest grammar definition.
+VPA generated LLVM IR contains only:
 
-On top of main function malloc a fixed 1M stack for peg parser's backtracking. All scoped parsers share the same stack ptr (they don't call each other, so just pass the ptr, no arithmetics).
+```c
+struct { int64_t state; int64_t action_id; } aut_{name}(int64_t state, int64_t cp);
+void {prefix}_init_lexers({Prefix}Lexer* lexer);
+```
 
-For each scope, PEG parsers generates an internal `parse_{scope_name}` function. The visibly pushdown machine invokes the parsing function when a scope ends (`.end` action).
-- A PEG failure is **not** a lexer failure. If it fails, set the tree and current chunk's `has_parse_error = 1` before `tt_pop`.
-- A lexer failure is still fatal. If no VPA action can be dispatched, a hook returns `.fail`, or a hook returns an invalid `%effect`, lexing stops immediately and no more input is consumed.
+No token_tree creation, lex loop, PEG parser call, cleanup wrapper, or final parse API is emitted into VPA LLVM IR.
 
-Since the VPA and the PEG share a same LLVM-IR writer, in PEG the parsing functions should be defined as internal, in VPA we can call them directly.
+### Generated C lexer loop
 
-### The `{prefix}_parse_splat` loop
+The generated header contains the C lexer loop used by the final parse API.
 
 Similar to the `_lex_scope` in the [parse spec][parse.md].
-- In LLVM IR
 - Union of regexps with multiple actions
   - Inlines child scope's leader regexp
 - Greedy match, and trigger `last_action_id` on no match / eof
 - Empty-action matches update the committed match position, but dispatch no action.
-- Manages scoping stack / token_tree / parser invocation
+- Manages scoping stack and token_tree.
+- A lexer failure is fatal. If no VPA action can be dispatched, a hook returns `.fail`, or a hook returns an invalid `%effect`, lexing stops immediately and no more input is consumed.
 
 ### Error reporting
 
@@ -244,12 +240,13 @@ typedef struct __attribute__((packed, aligned(8))) {
 } ParseError;
 ```
 
-After parse loop
+After final parse API runs the generated C lexer loop:
 - if there is token error, just report token error, no need to report parse error. error kinds are:
   - PARSE_ERROR_INVALID_HOOK
   - PARSE_ERROR_REQUIRE_MORE_INPUT
   - PARSE_ERROR_TOKEN_ERR
-- if there is no token error, check if there is any parse error by `token_tree->has_parse_error`
+- if there is no token error, the final API walks materializable token chunks and invokes PEG parser function pointers from `{Prefix}Parser`.
+  - A PEG failure is **not** a lexer failure. If it fails, set the chunk's `has_parse_error = 1` and `token_tree->has_parse_error = 1`.
   - if there is parse error, collect error messages by `tt_collect_parse_errors(token_tree, {prefix}_parse_error_collect, (void*)&parse_errors)`
     - each error kind is PARSE_ERROR_INVALID_SYNTAX
 

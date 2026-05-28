@@ -3,64 +3,40 @@
 #include "re.h"
 #include "re_ir.h"
 #include "symtab.h"
-#include "token_tree.h"
 #include "xmalloc.h"
 
-#include <assert.h>
 #include <ctype.h>
 #include <stddef.h>
 #include <stdio.h>
 #include <string.h>
 
-// --- Actions table (deduplication) ---
+// --- Actions table ---
 
 typedef struct {
   int32_t action_id;
   VpaActionUnits action_units; // not owned
-  const char* end_scope_name;  // if action contains .end, scope name for parse_{name}
   int32_t begin_scope_id;      // if action contains .begin, target scope_id; -1 otherwise
 } Action;
 
 typedef Action* Actions;
 
 static bool _au_equal(VpaActionUnits a, VpaActionUnits b) {
-  if (!a && !b) {
-    return true;
-  }
-  if (!a || !b) {
-    return false;
-  }
+  if (!a && !b) return true;
+  if (!a || !b) return false;
   size_t na = darray_size(a);
   size_t nb = darray_size(b);
-  if (na != nb) {
-    return false;
-  }
-  return memcmp(a, b, (size_t)na * sizeof(int32_t)) == 0;
+  return na == nb && memcmp(a, b, na * sizeof(int32_t)) == 0;
 }
 
-static int32_t _intern_action(Actions* actions, VpaActionUnits au, const char* end_scope_name) {
-  if (!au || darray_size(au) == 0) {
-    return 0;
-  }
+static int32_t _intern_action(Actions* actions, VpaActionUnits au) {
+  if (!au || darray_size(au) == 0) return 0;
   size_t n = darray_size(*actions);
   for (size_t i = 1; i < n; i++) {
-    if (_au_equal((*actions)[i].action_units, au)) {
-      return i;
-    }
+    if (_au_equal((*actions)[i].action_units, au)) return (int32_t)i;
   }
-  Action a = {.action_id = n, .action_units = au, .end_scope_name = end_scope_name, .begin_scope_id = -1};
+  Action a = {.action_id = (int32_t)n, .action_units = au, .begin_scope_id = -1};
   darray_push(*actions, a);
-  return n;
-}
-
-static EffectDecl* _find_effect(VpaGenInput* input, int32_t hook_id) {
-  size_t n = darray_size(input->effect_decls);
-  for (size_t i = 0; i < n; i++) {
-    if (input->effect_decls[i].hook_id == hook_id) {
-      return &input->effect_decls[i];
-    }
-  }
-  return NULL;
+  return (int32_t)n;
 }
 
 // --- DFA generation per scope ---
@@ -81,16 +57,7 @@ static void _gen_scope_dfa(VpaGenInput* input, IrWriter* w, VpaScope* scope, Act
     VpaUnit* u = &scope->children[i];
     // VPA_EOF is handled separately, not in DFA
     if (u->kind == VPA_EOF) {
-      const char* end_name = NULL;
-      if (u->action_units) {
-        for (size_t j = 0; j < darray_size(u->action_units); j++) {
-          if (u->action_units[j] < 0 && -u->action_units[j] == HOOK_ID_END) {
-            end_name = scope->name;
-            break;
-          }
-        }
-      }
-      scope->eof_action = _intern_action(actions, u->action_units, end_name);
+      scope->eof_action = _intern_action(actions, u->action_units);
       continue;
     }
     // For VPA_CALL, use the called scope's leader actions (spec: "Sub-scope calls inlines the leader regexp")
@@ -107,19 +74,7 @@ static void _gen_scope_dfa(VpaGenInput* input, IrWriter* w, VpaScope* scope, Act
         }
       }
     }
-    // check action_au for .end hook
-    const char* end_name = NULL;
-    if (action_au) {
-      int32_t n_au = (int32_t)darray_size(action_au);
-      for (int32_t j = 0; j < n_au; j++) {
-        if (action_au[j] < 0 && -action_au[j] == HOOK_ID_END) {
-          end_name = scope->name;
-          break;
-        }
-      }
-    }
-    int32_t aid = _intern_action(actions, action_au, end_name);
-    // store begin_scope_id on the action if it contains .begin
+    int32_t aid = _intern_action(actions, action_au);
     if (aid > 0 && begin_scope_id >= 0) {
       (*actions)[aid].begin_scope_id = begin_scope_id;
     }
@@ -153,655 +108,9 @@ static void _gen_scope_dfa(VpaGenInput* input, IrWriter* w, VpaScope* scope, Act
   aut_optimize(aut);
   aut_gen_dfa(aut, w, false);
 
-  // widened wrapper: lex_{name}(i32, i32) -> {i64, i64}
-  int wrapper_name_len = snprintf(NULL, 0, "lex_%s", scope->name);
-  char* wrapper_name = XMALLOC((size_t)wrapper_name_len + 1);
-  snprintf(wrapper_name, (size_t)wrapper_name_len + 1, "lex_%s", scope->name);
-
-  irwriter_define_startf(w, wrapper_name, "{i64, i64} @%s(i64 %%state, i64 %%cp)", wrapper_name);
-  irwriter_bb(w);
-  irwriter_dbg(w, scope->source_line, scope->source_col);
-
-  // _dfa_* functions use native i64 ABI
-  IrVal result = irwriter_call_retf(w, "{i64, i64}", func_name, "i64 %%state, i64 %%cp");
-  irwriter_ret(w, "{i64, i64}", result);
-  irwriter_define_end(w);
-
   re_del(re);
   aut_del(aut);
   XFREE(func_name);
-  XFREE(wrapper_name);
-}
-
-// --- Dispatch function ---
-
-static bool _is_ignored_tok(VpaGenInput* input, int32_t tok_id) {
-  if (!input->ignore_names.offsets) {
-    return false;
-  }
-  const char* name = symtab_get(&input->tokens, tok_id);
-  return name && symtab_find(&input->ignore_names, name) >= 0;
-}
-
-static void _gen_dispatch(VpaGenInput* input, IrWriter* w, Actions actions) {
-  int32_t n_actions = (int32_t)darray_size(actions);
-
-  irwriter_declare(w, "void", "tt_add", "i8*, i32, i32, i32, i32");
-  irwriter_declare(w, "i8*", "tt_push_assoc", "i8*, i32");
-  irwriter_declare(w, "i8*", "tt_pop", "i8*, i32");
-  irwriter_declare(w, "void", "tt_mark_parse_error", "ptr");
-  irwriter_declare(w, "i64", "tt_current_size", "ptr");
-
-  // pre-declare PEG parse functions for scopes with .end
-  for (int32_t i = 1; i < n_actions; i++) {
-    if (actions[i].end_scope_name) {
-      int fn_len = snprintf(NULL, 0, "parse_%s", actions[i].end_scope_name);
-      char* fn_name = XMALLOC((size_t)fn_len + 1);
-      snprintf(fn_name, (size_t)fn_len + 1, "parse_%s", actions[i].end_scope_name);
-      irwriter_declare(w, "{i64, i64}", fn_name, "ptr, ptr");
-      XFREE(fn_name);
-    }
-  }
-
-  // pre-declare user hooks
-  for (int32_t i = 1; i < n_actions; i++) {
-    VpaActionUnits au = actions[i].action_units;
-    int32_t n_au = au ? (int32_t)darray_size(au) : 0;
-    for (int32_t j = 0; j < n_au; j++) {
-      int32_t auid = au[j];
-      if (auid < 0) {
-        int32_t hook_id = -auid;
-        if (hook_id >= HOOK_ID_BUILTIN_COUNT) {
-          const char* hook_name = symtab_get(&input->hooks, hook_id);
-          int fn_name_len = snprintf(NULL, 0, "vpa_hook_%s", hook_name + 1);
-          char* fn_name = XMALLOC((size_t)fn_name_len + 1);
-          snprintf(fn_name, (size_t)fn_name_len + 1, "vpa_hook_%s", hook_name + 1);
-          irwriter_declare(w, "i32", fn_name, "i8*, i8*, i8*");
-          XFREE(fn_name);
-        }
-      }
-    }
-  }
-
-  irwriter_define_startf(
-      w, "vpa_dispatch",
-      "i64 @vpa_dispatch(i64 %%action_id_i64, i8* %%tt, i64 %%cp_start_i64, i64 %%cp_size_i64, i8* %%ctx, "
-      "ptr %%stack_ptr)");
-  irwriter_bb(w);
-  irwriter_dbg(w, 0, 0);
-  irwriter_rawf(w, "  %%action_id = trunc i64 %%action_id_i64 to i32\n");
-  irwriter_rawf(w, "  %%cp_start = trunc i64 %%cp_start_i64 to i32\n");
-  irwriter_rawf(w, "  %%cp_size = trunc i64 %%cp_size_i64 to i32\n");
-
-  if (n_actions <= 1) {
-    irwriter_ret(w, "i64", irwriter_imm_int(w, -1));
-    irwriter_define_end(w);
-    return;
-  }
-
-  IrLabel default_bb = irwriter_label(w);
-  IrLabel* case_bbs = XMALLOC((size_t)n_actions * sizeof(IrLabel));
-  for (int32_t i = 1; i < n_actions; i++) {
-    case_bbs[i] = irwriter_label(w);
-  }
-
-  irwriter_switch_start(w, "i32", irwriter_imm(w, "%action_id"), default_bb);
-  for (int32_t i = 1; i < n_actions; i++) {
-    irwriter_switch_case(w, "i32", i, case_bbs[i]);
-  }
-  irwriter_switch_end(w);
-
-  for (int32_t i = 1; i < n_actions; i++) {
-    irwriter_bb_at(w, case_bbs[i]);
-
-    VpaActionUnits au = actions[i].action_units;
-    int32_t n_au = au ? (int32_t)darray_size(au) : 0;
-    for (int32_t j = 0; j < n_au; j++) {
-      int32_t auid = au[j];
-      if (auid > 0) {
-        // emit token (skip ignored tokens)
-        if (!_is_ignored_tok(input, auid)) {
-          irwriter_call_void_fmtf(w, "tt_add", "i8* %%tt, i32 %d, i32 %%cp_start, i32 %%cp_size, i32 -1", auid);
-        }
-      } else {
-        int32_t hook_id = -auid;
-        if (hook_id == HOOK_ID_BEGIN) {
-          // push scope onto VPA stack
-          irwriter_call_retf(w, "i8*", "tt_push_assoc", "i8* %%tt, i32 %d", actions[i].begin_scope_id);
-        } else if (hook_id == HOOK_ID_END) {
-          // invoke PEG parser before popping scope; failure returns the offending token column
-          if (actions[i].end_scope_name) {
-            int fn_len = snprintf(NULL, 0, "parse_%s", actions[i].end_scope_name);
-            char* fn_name = XMALLOC((size_t)fn_len + 1);
-            snprintf(fn_name, (size_t)fn_len + 1, "parse_%s", actions[i].end_scope_name);
-            IrVal parse_ret = irwriter_call_retf(w, "{i64, i64}", fn_name, "ptr %%tt, ptr %%stack_ptr");
-            XFREE(fn_name);
-            IrVal parsed_size = irwriter_extractvalue(w, "{i64, i64}", parse_ret, 0);
-            IrVal chunk_size = irwriter_call_retf(w, "i64", "tt_current_size", "ptr %%tt");
-            IrVal parsed_ok = irwriter_icmp(w, "eq", "i64", parsed_size, chunk_size);
-            IrLabel parse_ok_bb = irwriter_label(w);
-            IrLabel parse_fail_bb = irwriter_label(w);
-            irwriter_br_cond(w, parsed_ok, parse_ok_bb, parse_fail_bb);
-            irwriter_bb_at(w, parse_fail_bb);
-            irwriter_call_void_fmtf(w, "tt_mark_parse_error", "ptr %%tt");
-            irwriter_br(w, parse_ok_bb);
-            irwriter_bb_at(w, parse_ok_bb);
-          }
-          // pop scope + add scope-ref to parent
-          IrVal cp_end = irwriter_binop(w, "add", "i32", irwriter_imm(w, "%cp_start"), irwriter_imm(w, "%cp_size"));
-          irwriter_call_retf(w, "i8*", "tt_pop", "i8* %%tt, i32 %%r%d", (int)cp_end);
-        } else if (hook_id >= HOOK_ID_BUILTIN_COUNT) {
-          // user hook
-          const char* hook_name = symtab_get(&input->hooks, hook_id);
-          int fn_name_len = snprintf(NULL, 0, "vpa_hook_%s", hook_name + 1);
-          char* fn_name = XMALLOC((size_t)fn_name_len + 1);
-          snprintf(fn_name, (size_t)fn_name_len + 1, "vpa_hook_%s", hook_name + 1);
-          IrVal ret_val = irwriter_call_retf(w, "i32", fn_name, "i8* %%ctx, i8* null, i8* null");
-          XFREE(fn_name);
-
-          // if this hook has %effect, validate the return value
-          EffectDecl* ed = _find_effect(input, hook_id);
-          if (ed) {
-            int32_t n_effects = (int32_t)darray_size(ed->effects);
-            // build a chain: check ret_val against each valid effect, if none match -> error
-            IrLabel ok_bb = irwriter_label(w);
-            IrLabel err_bb = irwriter_label(w);
-            IrLabel* effect_bbs = NULL;
-            if (n_effects > 0) {
-              effect_bbs = XMALLOC((size_t)n_effects * sizeof(IrLabel));
-              for (int32_t e = 0; e < n_effects; e++) {
-                effect_bbs[e] = irwriter_label(w);
-              }
-            }
-
-            // switch on the return value
-            irwriter_switch_start(w, "i32", ret_val, err_bb);
-            for (int32_t e = 0; e < n_effects; e++) {
-              irwriter_switch_case(w, "i32", ed->effects[e], effect_bbs[e]);
-            }
-            irwriter_switch_end(w);
-
-            // each valid effect: execute it, then jump to ok
-            for (int32_t e = 0; e < n_effects; e++) {
-              irwriter_bb_at(w, effect_bbs[e]);
-              int32_t ev = ed->effects[e];
-              if (ev > 0) {
-                irwriter_call_void_fmtf(w, "tt_add", "i8* %%tt, i32 %d, i32 %%cp_start, i32 %%cp_size, i32 -1", ev);
-              }
-              // builtin hook effects (e.g. .fail) would be handled here
-              irwriter_br(w, ok_bb);
-            }
-
-            // error: invalid return from hook (TODO: error reporting)
-            irwriter_bb_at(w, err_bb);
-            irwriter_br(w, ok_bb);
-
-            irwriter_bb_at(w, ok_bb);
-            XFREE(effect_bbs);
-          }
-        }
-      }
-    }
-    irwriter_ret(w, "i64", irwriter_imm_int(w, -1));
-  }
-
-  irwriter_bb_at(w, default_bb);
-  irwriter_ret(w, "i64", irwriter_imm_int(w, -1));
-
-  irwriter_define_end(w);
-  XFREE(case_bbs);
-}
-
-// --- Main lex loop ---
-
-static void _gen_vpa_lex(VpaGenInput* input, IrWriter* w, const char* prefix) {
-  int32_t n_scopes = (int32_t)darray_size(input->scopes);
-
-  char* read_cp_name = NULL;
-  int read_cp_len = snprintf(NULL, 0, "%s_next_cp", prefix);
-  read_cp_name = XMALLOC((size_t)read_cp_len + 1);
-  snprintf(read_cp_name, (size_t)read_cp_len + 1, "%s_next_cp", prefix);
-  irwriter_declare(w, "i32", read_cp_name, "i8*");
-  irwriter_declare(w, "void", "ustr_iter_seek", "i8*, i32");
-  irwriter_declare(w, "void", "tt_add", "i8*, i32, i32, i32, i32");
-  irwriter_declare(w, "void", "tt_mark_newline", "i8*, i32");
-
-  irwriter_define_startf(w, "vpa_lex",
-                         "i64 @vpa_lex(i8* %%src, i64 %%len_i64, i8* %%tt, i8* %%errors, i8* %%ctx, "
-                         "ptr %%stack_ptr)");
-
-  irwriter_bb(w);
-  irwriter_dbg(w, 0, 0);
-  irwriter_rawf(w, "  %%len = trunc i64 %%len_i64 to i32\n");
-
-  IrVal cp_off_ptr = irwriter_alloca(w, "i32");
-  IrVal dfa_state_ptr = irwriter_alloca(w, "i32");
-  IrVal last_action_ptr = irwriter_alloca(w, "i32");
-  IrVal last_match_off_ptr = irwriter_alloca(w, "i32");
-  IrVal last_match_valid_ptr = irwriter_alloca(w, "i32");
-  IrVal token_start_ptr = irwriter_alloca(w, "i32");
-
-  irwriter_store(w, "i32", irwriter_imm_int(w, 0), cp_off_ptr);
-  irwriter_store(w, "i32", irwriter_imm_int(w, 0), dfa_state_ptr);
-  irwriter_store(w, "i32", irwriter_imm_int(w, 0), last_action_ptr);
-  irwriter_store(w, "i32", irwriter_imm_int(w, 0), last_match_off_ptr);
-  irwriter_store(w, "i32", irwriter_imm_int(w, 0), last_match_valid_ptr);
-  irwriter_store(w, "i32", irwriter_imm_int(w, 0), token_start_ptr);
-  IrLabel loop_bb = irwriter_label(w);
-  IrLabel read_bb = irwriter_label(w);
-  IrLabel dispatch_bb = irwriter_label(w);
-  IrLabel dispatch_action_bb = irwriter_label(w);
-  IrLabel done_bb = irwriter_label(w);
-  irwriter_br(w, loop_bb);
-  // --- loop: check if at end ---
-  irwriter_bb_at(w, loop_bb);
-  irwriter_comment(w, "loop: check if at end");
-  IrVal cp_off = irwriter_load(w, "i32", cp_off_ptr);
-  IrVal at_end = irwriter_icmp(w, "sge", "i32", cp_off, irwriter_imm(w, "%len"));
-  irwriter_br_cond(w, at_end, dispatch_bb, read_bb);
-
-  // --- read cp and run scope-switched DFA ---
-  irwriter_bb_at(w, read_bb);
-  IrVal cp_off2 = irwriter_load(w, "i32", cp_off_ptr);
-  IrVal cp = irwriter_call_retf(w, "i32", read_cp_name, "i8* %%src");
-
-  // mark newline in bitmap
-  IrLabel nl_bb = irwriter_label(w);
-  IrLabel after_nl_bb = irwriter_label(w);
-  IrVal is_nl = irwriter_icmp(w, "eq", "i32", cp, irwriter_imm_int(w, 10));
-  irwriter_br_cond(w, is_nl, nl_bb, after_nl_bb);
-  irwriter_bb_at(w, nl_bb);
-  irwriter_call_void_fmtf(w, "tt_mark_newline", "i8* %%tt, i32 %%r%d", (int)cp_off2);
-  irwriter_br(w, after_nl_bb);
-  irwriter_bb_at(w, after_nl_bb);
-  IrVal dfa_state = irwriter_load(w, "i32", dfa_state_ptr);
-
-  if (n_scopes > 0) {
-    IrVal state64 = irwriter_sext(w, "i32", dfa_state, "i64");
-    IrVal cp64 = irwriter_sext(w, "i32", cp, "i64");
-    // read tt->current->scope_id to decide which DFA to call
-    irwriter_rawf(w, "  %%r%d = getelementptr i8, ptr %%tt, i64 %zu\n", irwriter_next_reg(w),
-                  offsetof(TokenTree, current));
-    IrVal cur_ptr = irwriter_load(w, "ptr", (IrVal)(irwriter_next_reg(w) - 1));
-    IrVal scope_id = irwriter_load(w, "i32", cur_ptr);
-
-    // after_dfa merges results via phi
-    IrLabel after_dfa = irwriter_label(w);
-    IrLabel* scope_bbs = XMALLOC((size_t)n_scopes * sizeof(IrLabel));
-    IrVal* scope_results = XMALLOC((size_t)n_scopes * sizeof(IrVal));
-
-    // switch on scope_id to call the right lex_{scope}
-    irwriter_comment(w, "scope-switch: dispatch to scope DFA");
-    irwriter_switch_start(w, "i32", scope_id, done_bb);
-    for (int32_t si = 0; si < n_scopes; si++) {
-      scope_bbs[si] = irwriter_label(w);
-      irwriter_switch_case(w, "i32", input->scopes[si].scope_id, scope_bbs[si]);
-    }
-    irwriter_switch_end(w);
-
-    // one basic block per scope calling its lex_{name}
-    for (int32_t si = 0; si < n_scopes; si++) {
-      irwriter_bb_at(w, scope_bbs[si]);
-      char* lex_fn = NULL;
-      int lex_fn_len = snprintf(NULL, 0, "lex_%s", input->scopes[si].name);
-      lex_fn = XMALLOC((size_t)lex_fn_len + 1);
-      snprintf(lex_fn, (size_t)lex_fn_len + 1, "lex_%s", input->scopes[si].name);
-      scope_results[si] = irwriter_call_retf(w, "{i64, i64}", lex_fn, "i64 %%r%d, i64 %%r%d", (int)state64, (int)cp64);
-      XFREE(lex_fn);
-      irwriter_br(w, after_dfa);
-    }
-
-    // merge with phi
-    irwriter_bb_at(w, after_dfa);
-    int phi_reg = irwriter_next_reg(w);
-    irwriter_rawf(w, "  %%r%d = phi {i64, i64} ", phi_reg);
-    for (int32_t si = 0; si < n_scopes; si++) {
-      if (si > 0) {
-        irwriter_rawf(w, ", ");
-      }
-      irwriter_rawf(w, "[%%r%d, %%L%d]", (int)scope_results[si], (int)scope_bbs[si]);
-    }
-    irwriter_rawf(w, "\n");
-    IrVal result = (IrVal)phi_reg;
-
-    XFREE(scope_bbs);
-    XFREE(scope_results);
-    IrVal new_state64 = irwriter_extractvalue(w, "{i64, i64}", result, 0);
-    IrVal action64 = irwriter_extractvalue(w, "{i64, i64}", result, 1);
-    irwriter_rawf(w, "  %%r%d = trunc i64 %%r%d to i32\n", irwriter_next_reg(w), (int)new_state64);
-    IrVal new_state = (IrVal)(irwriter_next_reg(w) - 1);
-    irwriter_rawf(w, "  %%r%d = trunc i64 %%r%d to i32\n", irwriter_next_reg(w), (int)action64);
-    IrVal action = (IrVal)(irwriter_next_reg(w) - 1);
-    IrLabel has_action_bb = irwriter_label(w);
-    IrLabel no_action_bb = irwriter_label(w);
-    IrVal action_valid = irwriter_icmp(w, "ne", "i32", action, irwriter_imm_int(w, -2));
-    irwriter_br_cond(w, action_valid, has_action_bb, no_action_bb);
-    irwriter_bb_at(w, has_action_bb);
-    irwriter_comment(w, "record committed match, then advance");
-    IrVal next_off = irwriter_binop(w, "add", "i32", cp_off2, irwriter_imm_int(w, 1));
-    irwriter_store(w, "i32", action, last_action_ptr);
-    irwriter_store(w, "i32", next_off, last_match_off_ptr);
-    irwriter_store(w, "i32", irwriter_imm_int(w, 1), last_match_valid_ptr);
-    irwriter_store(w, "i32", next_off, cp_off_ptr);
-    irwriter_store(w, "i32", new_state, dfa_state_ptr);
-    irwriter_br(w, loop_bb);
-    irwriter_bb_at(w, no_action_bb);
-    irwriter_br(w, dispatch_bb);
-  } else {
-    irwriter_br(w, done_bb);
-  }
-
-  // --- dispatch ---
-  irwriter_bb_at(w, dispatch_bb);
-  IrVal last_action = irwriter_load(w, "i32", last_action_ptr);
-  IrVal tok_start = irwriter_load(w, "i32", token_start_ptr);
-  IrVal match_off = irwriter_load(w, "i32", last_match_off_ptr);
-  IrVal tok_size = irwriter_binop(w, "sub", "i32", match_off, tok_start);
-
-  // check if any scope has eof_action
-  bool any_eof = false;
-  for (int32_t si = 0; si < n_scopes; si++) {
-    if (input->scopes[si].eof_action > 0) {
-      any_eof = true;
-      break;
-    }
-  }
-
-  IrVal last_match_valid = irwriter_load(w, "i32", last_match_valid_ptr);
-  IrLabel eof_check_bb = (IrLabel)0;
-  IrLabel dispatch_match_bb = irwriter_label(w);
-  IrLabel dispatch_empty_bb = irwriter_label(w);
-  IrLabel reset_match_bb = irwriter_label(w);
-  IrVal has_last = irwriter_icmp(w, "ne", "i32", last_match_valid, irwriter_imm_int(w, 0));
-  if (any_eof) {
-    eof_check_bb = irwriter_label(w);
-    irwriter_br_cond(w, has_last, dispatch_match_bb, eof_check_bb);
-
-    // --- eof check: if at end of input and scope has eof_action, invoke it ---
-    irwriter_bb_at(w, eof_check_bb);
-    irwriter_comment(w, "eof check: scope-switched EOF action");
-    IrVal eof_cp_off = irwriter_load(w, "i32", cp_off_ptr);
-    IrVal is_eof = irwriter_icmp(w, "sge", "i32", eof_cp_off, irwriter_imm(w, "%len"));
-    IrLabel eof_scope_sw_bb = irwriter_label(w);
-    IrLabel eof_stuck_bb = irwriter_label(w);
-    irwriter_br_cond(w, is_eof, eof_scope_sw_bb, eof_stuck_bb);
-    // stuck: can't match, not at EOF — return error position
-    irwriter_bb_at(w, eof_stuck_bb);
-    IrVal stuck_col = irwriter_sext(w, "i32", eof_cp_off, "i64");
-    irwriter_ret(w, "i64", stuck_col);
-    irwriter_bb_at(w, eof_scope_sw_bb);
-
-    // read scope_id to switch on
-    irwriter_rawf(w, "  %%r%d = getelementptr i8, ptr %%tt, i64 %zu\n", irwriter_next_reg(w),
-                  offsetof(TokenTree, current));
-    IrVal eof_cur_ptr = irwriter_load(w, "ptr", (IrVal)(irwriter_next_reg(w) - 1));
-    IrVal eof_scope_id = irwriter_load(w, "i32", eof_cur_ptr);
-
-    // count eof scopes and allocate labels
-    int32_t n_eof = 0;
-    for (int32_t si = 0; si < n_scopes; si++) {
-      if (input->scopes[si].eof_action > 0) {
-        n_eof++;
-      }
-    }
-    IrLabel* eof_case_bbs = XMALLOC((size_t)n_eof * sizeof(IrLabel));
-    int32_t ei = 0;
-    for (int32_t si = 0; si < n_scopes; si++) {
-      if (input->scopes[si].eof_action > 0) {
-        eof_case_bbs[ei++] = irwriter_label(w);
-      }
-    }
-
-    irwriter_switch_start(w, "i32", eof_scope_id, done_bb);
-    ei = 0;
-    for (int32_t si = 0; si < n_scopes; si++) {
-      if (input->scopes[si].eof_action > 0) {
-        irwriter_switch_case(w, "i32", input->scopes[si].scope_id, eof_case_bbs[ei++]);
-      }
-    }
-    irwriter_switch_end(w);
-
-    ei = 0;
-    IrVal eof_tok_start = irwriter_imm(w, "%len");
-    for (int32_t si = 0; si < n_scopes; si++) {
-      if (input->scopes[si].eof_action <= 0) {
-        continue;
-      }
-      irwriter_bb_at(w, eof_case_bbs[ei++]);
-      irwriter_comment(w, "eof action for scope %s", input->scopes[si].name);
-      IrVal eof_aid = irwriter_imm_int(w, input->scopes[si].eof_action);
-      IrVal ea64 = irwriter_sext(w, "i32", eof_aid, "i64");
-      IrVal ets64 = irwriter_sext(w, "i32", eof_tok_start, "i64");
-      IrVal eof_dispatch_result = irwriter_call_retf(
-          w, "i64", "vpa_dispatch", "i64 %%r%d, i8* %%tt, i64 %%r%d, i64 0, i8* %%ctx, ptr %%stack_ptr", (int)ea64,
-          (int)ets64);
-      IrVal eof_failed = irwriter_icmp(w, "sge", "i64", eof_dispatch_result, irwriter_imm_int(w, 0));
-      IrLabel eof_fail_bb = irwriter_label(w);
-      irwriter_br_cond(w, eof_failed, eof_fail_bb, done_bb);
-      irwriter_bb_at(w, eof_fail_bb);
-      irwriter_ret(w, "i64", eof_dispatch_result);
-    }
-    XFREE(eof_case_bbs);
-  } else {
-    irwriter_br_cond(w, has_last, dispatch_match_bb, done_bb);
-  }
-
-  irwriter_bb_at(w, dispatch_match_bb);
-  IrVal last_action_is_pos = irwriter_icmp(w, "sgt", "i32", last_action, irwriter_imm_int(w, 0));
-  irwriter_br_cond(w, last_action_is_pos, dispatch_action_bb, dispatch_empty_bb);
-
-  irwriter_bb_at(w, dispatch_empty_bb);
-  irwriter_br(w, reset_match_bb);
-
-  irwriter_bb_at(w, dispatch_action_bb);
-  // vpa_dispatch uses i64 ABI — widen i32 args
-  IrVal la64 = irwriter_sext(w, "i32", last_action, "i64");
-  IrVal ts64 = irwriter_sext(w, "i32", tok_start, "i64");
-  IrVal sz64 = irwriter_sext(w, "i32", tok_size, "i64");
-  IrVal dispatch_result = irwriter_call_retf(w, "i64", "vpa_dispatch",
-                                             "i64 %%r%d, i8* %%tt, i64 %%r%d, i64 %%r%d, i8* %%ctx, ptr %%stack_ptr",
-                                             (int)la64, (int)ts64, (int)sz64);
-  IrVal dispatch_failed = irwriter_icmp(w, "sge", "i64", dispatch_result, irwriter_imm_int(w, 0));
-  IrLabel dispatch_fail_bb = irwriter_label(w);
-  irwriter_br_cond(w, dispatch_failed, dispatch_fail_bb, reset_match_bb);
-  irwriter_bb_at(w, dispatch_fail_bb);
-  irwriter_ret(w, "i64", dispatch_result);
-  irwriter_bb_at(w, reset_match_bb);
-
-  irwriter_store(w, "i32", match_off, cp_off_ptr);
-  irwriter_store(w, "i32", match_off, token_start_ptr);
-  irwriter_store(w, "i32", irwriter_imm_int(w, 0), dfa_state_ptr);
-  irwriter_store(w, "i32", irwriter_imm_int(w, 0), last_action_ptr);
-  irwriter_store(w, "i32", irwriter_imm_int(w, 0), last_match_valid_ptr);
-  irwriter_store(w, "i32", match_off, last_match_off_ptr);
-  // seek iterator to backtrack position
-  irwriter_call_void_fmtf(w, "ustr_iter_seek", "i8* %%src, i32 %%r%d", (int)match_off);
-
-  IrVal still_going = irwriter_icmp(w, "slt", "i32", match_off, irwriter_imm(w, "%len"));
-  irwriter_br_cond(w, still_going, loop_bb, any_eof ? eof_check_bb : done_bb);
-
-  // --- done ---
-  irwriter_bb_at(w, done_bb);
-  irwriter_ret(w, "i64", irwriter_imm_int(w, -1));
-
-  irwriter_define_end(w);
-  XFREE(read_cp_name);
-}
-
-// --- {prefix}_parse_splat ---
-
-static void _gen_parse_entry(VpaGenInput* input, IrWriter* w, const char* prefix, int32_t main_rule_row) {
-  // vpa_lex is already defined in this module; no declare needed
-  irwriter_declare(w, "i8*", "tt_tree_new", "i8*");
-  irwriter_declare(w, "i32", "ustr_size", "i8*");
-  irwriter_declare(w, "void", "tt_tree_del", "ptr, i1");
-#ifdef XMALLOC_TRACE
-  irwriter_declare(w, "void", "darray_del_traced", "ptr, ptr, i32");
-  irwriter_rawf(w, "@.xmalloc_caller.cleanup = private unnamed_addr constant [8 x i8] c\"cleanup\\00\"\n");
-#else
-  irwriter_declare(w, "void", "darray_del_", "ptr");
-#endif
-#ifdef XMALLOC_TRACE
-  irwriter_declare(w, "ptr", "xmalloc_traced", "i64, ptr, i32");
-  irwriter_declare(w, "void", "xfree_traced", "ptr, ptr, i32");
-#else
-  irwriter_declare(w, "ptr", "malloc", "i64");
-  irwriter_declare(w, "void", "free", "ptr");
-#endif
-  irwriter_declare(w, "void", "ustr_iter_init", "i8*, i8*, i32");
-#ifdef XMALLOC_TRACE
-  irwriter_rawf(w, "@.xmalloc_caller.parse = private unnamed_addr constant [6 x i8] c\"parse\\00\"\n");
-#endif
-
-  // Build {prefix}_parse_splat signature with splatted ParseContext + ParseResult out-params
-  // Args: (ptr %src, ptr %user_data, ptr %source_file_name, ptr %hook0, ptr %hook1, ...,
-  //        ptr %out_main, ptr %out_tt, ptr %out_errors, ptr %out_parse_end_col)
-  int32_t n_hooks = symtab_count(&input->hooks);
-  int32_t n_user_hooks = n_hooks + input->hooks.start_num - HOOK_ID_BUILTIN_COUNT;
-
-  // Build arg string dynamically
-  char* arg_buf = XMALLOC(4096);
-  int arg_off = 0;
-  arg_off += snprintf(arg_buf + arg_off, 4096 - (size_t)arg_off, "ptr %%src, ptr %%user_data, ptr %%source_file_name");
-  for (int32_t i = HOOK_ID_BUILTIN_COUNT; i < n_hooks + input->hooks.start_num; i++) {
-    const char* name = symtab_get(&input->hooks, i);
-    arg_off += snprintf(arg_buf + arg_off, 4096 - (size_t)arg_off, ", ptr %%hook_%s", name + 1);
-  }
-  arg_off += snprintf(arg_buf + arg_off, 4096 - (size_t)arg_off,
-                      ", ptr %%out_main, ptr %%out_tt, ptr %%out_errors, ptr %%out_parse_end_col");
-
-  char* parse_name = XMALLOC(strlen(prefix) + 16);
-  sprintf(parse_name, "%s_parse_splat", prefix);
-  irwriter_define_startf(w, parse_name, "void @%s(%s)", parse_name, arg_buf);
-  XFREE(parse_name);
-  XFREE(arg_buf);
-
-  irwriter_bb(w);
-  irwriter_dbg(w, 0, 0);
-  IrVal len = irwriter_call_retf(w, "i32", "ustr_size", "ptr %%src");
-  IrVal len64 = irwriter_sext(w, "i32", len, "i64");
-  IrVal tt = irwriter_call_retf(w, "ptr", "tt_tree_new", "ptr %%src");
-  // set root chunk scope_id and aux_value
-  {
-    int32_t n_scopes = (int32_t)darray_size(input->scopes);
-    if (n_scopes > 0) {
-      irwriter_rawf(w, "  %%r%d = getelementptr i8, ptr %%r%d, i64 %zu\n", irwriter_next_reg(w), (int)tt,
-                    offsetof(TokenTree, root));
-      IrVal root_chunk = irwriter_load(w, "ptr", (IrVal)(irwriter_next_reg(w) - 1));
-      irwriter_store(w, "i32", irwriter_imm_int(w, input->scopes[0].scope_id), root_chunk);
-      irwriter_rawf(w, "  %%r%d = getelementptr i8, ptr %%r%d, i64 %zu\n", irwriter_next_reg(w), (int)root_chunk,
-                    offsetof(TokenChunk, aux_value));
-      irwriter_store(w, "ptr", tt, (IrVal)(irwriter_next_reg(w) - 1));
-    }
-  }
-  // Build ctx struct on stack: {void* user_data, const char* source_file_name, LexHook...}
-  // Ctx has 2 + n_user_hooks pointer-sized fields
-  // Build ctx type string: {ptr, ptr, ptr, ...} with 2 + n_user_hooks fields
-  char ctx_ty[512];
-  int ctx_ty_off = 0;
-  ctx_ty_off += snprintf(ctx_ty + ctx_ty_off, sizeof(ctx_ty) - (size_t)ctx_ty_off, "{ptr, ptr");
-  for (int32_t i = 0; i < n_user_hooks; i++) {
-    ctx_ty_off += snprintf(ctx_ty + ctx_ty_off, sizeof(ctx_ty) - (size_t)ctx_ty_off, ", ptr");
-  }
-  ctx_ty_off += snprintf(ctx_ty + ctx_ty_off, sizeof(ctx_ty) - (size_t)ctx_ty_off, "}");
-  IrVal ctx_alloca = irwriter_alloca(w, ctx_ty);
-  // Store user_data
-  irwriter_rawf(w, "  %%r%d = getelementptr inbounds %s, ptr %%r%d, i32 0, i32 0\n", irwriter_next_reg(w), ctx_ty,
-                (int)ctx_alloca);
-  irwriter_store(w, "ptr", irwriter_imm(w, "%user_data"), (IrVal)(irwriter_next_reg(w) - 1));
-  // Store source_file_name
-  irwriter_rawf(w, "  %%r%d = getelementptr inbounds %s, ptr %%r%d, i32 0, i32 1\n", irwriter_next_reg(w), ctx_ty,
-                (int)ctx_alloca);
-  irwriter_store(w, "ptr", irwriter_imm(w, "%source_file_name"), (IrVal)(irwriter_next_reg(w) - 1));
-  // Store each hook
-  for (int32_t i = 0; i < n_user_hooks; i++) {
-    int32_t hook_id = HOOK_ID_BUILTIN_COUNT + i;
-    const char* name = symtab_get(&input->hooks, hook_id);
-    irwriter_rawf(w, "  %%r%d = getelementptr inbounds %s, ptr %%r%d, i32 0, i32 %d\n", irwriter_next_reg(w), ctx_ty,
-                  (int)ctx_alloca, 2 + i);
-    irwriter_rawf(w, "  store ptr %%hook_%s, ptr %%r%d\n", name + 1, irwriter_next_reg(w) - 1);
-  }
-
-  // allocate UstrIter on stack as userdata for vpa_lex
-  IrVal iter_ptr = irwriter_alloca(w, "{ptr, ptr, i32, i32, i32, i32}");
-  irwriter_call_void_fmtf(w, "ustr_iter_init", "i8* %%r%d, i8* %%src, i32 0", (int)iter_ptr);
-  // allocate 1M stack for PEG backtracking
-#ifdef XMALLOC_TRACE
-  IrVal stack_buf = irwriter_call_retf(w, "ptr", "xmalloc_traced", "i64 1048576, ptr @.xmalloc_caller.parse, i32 0");
-#else
-  IrVal stack_buf = irwriter_call_retf(w, "ptr", "malloc", "i64 1048576");
-#endif
-  IrVal lex_result =
-      irwriter_call_retf(w, "i64", "vpa_lex", "ptr %%r%d, i64 %%r%d, ptr %%r%d, ptr null, ptr %%r%d, ptr %%r%d",
-                         (int)iter_ptr, (int)len64, (int)tt, (int)ctx_alloca, (int)stack_buf);
-  irwriter_rawf(w, "  %%r%d = getelementptr i8, ptr %%r%d, i64 %zu\n", irwriter_next_reg(w), (int)tt,
-                offsetof(TokenTree, root));
-  IrVal tc = irwriter_load(w, "ptr", (IrVal)(irwriter_next_reg(w) - 1));
-
-  // Store results via out-params
-  // out_main: PegRef = {ptr tc, i64 0, i64 main_rule_row}
-  // Store as 3 consecutive fields via GEP on {ptr, i64, i64}
-  irwriter_rawf(w, "  %%r%d = getelementptr inbounds {ptr, i64, i64}, ptr %%out_main, i32 0, i32 0\n",
-                irwriter_next_reg(w));
-  irwriter_store(w, "ptr", tc, (IrVal)(irwriter_next_reg(w) - 1));
-  irwriter_rawf(w, "  %%r%d = getelementptr inbounds {ptr, i64, i64}, ptr %%out_main, i32 0, i32 1\n",
-                irwriter_next_reg(w));
-  irwriter_store(w, "i64", irwriter_imm_int(w, 0), (IrVal)(irwriter_next_reg(w) - 1));
-  irwriter_rawf(w, "  %%r%d = getelementptr inbounds {ptr, i64, i64}, ptr %%out_main, i32 0, i32 2\n",
-                irwriter_next_reg(w));
-  irwriter_store(w, "i64", irwriter_imm_int(w, main_rule_row), (IrVal)(irwriter_next_reg(w) - 1));
-  // out_tt: TokenTree**
-  irwriter_store(w, "ptr", tt, irwriter_imm(w, "%out_tt"));
-  // out_errors: ParseErrors* (null until tt_collect_parse_errors is implemented)
-  irwriter_store(w, "ptr", irwriter_imm(w, "null"), irwriter_imm(w, "%out_errors"));
-  // out_parse_end_col: i64*
-  irwriter_store(w, "i64", lex_result, irwriter_imm(w, "%out_parse_end_col"));
-
-#ifdef XMALLOC_TRACE
-  irwriter_call_void_fmtf(w, "xfree_traced", "ptr %%r%d, ptr @.xmalloc_caller.parse, i32 0", (int)stack_buf);
-#else
-  irwriter_call_void_fmtf(w, "free", "ptr %%r%d", (int)stack_buf);
-#endif
-  irwriter_ret_void(w);
-  irwriter_define_end(w);
-
-  // {prefix}_cleanup_splat(TokenTree** tt, ParseError** errors) -> void
-  // Frees token tree and errors darray directly
-  char* cleanup_name = XMALLOC(strlen(prefix) + 20);
-  sprintf(cleanup_name, "%s_cleanup_splat", prefix);
-  irwriter_define_startf(w, cleanup_name, "void @%s(ptr %%tt_ptr, ptr %%errors_ptr)", cleanup_name);
-  XFREE(cleanup_name);
-  irwriter_bb(w);
-  irwriter_dbg(w, 0, 0);
-  // Load tt, if non-null call tt_tree_del(tt, true)
-  IrVal tt_val = irwriter_load(w, "ptr", irwriter_imm(w, "%tt_ptr"));
-  IrVal tt_is_null = irwriter_icmp(w, "eq", "ptr", tt_val, irwriter_imm(w, "null"));
-  IrLabel tt_nonnull_bb = irwriter_label(w);
-  IrLabel tt_done_bb = irwriter_label(w);
-  irwriter_br_cond(w, tt_is_null, tt_done_bb, tt_nonnull_bb);
-  irwriter_bb_at(w, tt_nonnull_bb);
-  irwriter_call_void_fmtf(w, "tt_tree_del", "ptr %%r%d, i1 zeroext 1", (int)tt_val);
-  // Clear the pointer
-  irwriter_store(w, "ptr", irwriter_imm(w, "null"), irwriter_imm(w, "%tt_ptr"));
-  irwriter_br(w, tt_done_bb);
-  irwriter_bb_at(w, tt_done_bb);
-  // Load errors, if non-null call darray_del(errors)
-  IrVal errors_val = irwriter_load(w, "ptr", irwriter_imm(w, "%errors_ptr"));
-  IrVal errors_is_null = irwriter_icmp(w, "eq", "ptr", errors_val, irwriter_imm(w, "null"));
-  IrLabel err_nonnull_bb = irwriter_label(w);
-  IrLabel err_done_bb = irwriter_label(w);
-  irwriter_br_cond(w, errors_is_null, err_done_bb, err_nonnull_bb);
-  irwriter_bb_at(w, err_nonnull_bb);
-#ifdef XMALLOC_TRACE
-  irwriter_call_void_fmtf(w, "darray_del_traced", "ptr %%r%d, ptr @.xmalloc_caller.cleanup, i32 0", (int)errors_val);
-#else
-  irwriter_call_void_fmtf(w, "darray_del_", "ptr %%r%d", (int)errors_val);
-#endif
-  irwriter_store(w, "ptr", irwriter_imm(w, "null"), irwriter_imm(w, "%errors_ptr"));
-  irwriter_br(w, err_done_bb);
-  irwriter_bb_at(w, err_done_bb);
-  irwriter_ret_void(w);
-  irwriter_define_end(w);
 }
 
 // --- Header generation ---
@@ -812,7 +121,40 @@ static void _print_upper(HeaderWriter* hw, const char* s) {
   }
 }
 
-static void _gen_header(VpaGenInput* input, HeaderWriter* hw, const char* prefix) {
+static void _gen_init_lexers(VpaGenInput* input, IrWriter* w, const char* prefix) {
+  int32_t n_scopes = (int32_t)darray_size(input->scopes);
+  char* init_name = NULL;
+  int init_len = snprintf(NULL, 0, "%s_init_lexers", prefix);
+  init_name = XMALLOC((size_t)init_len + 1);
+  snprintf(init_name, (size_t)init_len + 1, "%s_init_lexers", prefix);
+
+  irwriter_define_startf(w, init_name, "void @%s(ptr %%lexer)", init_name);
+  irwriter_bb(w);
+  irwriter_dbg(w, 0, 0);
+  for (int32_t i = 0; i < n_scopes; i++) {
+    IrVal gep = irwriter_next_reg(w);
+    irwriter_rawf(w, "  %%r%d = getelementptr {", (int)gep);
+    for (int32_t j = 0; j < n_scopes; j++) {
+      if (j > 0) {
+        irwriter_raw(w, ", ");
+      }
+      irwriter_raw(w, "ptr");
+    }
+    irwriter_rawf(w, "}, ptr %%lexer, i32 0, i32 %d\n", i);
+    irwriter_rawf(w, "  store ptr @_dfa_%s, ptr %%r%d\n", input->scopes[i].name, (int)gep);
+  }
+  irwriter_ret_void(w);
+  irwriter_define_end(w);
+  XFREE(init_name);
+}
+
+static bool _is_ignored_tok(VpaGenInput* input, int32_t tok_id) {
+  if (!input->ignore_names.offsets) return false;
+  const char* name = symtab_get(&input->tokens, tok_id);
+  return name && symtab_find(&input->ignore_names, name) >= 0;
+}
+
+static void _gen_header(VpaGenInput* input, HeaderWriter* hw, const char* prefix, Actions actions) {
   // caller (nest.c) has already written #pragma once, includes, and runtime header
 
   int32_t n_scopes = (int32_t)darray_size(input->scopes);
@@ -847,6 +189,15 @@ static void _gen_header(VpaGenInput* input, HeaderWriter* hw, const char* prefix
 
   int32_t n_hooks = symtab_count(&input->hooks);
 
+  hdwriter_printf(hw, "typedef struct { int64_t state; int64_t action_id; } %sAutResult;\n", prefix);
+  hdwriter_printf(hw, "typedef %sAutResult (*%sAutFn)(int64_t state, int64_t cp);\n", prefix, prefix);
+  hdwriter_puts(hw, "typedef struct {\n");
+  for (int32_t i = 0; i < n_scopes; i++) {
+    hdwriter_printf(hw, "  %sAutFn aut_%s;\n", prefix, input->scopes[i].name);
+  }
+  hdwriter_printf(hw, "} %sLexer;\n", prefix);
+  hdwriter_printf(hw, "extern void %s_init_lexers(%sLexer* lexer);\n\n", prefix, prefix);
+
   // ParseErrorType, ParseError, ParseResult, PegRef, PegLink — all in nest_rt.h
 
   // LexHook typedef + ParseContext
@@ -862,55 +213,83 @@ static void _gen_header(VpaGenInput* input, HeaderWriter* hw, const char* prefix
   hdwriter_puts(hw, "} ParseContext;\n");
   hdwriter_putc(hw, '\n');
 
-  // {prefix}_parse_splat extern declaration
-  hdwriter_printf(hw, "extern void %s_parse_splat(const char* src", prefix);
-  hdwriter_puts(hw, ",\n  /* ParseContext fields */ void* user_data, const char* source_file_name");
-  for (int32_t i = HOOK_ID_BUILTIN_COUNT; i < n_hooks + input->hooks.start_num; i++) {
-    const char* name = symtab_get(&input->hooks, i);
-    hdwriter_printf(hw, ", LexHook %s", name + 1);
+  hdwriter_printf(hw, "static inline %sAutFn %s_aut_for_scope(%sLexer* lexer, int32_t scope_id) {\n", prefix, prefix, prefix);
+  hdwriter_puts(hw, "  switch (scope_id) {\n");
+  for (int32_t i = 0; i < n_scopes; i++) {
+    hdwriter_printf(hw, "  case %d: return lexer->aut_%s;\n", input->scopes[i].scope_id, input->scopes[i].name);
   }
-  hdwriter_puts(hw, ",\n  /* ParseResult fields */ PegRef*, TokenTree**, ParseErrors*, int64_t*\n");
-  hdwriter_puts(hw, ");\n");
+  hdwriter_puts(hw, "  default: return NULL;\n  }\n}\n\n");
 
-  // {prefix}_parse inline wrapper
-  hdwriter_printf(hw, "static inline ParseResult %s_parse(ParseContext* ctx, const char* input) {\n", prefix);
-  hdwriter_puts(hw, "  ParseResult res = {0};\n");
-  hdwriter_printf(hw, "  %s_parse_splat(input,\n", prefix);
-  hdwriter_puts(hw, "    ctx->user_data, ctx->source_file_name");
-  for (int32_t i = HOOK_ID_BUILTIN_COUNT; i < n_hooks + input->hooks.start_num; i++) {
-    const char* name = symtab_get(&input->hooks, i);
-    hdwriter_printf(hw, ", ctx->%s", name + 1);
+  hdwriter_printf(hw, "static inline int32_t %s_eof_action(int32_t scope_id) {\n", prefix);
+  hdwriter_puts(hw, "  switch (scope_id) {\n");
+  for (int32_t i = 0; i < n_scopes; i++) {
+    if (input->scopes[i].eof_action > 0) {
+      hdwriter_printf(hw, "  case %d: return %d;\n", input->scopes[i].scope_id, input->scopes[i].eof_action);
+    }
   }
-  hdwriter_puts(hw, ",\n    &res.main, &res.tt, &res.errors, &res.parse_end_col\n");
-  hdwriter_puts(hw, "  );\n");
-  hdwriter_puts(hw, "  return res;\n");
-  hdwriter_puts(hw, "}\n");
-  hdwriter_putc(hw, '\n');
+  hdwriter_puts(hw, "  default: return 0;\n  }\n}\n\n");
 
-  // {prefix}_cleanup_splat extern + {prefix}_cleanup inline wrapper
-  hdwriter_printf(hw, "extern void %s_cleanup_splat(TokenTree** tt, ParseError** errors);\n", prefix);
-  hdwriter_printf(hw, "static inline void %s_cleanup(ParseResult* res) {\n", prefix);
-  hdwriter_printf(hw, "  %s_cleanup_splat(&res->tt, &res->errors);\n", prefix);
-  hdwriter_puts(hw, "}\n");
-  hdwriter_putc(hw, '\n');
+  hdwriter_printf(hw, "static inline int64_t %s_dispatch_action(ParseContext* ctx, TokenTree* tt, int32_t action_id, int32_t cp_start, int32_t cp_size) {\n", prefix);
+  hdwriter_puts(hw, "  switch (action_id) {\n");
+  for (size_t ai = 1; ai < darray_size(actions); ai++) {
+    hdwriter_printf(hw, "  case %d:\n", (int32_t)ai);
+    VpaActionUnits au = actions[ai].action_units;
+    for (size_t j = 0; au && j < darray_size(au); j++) {
+      int32_t auid = au[j];
+      if (auid > 0) {
+        if (!_is_ignored_tok(input, auid)) {
+          hdwriter_printf(hw, "    tt_add(tt, %d, cp_start, cp_size, -1);\n", auid);
+        }
+      } else if (auid < 0) {
+        int32_t hook_id = -auid;
+        if (hook_id == HOOK_ID_BEGIN) {
+          hdwriter_printf(hw, "    tt_push_assoc(tt, %d);\n", actions[ai].begin_scope_id);
+        } else if (hook_id == HOOK_ID_END) {
+          hdwriter_puts(hw, "    tt_pop(tt, cp_start + cp_size);\n");
+        } else if (hook_id == HOOK_ID_FAIL) {
+          hdwriter_puts(hw, "    return cp_start;\n");
+        } else if (hook_id >= HOOK_ID_BUILTIN_COUNT) {
+          const char* hook_name = symtab_get(&input->hooks, hook_id);
+          hdwriter_printf(hw, "    if (ctx->%s) { int32_t $r = ctx->%s(ctx->user_data, NULL, NULL); if ($r == HOOK_FAIL) return cp_start; }\n", hook_name + 1, hook_name + 1);
+        }
+      }
+    }
+    hdwriter_puts(hw, "    return -1;\n");
+  }
+  hdwriter_puts(hw, "  default: return cp_start;\n  }\n}\n\n");
+
+  hdwriter_printf(hw, "static inline int64_t %s_lex(ParseContext* ctx, %sLexer* lexer, const char* input, TokenTree* tt) {\n", prefix, prefix);
+  hdwriter_puts(hw, "  UstrIter it;\n  ustr_iter_init(&it, input, 0);\n  int32_t len = ustr_size(input);\n  int32_t token_start = 0;\n");
+  hdwriter_puts(hw, "  while (token_start < len) {\n");
+  hdwriter_puts(hw, "    int32_t cp_off = token_start;\n    int64_t state = 0;\n    int32_t last_action = 0;\n    int32_t last_match = -1;\n    ustr_iter_seek(&it, token_start);\n");
+  hdwriter_puts(hw, "    while (cp_off < len) {\n");
+  hdwriter_printf(hw, "      %sAutFn aut = %s_aut_for_scope(lexer, tt->current->scope_id);\n", prefix, prefix);
+  hdwriter_puts(hw, "      if (!aut) return cp_off;\n      int32_t cp = ustr_iter_next(&it);\n      if (cp == 10) tt_mark_newline(tt, cp_off);\n");
+  hdwriter_printf(hw, "      %sAutResult r = aut(state, cp);\n", prefix);
+  hdwriter_puts(hw, "      if (r.action_id == -2) break;\n      state = r.state;\n      cp_off++;\n      if (r.action_id >= 0) { last_action = (int32_t)r.action_id; last_match = cp_off; }\n    }\n");
+  hdwriter_puts(hw, "    if (last_match < 0) return token_start;\n");
+  hdwriter_printf(hw, "    if (last_action > 0) { int64_t err = %s_dispatch_action(ctx, tt, last_action, token_start, last_match - token_start); if (err >= 0) return err; }\n", prefix);
+  hdwriter_puts(hw, "    token_start = last_match;\n  }\n");
+  hdwriter_puts(hw, "  for (int32_t guard = 0; guard < 1024 && tt->current; guard++) {\n");
+  hdwriter_printf(hw, "    int32_t eof_action = %s_eof_action(tt->current->scope_id);\n", prefix);
+  hdwriter_puts(hw, "    if (eof_action <= 0) break;\n");
+  hdwriter_printf(hw, "    int64_t err = %s_dispatch_action(ctx, tt, eof_action, len, 0);\n", prefix);
+  hdwriter_puts(hw, "    if (err >= 0) return err;\n  }\n  if (tt->current && tt->current->parent_id != -1) return len;\n  return -1;\n}\n\n");
+
+  // final generated C API is emitted by nest.c after PEG and VPA generators.
 }
 
 // --- Main entry point ---
 
-void vpa_gen(VpaGenInput* input, HeaderWriter* hw, IrWriter* w, const char* prefix, int32_t main_rule_row) {
+void vpa_gen(VpaGenInput* input, HeaderWriter* hw, IrWriter* w, const char* prefix) {
   int32_t n_scopes = (int32_t)darray_size(input->scopes);
   Actions actions = darray_new(sizeof(Action), 0);
-  Action sentinel = {.action_id = 0, .action_units = NULL, .end_scope_name = NULL, .begin_scope_id = -1};
+  Action sentinel = {.action_id = 0, .action_units = NULL, .begin_scope_id = -1};
   darray_push(actions, sentinel);
-
   for (int32_t i = 0; i < n_scopes; i++) {
     _gen_scope_dfa(input, w, &input->scopes[i], &actions);
   }
-
-  _gen_dispatch(input, w, actions);
-  _gen_vpa_lex(input, w, prefix);
-  _gen_parse_entry(input, w, prefix, main_rule_row);
-  _gen_header(input, hw, prefix);
-
+  _gen_init_lexers(input, w, prefix);
+  _gen_header(input, hw, prefix, actions);
   darray_del(actions);
 }
