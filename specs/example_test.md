@@ -36,7 +36,7 @@ Three sections separated by a line containing exactly `------`.
 1. **errors** — tokenizer / syntax / post_process error output (may be empty, separator still required).
 2. **Token list** — one token per line, indented by VPA scope depth.
    Each line: `<indent><token_name> "<matched text>"`.
-3. **Parse tree** — tree defined by PEG rules, indented by nesting depth.
+3. **Parse tree** — tree defined by parsing rules, indented by nesting depth.
    Interior nodes are rule names; leaves are token names (no matched text).
 
 #### Multipliers and alternation in the parse tree

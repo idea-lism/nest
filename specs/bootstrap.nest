@@ -71,42 +71,40 @@ lit_scope = "@{" .begin {
   *noise
 }
 
-*peg_ops = @{
+*ll_ops = @{
   "<"
   ">"
   "?"
   "+"
   "*"
-  "&"
-  "!"
 }
 
-peg = /\s*\[\[peg\]\]\n/ .begin {
-  "=" @peg_assign
-  "TODO" @peg_todo
-  *peg_commons
+ll = /\s*\[\[ll\]\]\n/ .begin {
+  "=" @ll_assign
+  "TODO" @ll_todo
+  *ll_commons
   branches
   *noise
   EOF .end
 }
 
-*peg_commons = {
-  /[a-z_]\w*/ @peg_id
-  /\@#{ID}/ @peg_tok_id
-  peg_str
-  *peg_ops
+*ll_commons = {
+  /[a-z_]\w*/ @ll_id
+  /\@#{ID}/ @ll_tok_id
+  ll_str
+  *ll_ops
   *noise
 }
 
 branches = "[" .begin {
-  *peg_commons
-  peg_tag
+  *ll_commons
+  ll_tag
   "]" .end
   *noise
 }
 
 # to make it simpler, tag_id must appear on the same line after colon, or it may eat the rest of the branches
-peg_tag = /:/ .begin {
+ll_tag = /:/ .begin {
   ID @tag_id
   /\n/ .end @nl
   *noise
@@ -159,15 +157,15 @@ re_str = /["']/ .set_quote .begin {
 }
 
 # same as re_str, but the parsing process is different so we create different scope
-peg_str = /["']/ .set_quote .begin {
+ll_str = /["']/ .set_quote .begin {
   /["']/ .str_check_end # may emit char or terminate matching
   *chars
 }
 
-# PEG section
-[[peg]]
+# parser section
+[[ll]]
 
-main = vpa peg
+main = vpa ll
 
 ### VPA rules
 
@@ -281,42 +279,31 @@ str_char = [
   @plain_escape
 ]
 
-### PEG rules
+### LL rules
 
-peg = @nl* peg_rule+<@nl> @nl*
+ll = @nl* ll_rule+<@nl> @nl*
 
-peg_rule = @peg_id @peg_assign [
-  @peg_todo
+ll_rule = @ll_id @ll_assign [
+  @ll_todo
   seq
 ]
 
-seq = peg_unit+
+seq = ll_unit+
 
-peg_unit = [
-  "&" peg_lookahead_unit
-  "!" peg_lookahead_unit
-  @peg_id multiplier?
-  @peg_tok_id multiplier?
-  peg_str multiplier?
+ll_unit = [
+  @ll_id multiplier?
+  @ll_tok_id multiplier?
+  ll_str multiplier?
   branches
 ]
 
-peg_lookahead_unit = [
-  @peg_id
-  @peg_tok_id
-  peg_str
-  branches
+ll_simple_unit = [
+  @ll_id multiplier?
+  @ll_tok_id multiplier?
+  ll_str multiplier?
 ]
 
-peg_simple_unit = [
-  "&" peg_lookahead_unit
-  "!" peg_lookahead_unit
-  @peg_id multiplier?
-  @peg_tok_id multiplier?
-  peg_str multiplier?
-]
-
-peg_str = str_char*
+ll_str = str_char*
 
 multiplier = [
   "?"
@@ -325,9 +312,9 @@ multiplier = [
 ]
 
 interlace_rhs = [
-  @peg_id
-  @peg_tok_id
-  peg_str
+  @ll_id
+  @ll_tok_id
+  ll_str
 ]
 
 # multipliers can't nest
@@ -339,6 +326,6 @@ branches = @nl* branch_line+<@nl> @nl*
 
 # branch can't nest
 branch_line = [
-  peg_simple_unit+ @tag_id?
+  ll_simple_unit+ @tag_id?
   @tag_id
 ]

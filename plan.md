@@ -1,98 +1,122 @@
-# Refactor plan: PEG→LL(1), LLVM→bytecode VM, spec slimming
+# Refactor plan: remove → re-spec → re-implement
 
-Read [status.md](status.md) first. Open design decisions live in [questions.md](questions.md) — phases marked **(blocked)** wait for those answers; do not guess them.
+Read [status.md](status.md) for the pre-refactor audit. Specs are user area: propose spec changes, don't rewrite unilaterally.
 
 ## Goals
 
 1. **LL(1) parser** replaces the PEG backend. No packrat memoization, no coloring, no token-array materialization for parsing.
-2. **Bytecode VM** replaces LLVM IR emission + clang. `nest` output = bytecode + C header; runtime interpreter lives in the runtime lib. No clang dependency anywhere (including nest's own bootstrap).
+2. **Bytecode VM** replaces LLVM IR emission + clang. `nest` output = bytecode + C header; interpreter lives in the runtime lib. No clang anywhere, including nest's own bootstrap.
 3. **Specs slimmed** to key ideas, data structures, interfaces.
 4. **Syntax tweaks** so `.nest` grammars fit LL(1).
 
-## Governing spec rules (apply to every spec rewrite)
+## Governing spec rules
 
 Spec: key idea; key data structures & interfaces (a code sketch when it clarifies). Don't spec: anything inferable from the requirement; constraints nobody asked for; noise with no implementation effect. No C pseudocode of whole loops; no enum tables that duplicate headers 1:1; no transformation case-law (that belongs in code comments).
+
+## Road
+
+Each subsystem goes through the same three steps, never skipping:
+
+1. **Remove** — delete the old code, spec, docs and tests. Don't port; old code is reference only.
+2. **Update spec** — rewrite the spec to the target design, slim per the rules above. Decisions the spec can't settle go to the user, not into code.
+3. **Re-implement** — build against the spec; tests assert spec invariants, not emitted text.
+
+## Current state (verified)
+
+- **Removed already:** PEG backend, LLVM IR backend, token tree, `nest` CLI, coloring, memtab, header_writer, dead specs.
+- **Built and green:** `ustr`, `darray`, `bitset`, `symtab`, `xmalloc`, `re`, `re_ir`, `aut`, plus their tests. `ninja` succeeds.
+- **Dormant, kept as reference:** `src/g4.c`, `src/g4.nest`, `benchmark/`, `examples/`, `test/examples/`.
+- **Stale:** `specs/cli.md`, `specs/example_test.md`, `specs/g4.md`, `specs/vpa.md` (IR/codegen halves), `doc/nest_syntax.md`, `doc/lex_tricks.md`. Old binaries in `build/*/` still get picked up by `scripts/test` and abort.
+- **Missing:** `ll1.md`, `vm.md`, runtime/VM source, generator source, CLI.
 
 ## Target architecture (end state)
 
 ```
-.nest src → parse_nest (bootstrap, LL(1) itself once retargeted) → ParseState
-         → post_process (macro inline, VPA validation, LL(1) FIRST/FOLLOW conflict check)
+.nest src → parse_nest (LL(1), self-hosted eventually) → ParseState
+         → post_process (macro inline, VPA validation)
          → LL(1) analysis (FIRST/FOLLOW, conflict errors)
-         → vpa_gen: per-scope DFA (NFA→DFA→minimize) → transition tables
+         → vpa_gen: per-scope DFA (NFA→DFA→minimize) → bytecode/tables
          → codegen: bytecode (lexer tables + LL(1) parse program) + C header
          → runtime: libnest_rt interpreter (token streaming, parse, errors)
 ```
 
-Gone: peg_analyze/peg_alloc/peg_gen/peg_ir, coloring, graph, memtab, memoize machinery in token_tree, irwriter*, llir_parse_gen, aut_gen_dfa, clang subprocesses, `-m` memoize modes, GVN workaround, `.ll` outputs.
-Survive: ustr/darray/bitset/symtab/xmalloc/header_writer, re + re_ir, aut minus codegen, vpa core, parse + post_process cores, g4 (retargeted), token_tree chunk basics (pending questions on streaming), `nest l`.
-
-## Target spec set
-
-| new / rewritten spec | from | fate of old |
-|---|---|---|
-| `parse.md` (slim) | parse.md + parse_gen.md merged | drop PEG-section parsing, pseudocode; keep numbering + lex-loop key idea |
-| `ll1.md` (new) | — | replaces peg_analyze/peg_alloc/peg_gen/peg_ir (all deleted) |
-| `vm.md` (new, blocked) | — | replaces irwriter.md, irwriter_gen_rt.md, aut.md's codegen section |
-| `aut.md` (slim) | aut.md | keep NFA/DFA/minimize, MIN/PRESERVING action rules; honest about naive refinement; drop aut_gen_dfa |
-| `re.md`, `re_ir.md` (slim) | same | re.md gains a ReLex paragraph (two entry paths); re_ir survives near-verbatim |
-| `vpa.md` (slim) | same | keep types, action table, leader-inlining; trim hook/example sections |
-| `token_tree.md` (rewrite, blocked on Q2/Q3) | same | keep chunk/newline/sentinel; delete memoize + best-try halves |
-| `post_process.md` (slim) | same | keep macro inline + VPA validity; PEG checks → LL(1) conflict check |
-| `cli.md` (rewrite, blocked) | same | bytecode outputs, no clang/CC flags, no memoize modes |
-| `example_test.md` (update contract) | same | output-format contract is golden; runner steps change |
-| `g4.md` (slim, blocked on Q8) | same | keep mapping key ideas; drop case-law |
-| utils specs (symtab/bitset/darray/ustr/memtab-delete/xmalloc/header_writer) | same | keep as-is; xmalloc drops LLVM section; memtab.md deleted |
-| deleted outright | | peg_analyze/peg_alloc/peg_gen/peg_ir/peg_err_report/coloring/memtab/irwriter/irwriter_gen_rt/syntax_harness |
-| user docs | doc/nest_syntax.md rewritten for LL(1) syntax (it is user-visible: `nest h` prints it); doc/lex_tricks.md small fix |
+Survive: ustr/darray/bitset/symtab/xmalloc, re + re_ir, aut minus codegen, vpa core, parse + post_process cores, g4 (retargeted).
 
 ## Phases
 
-State legend: `[ ] todo · [~] in progress · [x] done · [!] blocked (see questions.md)`. Agents: update this table and add one-line notes under phase notes as you work.
+State legend: `[ ] todo · [~] in progress · [x] done · [!] blocked (design decision needed)`. Update this table and append one-line notes under the phase as you work.
 
-### P0 — Triage the red build `[ ]`
-HEAD doesn't build (see status.md Health). Don't repair doomed code: `test_peg_ir` dies in P2 anyway — delete it now if it blocks the build; `test_vpa` fix is cheap (5-arg call) but vpa_gen's header emission changes in P3 — fix minimally or trim to compiling subset. g4 `-Werror` unused-param: fix the emitter or drop g4 from default build until P7.
-Accept: `ruby config.rb debug && ninja` green, `scripts/test debug` runs.
+### Stage 1 — Remove
 
-### P1 — Slim survivor specs `[ ]`
-Mechanical, no design needed: utils specs, re/re_ir, aut (drop codegen section), vpa, parse+parse_gen merge, post_process (VPA half). Delete dead specs (peg_*, coloring, memtab, irwriter*, syntax_harness, empty peg_err_report). Keep implementations untouched this phase.
-Accept: each rewritten spec fits the governing rules; impl still matches (no behavior change).
+#### P0 — Clean the tree `[ ]`
+- Delete stale build output (`rm -rf build`) so `scripts/test` stops running removed binaries; stale `.ll` / generated headers go with it.
+- Delete stale specs: `cli.md`, `example_test.md`, `g4.md` (18K of old case-law; rewrite from design), `vpa.md` generator/IR sections (rewrite from types).
+- Delete stale docs: `doc/nest_syntax.md`, `doc/lex_tricks.md` — they describe the PEG/clang world. Keep copies under `notes/` if useful as reference.
+- Delete `scripts/kotlin_*.rb` helpers; they predate the retarget.
+- Keep `src/g4.c` + `g4.nest`, `examples/`, `test/examples/`, `benchmark/` as dormant fixtures for later phases. Do not build or repair them.
+- Keep `.tmp/reports/parser_stack.md` and `codegen_stack.md` until their phases land.
 
-### P2 — Excise PEG backend `[ ]`
-Delete peg_analyze/peg_alloc/peg_gen/peg_ir, coloring, graph, memtab; strip memoize/best-try from token_tree; drop PEG passes from post_process; drop `-m`/`-s` from CLI. `nest c` temporarily emits lexer-only output (or a stub). Rewrite/trim the ~½ test corpus that rides on PEG (delete, don't port).
-Accept: build green; `nest l` unaffected; `nest c` produces valid lexer header; PEG tests gone from build.
+Accept: no live spec/doc mentions `irwriter`, `peg_*`, `clang`, `token_tree`, `memtab`, `coloring`; `ruby config.rb debug && ninja && scripts/test debug` green from a clean tree.
 
-### P3 — Excise LLVM emission `[ ]`
-Delete irwriter*, llir_parse_gen, aut_gen_dfa, clang pipes, DebugInfo threading (signatures slim). `nest c`/`nest l` emit header + serialized DFA transition tables (interim format — VM may redefine). Re-bootstrap nest itself: `nest_lex` becomes tables generated at build time (no clang); g4_grammar deferred to P7.
-Accept: no clang invocation anywhere; nest builds from source with only cc; `nest l` output is a table + header that a C stepper in the runtime can run (interim).
+#### P1 — Verify survivor specs `[ ]`
+Mechanical, no design: check each survivor still matches its implementation and fits the governing rules. Fix only drift, no behavior change.
+- utils: `ustr.md`, `darray.md`, `bitset.md`, `symtab.md`, `xmalloc.md`
+- regex: `re.md`, `re_ir.md`, `aut.md`
+- front half: `parse.md`, `post_process.md` (drop PEG-only checks if any remain)
 
-### P4 — Bytecode VM `[!]` (blocked: Q1, Q12)
-Design + spec `vm.md` (user will provide detailed design), implement interpreter in libnest_rt, codegen emits bytecode for lexer (+ parser once P5 lands). Bootstrap regenerated on VM.
-Accept: `nest c` end-to-end on calc via VM; perf sanity vs old numbers on calc/json; kotlin compiles+runs in sane time.
+Accept: every built module has a spec that names its invariants; impl unchanged.
 
-### P5 — LL(1) parser `[!]` (blocked: Q2, Q3, Q4, Q5, Q9)
-Spec `ll1.md`: FIRST/FOLLOW analysis (seed: nullable/first/last fixpoint already exists in peg_alloc.c:248), conflict = compile error, parse strategy, error reporting, token streaming model.
-Accept: calc + clike + json examples parse via VM; conflict errors reported with rule/line.
+### Stage 2 — Update specs
 
-### P6 — Syntax tweaks + docs + bootstrap sync `[!]` (blocked: Q4–Q7, Q11)
-Apply decided syntax changes; rewrite doc/nest_syntax.md; sync bootstrap.nest ↔ parse_gen.c (or simplify per Q11); update all example grammars.
-Accept: `nest h`/`nest r` show new syntax; examples pass.
+#### P2 — New backend specs `[!]` (needs design decisions, see below)
+Write, from the target design, not from old code:
+- `vpa.md` — rewrite: VPA types, scope/action table, leader inlining; generator half only as the interface `vpa_gen` consumes.
+- `vm.md` — bytecode format, lexer table format, runtime interface, error reporting.
+- `ll1.md` — FIRST/FOLLOW analysis, conflict = compile error, parse program / token streaming, recovery.
+- `cli.md` — subcommands, outputs, no clang/CC flags, no memoize modes.
+- `example_test.md` — output contract on semantics (token stream, tree/errors), formatting loose.
+- `g4.md` — slim to the mapping key ideas to the LL(1) form.
+- `doc/nest_syntax.md` — rewritten for the LL(1) syntax.
 
-### P7 — g4 retarget + kotlin `[!]` (blocked: Q8, P5)
-Emission half of g4.c targets LL(1) form; regenerate kotlin grammar; it must compile and pass (or be consciously dropped per Q8).
-Accept: kotlin .g4 → .nest → VM in bounded time.
+Blocked until the user settles: bytecode/table encoding, LL(1) token streaming model, error/recovery contract, syntax tweaks, g4 emission target. Record answers in the spec itself; do not guess.
 
-### P8 — Tests, examples, benchmarks `[ ]` (follows each phase, final sweep here)
-Test bar for all new code: status.md "Lessons for the new backend" (property/differential tests on spec invariants; no text-grep or presence-only tests).
-Rebuild example_test contract, benchmark harness (fix stale link lines; decide comparison set per Q12), full `scripts/test` + `scripts/test_examples` + coverage.
-Accept: all green in debug and release.
+Accept: spec set complete; a reader can implement the backend from specs alone; no references to removed machinery.
 
-### P9 — Close-out `[ ]`
-Regenerate AGENTS.md (fix all drift noted in status.md), README (drop GVN/clang story), delete vendored kissat, final spec review pass, close status.md.
+### Stage 3 — Re-implement
 
-## Working method (for later agents)
+#### P3 — Lexer codegen + VM `[!]` (blocked: P2 `vm.md`, `vpa.md`)
+`vpa_gen`: scoped regex → NFA → DFA → minimize → tables; runtime VM executes lexer bytecode. Implement `nest l`.
 
-- Read status.md → plan.md → questions.md → the phase's specs before editing. Update the phase table + notes as you go.
-- Big investigations: spawn a sub-agent (`pi -p --no-session "<read-only task>"`) writing a report under `.tmp/reports/`, then build on it — same method that produced this plan.
-- Old sub-reports for this refactor: `.tmp/reports/parser_stack.md`, `.tmp/reports/codegen_stack.md` (may be deleted once P2/P3 land).
-- Specs are user area: propose spec changes in questions.md/notes, don't rewrite unilaterally — except the mechanical slimming explicitly ordered in P1.
+Accept: `nest l` on calc/json emits tables + header; the runtime stepper produces the expected token stream; differential test vs a reference matcher.
+
+#### P4 — LL(1) parser `[!]` (blocked: P2 `ll1.md`)
+FIRST/FOLLOW with conflict errors carrying rule/line; parse program emitted as bytecode; runtime parses the token stream. Implement `nest c`.
+
+Accept: calc + clike + json parse via VM; conflict grammars fail with rule/line; brute-force FIRST/FOLLOW cross-check.
+
+#### P5 — Bootstrap `[ ]`
+Rebuild nest itself with its own output: no clang, `nest_lex` generated at build time, then the full grammar. Sync `specs/bootstrap.nest` ↔ the implemented grammar.
+
+Accept: nest builds from source with only cc; bootstrap grammar parses itself.
+
+#### P6 — g4 retarget + kotlin `[!]` (blocked: P4, g4 emission target)
+Emission half of `g4.c` targets the LL(1) form; regenerate the kotlin grammar. Compile and run it, or consciously drop it.
+
+Accept: kotlin `.g4` → `.nest` → VM in bounded time.
+
+#### P7 — Fixtures, tests, benchmarks `[ ]`
+Restore `examples/`, `test/examples/`, `benchmark/` against the new pipeline. Test bar from status.md "Lessons for the new backend": property/differential tests on spec invariants; execute generated code; no text-grep, presence-only, new/del tests. Fix stale link lines in the example/bench runners; decide the comparison set.
+
+Accept: `scripts/test`, `scripts/test_examples`, `scripts/benchmark` green in debug and release, ASAN clean, coverage reviewed.
+
+#### P8 — Close-out `[ ]`
+Regenerate AGENTS.md (fix drift noted in status.md), rewrite README (drop GVN/clang story), final spec review pass, close status.md.
+
+Accept: docs describe only the shipped pipeline; status.md closed.
+
+## Working method
+
+- Read status.md → plan.md → the phase's specs before editing. Update the phase state and notes as you go.
+- Hit an unspecified behavior? Ask the user; specs are user area. Don't infer design from deleted code.
+- Big investigations: spawn a sub-agent (`pi -p --no-session "<read-only task>"`) writing a report under `.tmp/reports/`, then build on it.
+- Tests for surviving code (ustr/re/aut/...) are the template for the new backend: boundary tables, error messages + position, property checks.

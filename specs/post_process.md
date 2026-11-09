@@ -1,169 +1,98 @@
 # Post-process AST and validate it
 
-Create "src/post_process.c".
+Create `src/post_process.c`.
+
+Passes run in the order listed; each returns `false` on the first error.
 
 ### vpa: inline macros
 
-`bool pp_inline_macros(ParseState* ps);`:
-1. inline macro vpa rules
-   - note that macro rules reference each other
-   - do a topological sort by dependency, report error on recursive dependency
-   - expand by topo-sort order
-2. check sub-scope calls: if a sub-scope call is a macro, report error
-3. then build a new list of VPA scopes to replace the old one, including only the non-macro ones.
+`bool pp_inline_macros(ParseState* ps);`
 
-### peg: auto tag branches
+1. Inline macro VPA rules. Macros may reference each other: topologically sort by dependency, report an error on cycles, then expand in topological order.
+2. A sub-scope call to a macro is an error.
+3. Replace the scope list with the non-macro scopes.
 
-`bool pp_auto_tag_branches(ParseState* ps);`:
-- with the first token / sub_rule name
-- in a rule definition, tags must be distinct, or the parser will raise an error on conflict tag names
-- rule name must not exceed 128 bytes.
+### ll: auto tag branches
 
-### peg: tag logic
+`bool pp_auto_tag_branches(ParseState* ps);`
 
-`bool pp_check_duplicate_tags(ParseState* ps);`:
-branch tagging example:
+- Auto-tag an untagged branch by its first token or sub-rule name.
+- Tags within one rule must be distinct; report conflicts.
+- Keyword literals cannot induce a tag, so such branches need an explicit tag.
 
 ```conf
 foo = a [
-  @foo bar # not specifying, induce tag "foo" by first token
-  sub_rule # not specifying, induce tag "sub_rule" by first sub rule
-  @foo : tag2 # tag "foo" already used, must specify tag so there won't be conflict
-  "a-keyword" : tag3 # tag can't be induced by keyword literal, so tag it manually
-  : tag4             # epsilon branch needs to be tagged
+  @foo bar      # auto tag "foo" from the first token
+  sub_rule      # auto tag "sub_rule" from the first sub-rule
+  @foo : tag2   # "foo" is taken, so tag explicitly
+  "a-keyword" : tag3
+  : tag4        # epsilon branch needs a tag
 ]
 ```
 
-When there are multiple branches in one rule, all branches are tagged. for example:
+Multiple alternatives in sequence are tagged branch by branch:
 
 ```conf
-# resulting rule will have 4 branch tags b1 .. b4
-foo = a [
-  b1
-  b2
-] [
-  b3
-  b4
-]
+# gives b1..b4
+foo = a [ b1 b2 ] [ b3 b4 ]
 ```
 
-To prevent codegen problems, tags cannot take any of the C keywords:
-```
-alignas (C23)
-alignof (C23)
-auto
-bool (C23)
-break
-case
-char
-const
-constexpr (C23)
-continue
-default
-do
-double
-else
-enum
+Tags become C identifiers in the generated header, so they must be valid identifiers and not C keywords.
 
-extern
-false (C23)
-float
-for
-goto
-if
-inline (C99)
-int
-long
-nullptr (C23)
-register
-restrict (C99)
-return
-short
-signed
+### ll: FIRST/FOLLOW conflicts
 
-sizeof
-static
-static_assert (C23)
-struct
-switch
-thread_local (C23)
-true (C23)
-typedef
-typeof (C23)
-typeof_unqual (C23)
-union
-unsigned
-void
-volatile
-while
+`bool pp_check_ll1_conflicts(ParseState* ps);`
 
-_Alignas (C11)(deprecated in C23)
-_Alignof (C11)(deprecated in C23)
-_Atomic (C11)
-_BitInt (C23)
-_Bool (C99)(deprecated in C23)
-_Complex (C99)
-_Decimal128 (C23)
-_Decimal32 (C23)
-_Decimal64 (C23)
-_Generic (C11)
-_Imaginary (C99)
-_Noreturn (C11)(deprecated in C23)
-_Static_assert (C11)(deprecated in C23)
-_Thread_local (C11)(deprecated in C23)
-```
+For each rule, compute nullable, FIRST and FOLLOW.
 
-### peg: left recursion / infinite loop detect
-
-`bool pp_detect_left_recursions(ParseState* ps)`:
-- walk down peg rules to detect left recursions -- we don't allow this infinite loop.
-  - when analyzing, be ware of the scope boundary: if there is a scope, we don't expand it. for example str is defined `str = str_char*`, but it always takes a slot in token stream so parsing the scope won't result in infinite loop.
-- for interlace rule `lhs*<rhs>` / `lhs+<rhs>`, if both `lhs` and `rhs` are nullable, report error.
-- if a rule being called is not defined, report error
-- report orphan rules (unreachable from `main`) error
-- this check skips `TODO` rules
+- Two branches conflict when their FIRST sets overlap, or when a nullable branch's FOLLOW overlaps another branch's FIRST. Report the token and rule.
+- Left recursion is reported as a conflict; no separate left-recursion pass.
+- For interlace `lhs*<rhs>` / `lhs+<rhs>`, report an error when both sides are nullable.
+- An undefined rule call is an error.
+- Report rules unreachable from `main`.
+- Skip `TODO` rules.
+- Do not expand a call across a scope boundary: the scope token is the terminal.
 
 ### vpa scope validity
 
-`bool pp_validate_vpa_scopes(ParseState* ps)`:
-- a `main` must exist.
-  - the `main` scope must contain an `EOF` line
-- no repeated scope names.
-- scopes except `main` must have a `.begin` (or user hook that produces the `.begin` effect)
-- every scope must have one or more `.end` (or user hook that produces the `end` effect)
-- a leading `re`/`re_str`/``re_frag_id` (before scope bracket) must contain at least 1 char in it
-- inside a scope bracket `{ ... }`, after macro expansion, there can only be 1 `re`/`re_str`/``re_frag_id` that is empty
-  - if the branch is empty, it means a fallback action, the following action must have one of `.end`/`.fail`
-- report orphan scopes (unreachable from `main`) error
+`bool pp_validate_vpa_scopes(ParseState* ps);`
 
-### peg rule validity
+- A `main` scope must exist, and must contain an `EOF` line.
+- No repeated scope names.
+- Every scope except `main` must have a `.begin` (or a user hook producing the `.begin` effect).
+- Every scope must have one or more `.end` (or a user hook producing the `.end` effect).
+- A leading `re` / `re_str` / `re_frag_id` before the scope bracket must match at least one character.
+- Inside `{ ... }`, after macro expansion, at most one `re` / `re_str` / `re_frag_id` may be empty.
+  - An empty branch is a fallback action; the following action must be `.end` or `.fail`.
+- Report scopes unreachable from `main`.
 
-`bool pp_validate_peg_rules(ParseState* ps)`:
+### ll rule validity
+
+`bool pp_validate_ll_rules(ParseState* ps);`
+
 - `main` must exist.
-- no repeated peg rule names.
-- if a rule `= TODO`, it must match a scope.
+- No repeated rule names.
+- A rule `= TODO` must match a scope.
 
-### vpa & peg
+### vpa & ll
 
-`bool pp_match_scopes(ParseState* ps)`:
-- Check if VPA scope has a corresponding PEG parser in the same name, if found, update VPA scope's attr `VpaRule.has_parser = true`.
-- For `main` scope, validate `has_parser` must be true.
-- for every PEG scope that is not a `TODO`, `used_set` must be the same as `emit_set` in the related VPA scope
-  - emit_set including tokens and scopes, but if the scope doesn't have a mapping peg parser, expand it.
-    - exclude ignore tokens in emit_set
-    - if scope leader has token emits after `.begin` hook, include it
-    - if a token is emit after `.end` hook, scopes that calls current scope should include the token
-  - used_set including tokens and scopes, if a child-rule doesn't have a mapping vpa scope, expand it.
-  - for example,
-    1. with vpa rule `foo = /.../ { @a ... }`, `bar = /.../ { @b ... foo ... }`, then `bar`'s emit_set is `{@b, foo}`
-    2. with peg rule `foo = @a`, `baz = @c?`, `bar = foo @b baz`, and `baz` is not a scope, then `bar`'s used_set is `{@b, @c, foo}`
-    3. `{@b, foo} != {@b, @c, foo}`, then it is a mismatch, then we should raise error to tell user this rule doesn't add up
+`bool pp_match_scopes(ParseState* ps);`
+
+- If a VPA scope has a same-name LL(1) rule, set `VpaScope.has_parser = true`.
+- For the `main` scope, `has_parser` must be true.
+- For every VPA scope whose same-name LL(1) rule is not `TODO`, `used_set` must equal `emit_set` of that VPA scope.
+  - `emit_set` contains tokens and scopes. Expand scopes that have no mapped LL(1) rule.
+    - Exclude ignored tokens.
+    - Include tokens emitted after the scope's `.begin`.
+    - Tokens emitted after `.end` belong to the caller's set.
+  - `used_set` contains tokens and scopes. Expand child rules that have no mapped VPA scope.
+  - Example:
+    1. VPA `foo = /.../ { @a ... }`, `bar = /.../ { @b ... foo ... }`: `bar.emit_set = { @b, foo }`.
+    2. LL(1) `foo = @a`, `baz = @c?`, `bar = foo @b baz`, with `baz` not a scope: `bar.used_set = { @b, @c, foo }`.
+    3. The sets differ, so report that the VPA and LL(1) definitions do not agree.
 
 ### Acceptance criteria
 
-- on macro inlining
-  - must test recursion
-  - must test cascaded expanding (re-arrange macro definitions so we can see the sorting effect)
-- on emit set computing
-  - must not expand scopes that have a mapping peg parser
-  - expanding should not hit infinite recursion
+- Macro inlining: recursion, and cascaded expansion (reorder macro definitions to exercise the topological sort).
+- LL(1) conflicts: overlapping FIRST, nullable branch vs FOLLOW, left recursion, nullable interlace.
+- Emit set: do not expand scopes that have a mapped LL(1) rule; expansion must terminate.
