@@ -31,24 +31,29 @@ struct A {
 };
 ```
 
-### Methods
+### Interface
 
 ```c
-// memset to 0
-void* darray_new(uint32_t elem_size, size_t elem_count);
-// returns realloc-ed darray, the newly added space after existing elements are memset to 0 too
-void* darray_grow(void* a, size_t new_elem_count);
-// grows but ensures capacity
-void* darray_grow2(void* a, size_t new_elem_count, size_t new_cap);
-// returns elem count (not bytesize)
-size_t darray_size(void* a);
-// free the heap, not the elem
-void darray_del(void* a);
+// Element size is fixed for the lifetime of the array. NULL is a valid empty
+// array for reads (darray_size(NULL) == 0), but grow/insert on NULL return NULL
+// instead of allocating; concat returns the non-NULL side.
+void* darray_new(uint32_t elem_size, size_t elem_count);   // zero-filled
+void* darray_grow(void* a, size_t new_elem_count);         // new space zero-filled
+void* darray_grow2(void* a, size_t new_elem_count, size_t new_cap); // grow, ensure capacity
+size_t darray_size(void* a);                               // element count, not bytes
+void darray_del(void* a);                                  // frees the heap, not the elements
+
+// Append one element. Implemented as a macro: evaluates `elem` once.
+#define darray_push(arr, elem) /* ... */
+
+// Concatenate two arrays. Asserts equal elem_size; at least one may be NULL.
+void* darray_concat(void* a, void* b);
+
+// Insert `elem` at `pos`, shifting the tail right. `pos <= size`.
+void* darray_insert(void* a, size_t pos, const void* elem);
 ```
 
-### Usage
-
-`darray_size()` is very light-weighted, don't pre-assign it to local variables to make code bug-prone.
+`darray_size()` is cheap; don't pre-assign it to a local variable.
 
 ### Leak Detection
 

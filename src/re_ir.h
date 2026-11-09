@@ -66,11 +66,11 @@ ReIr re_ir_emit_ch(ReIr ir, int32_t cp);
 // build literal IR from UTF-8 source slice
 ReIr re_ir_build_literal(const char* src, int32_t cp_off, int32_t cp_len);
 
-// validate IR structure: empty, paren/bracket balance, frag recursion/missing
+// validate fragment references: missing or recursive frag_id
 ReIrValidateResult re_ir_validate(ReIr ir, ReFrags frags);
 
 // interpret IR into re.h calls, when met with frag_ref,
 // lookup the ReIr in frags and recursively execute it (frags may ref frags too)
 // frags can be NULL if no fragments are defined
 // no validate, we already validated
-void re_ir_exec(Re* re, ReIr ir, const char* source_file_name, ReFrags frags);
+void re_ir_exec(Re* re, ReIr ir, ReFrags frags);

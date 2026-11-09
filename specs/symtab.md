@@ -13,34 +13,37 @@ buf: "tok:NUM\0scope:main\0tok:IDENT\0"
       ^0       ^8          ^19        ^28
 ```
 
-### Struct
+### Interface
 
 ```c
+// IDs are dense: start_num, start_num + 1, ...
 typedef struct {
-  char* buf;          // darray of char
-  int32_t* offsets;   // darray of int32_t (byte offsets into buf)
-  int32_t start_num;  // first ID returned
+  char* buf;         // darray of char: all strings concatenated, '\0'-separated
+  int32_t* offsets;  // darray of int32_t: byte offset of each string in buf
+  int32_t start_num; // first ID returned; must be >= 0
 } Symtab;
-```
 
-### Methods
+// Allocate both darrays. Must be called before use.
+void symtab_init(Symtab* st, int32_t start_num);
 
-```c
-void     symtab_init(Symtab* st, int32_t start_num);      // validation: start_num must be >= 0
-void     symtab_free(Symtab* st);
-int32_t  symtab_intern(Symtab* st, const char* name);     // intern, returns id
+// Free both darrays. Does not free the Symtab struct itself.
+void symtab_free(Symtab* st);
+
+// Intern `name`, returning its ID. Linear scan via offsets; on miss appends
+// name + '\0' to buf and a new offset, then returns the next ID.
+int32_t symtab_intern(Symtab* st, const char* name);
 int32_t symtab_intern_f(Symtab* st, const char* fmt_str, ...);
-int32_t  symtab_find(const Symtab* st, const char* name); // lookup, returns id or -1 (not found)
-const char* symtab_get(const Symtab* st, int32_t id);     // get string by id
-int32_t  symtab_count(const Symtab* st);                  // number of interned strings
-```
 
-- `symtab_init`: allocates both darrays (must be called before use).
-- `symtab_free`: frees both darrays. Does not free the struct itself.
-- `symtab_intern`: linear scan via offsets; on miss, appends string + `'\0'` to `buf`, appends new offset to `offsets`, returns ID (starting from `start_num`).
-- `symtab_find`: like intern but returns -1 on miss.
-- `symtab_get`: returns `&buf[offsets[id - start_num]]`. Caller must not modify the returned pointer.
-- `symtab_count`: returns `darray_size(offsets)`.
+// Lookup only. Returns -1 when not found.
+int32_t symtab_find(const Symtab* st, const char* name);
+int32_t symtab_find_f(const Symtab* st, const char* fmt_str, ...);
+
+// Returns &buf[offsets[id - start_num]]. Caller must not modify the string.
+const char* symtab_get(const Symtab* st, int32_t id);
+
+// Number of interned strings: darray_size(offsets).
+size_t symtab_count(const Symtab* st);
+```
 
 ### Usage
 

@@ -1,32 +1,47 @@
-A automaton builder: NFA construction, determinization, minimization.
+An automaton builder: NFA construction, determinization, minimization.
 
-Automaton matching is UTF-8 based, it expects inputs codepoint by codepoint (int).
+Automaton matching is UTF-8 based; it consumes input codepoint by codepoint (`int32_t`).
 
-The building model is NFA, output is DFA.
+The building model is NFA; the output is DFA.
 
-Can define actions (terminal states) on certain states -- because optimization may change state numbering or merge states, action is our stable numbering that remains the same when output.
+### Interface
 
-- Basic interface: `aut_new(function_name, source_file_name)`, `aut_del()`
-- `aut_transition(dfa, TransitionDef tdef, DebugInfo di)`
-  - arg `tdef`: `{int32_t from_state_id, int32_t to_state_id, int32_t cp_start, int32_t cp_end_inclusive}`
-    - init state: 0
-  - arg `di`: `{int32_t source_file_line, int32_t source_file_col}`
-- `aut_epsilon(dfa, from_state, to_state)`
-  - define epsilon transition
-- `aut_action(dfa, state, action_id)`
-  - marks a terminal state for emitting `action_id` when parsing
-  - this functions means just "alias ephemeral state to eternal action_id". action numbering and meaning:
-    - -1: in generated code: when this happens, return invalid match, useful for predicates
-    - 0: no effect, can continue with more feeds
-    - positive values: user defined action trigger, also can continue with more feeds
-  - MIN-RULE: when defining different action_id on a same state, the minimal remains.
-  - PRESERVING-RULE: optimize / determinize should preserve same action_id for same input
-- `aut_optimize(dfa)`
-  - (Hopcroft's) determinize then partition-refinement minimization
-  - action_ids:
-    - when merging states, merge action_ids (min-action_id-rule)
-    - test should verify states are reduced
-    - after `aut_optimize()`, test should verify PRESERVING-RULE
-  - utilize bitset
+```c
+typedef struct Aut Aut;
+
+typedef struct {
+  int32_t from_state_id;
+  int32_t to_state_id;
+  int32_t cp_start;
+  int32_t cp_end_inclusive; // inclusive range; cp_start == cp_end is a single char
+} TransitionDef;
+
+typedef struct {
+  int32_t source_file_line;
+  int32_t source_file_col;
+} DebugInfo; // line 0 means "no location"
+
+Aut* aut_new(void);
+void aut_del(Aut* a);
+
+// Initial state is 0. States are created implicitly by transitions.
+void aut_transition(Aut* a, TransitionDef tdef, DebugInfo di);
+void aut_epsilon(Aut* a, int32_t from_state, int32_t to_state);
+
+// Mark a terminal state with an action ID.
+//   -1: invalid match (predicate failed)
+//    0: no effect, keep feeding input
+//   >0: user action; keep feeding input
+// MIN-RULE: when several actions land on the same state, the smallest ID wins.
+// PRESERVING-RULE: determinize/minimize must preserve the action for the same input.
+void aut_action(Aut* a, int32_t state, int32_t action_id);
+
+// Subset construction, then partition-refinement minimization.
+// Merged states keep the minimum action ID. Coalesces adjacent ranges.
+void aut_optimize(Aut* a);
+
+// Determinizes on demand if aut_optimize() was not called.
+int32_t aut_dfa_nstates(Aut* a);
+```
 
 Automata don't handle EOF or other boundaries, because it is zero width (can stack multiple times but still consumes 0 input).

@@ -109,7 +109,6 @@ ReIrValidateResult re_ir_validate(ReIr ir, ReFrags frags) {
 
 typedef struct {
   Re* re;
-  const char* source_file_name;
   ReFrags frags;
 } ExecCtx;
 
@@ -212,10 +211,9 @@ static void _exec_ir(ExecCtx* ctx, ReIr ir) {
   }
 }
 
-void re_ir_exec(Re* re, ReIr ir, const char* source_file_name, ReFrags frags) {
+void re_ir_exec(Re* re, ReIr ir, ReFrags frags) {
   ExecCtx ctx = {
       .re = re,
-      .source_file_name = source_file_name,
       .frags = frags,
   };
   _exec_ir(&ctx, ir);

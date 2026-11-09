@@ -5,9 +5,9 @@ Parser generator combining visibly pushdown automata (VPA) and parsing expressio
 - VPA is a set of minimized DFAs with a scope stack
   - it can emit nested token stream
   - it can be extended by hook predicates
-- PEG work on the token level, not character level
-  - PEGs are separated / nested by the corresponding VPA scope
-  - so for each child PEG the rule count is much smaller
+- LL(1) work on the token level, not character level
+  - whenever a token is created, it is fed to the LL(1) parser for that scope
+  - the scope isolation allows the parser to recover and produce more than 1 errors
 
 File format:
 
@@ -17,9 +17,9 @@ File format:
 # comment: define vpa_rules
 ...
 
-[[peg]]
+[[ll]]
 
-# comment: define peg_rules
+# comment: define ll_rules
 ```
 
 The overall handling with this syntax:

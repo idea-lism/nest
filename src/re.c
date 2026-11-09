@@ -315,7 +315,6 @@ int32_t re_cur_state(Re* re) {
 struct ReLex {
   Aut* aut;
   Re* re;
-  const char* source_file;
   bool started;
   bool icase;
   bool binary;
@@ -618,11 +617,10 @@ static void _rlp_parse_expr(ReLexParser* p) {
   }
 }
 
-ReLex* re_lex_new(const char* func_name, const char* source_file_name, const char* mode) {
+ReLex* re_lex_new(const char* mode) {
   ReLex* l = XCALLOC(1, sizeof(ReLex));
-  l->aut = aut_new(func_name, source_file_name);
+  l->aut = aut_new();
   l->re = re_new(l->aut);
-  l->source_file = source_file_name;
   for (const char* m = mode; *m; m++) {
     if (*m == 'i') {
       l->icase = true;

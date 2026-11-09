@@ -11,13 +11,13 @@
   } while (0)
 
 TEST(test_lifecycle) {
-  Aut* a = aut_new("f", "test.rules");
+  Aut* a = aut_new();
   assert(a);
   aut_del(a);
 }
 
 TEST(test_optimize_reduces_states) {
-  Aut* a1 = aut_new("m", "test.rules");
+  Aut* a1 = aut_new();
   aut_transition(a1, (TransitionDef){0, 1, 'a', 'a'}, (DebugInfo){1, 1});
   aut_transition(a1, (TransitionDef){0, 2, 'b', 'b'}, (DebugInfo){1, 5});
   aut_transition(a1, (TransitionDef){1, 3, 'c', 'c'}, (DebugInfo){2, 1});
@@ -27,7 +27,7 @@ TEST(test_optimize_reduces_states) {
   int32_t unoptimized = aut_dfa_nstates(a1);
   aut_del(a1);
 
-  Aut* a2 = aut_new("m", "test.rules");
+  Aut* a2 = aut_new();
   aut_transition(a2, (TransitionDef){0, 1, 'a', 'a'}, (DebugInfo){1, 1});
   aut_transition(a2, (TransitionDef){0, 2, 'b', 'b'}, (DebugInfo){1, 5});
   aut_transition(a2, (TransitionDef){1, 3, 'c', 'c'}, (DebugInfo){2, 1});

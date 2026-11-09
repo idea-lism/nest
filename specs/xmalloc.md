@@ -1,12 +1,38 @@
 # XMALLOC
 
-`xmalloc.h` defines XMALLOC/XFREE macro that, when `calloc`/`malloc`/`realloc` fails (OOM), `abort()` with call-site message: `__FUNCTION__:__LINE__`
+`xmalloc.h` defines allocation macros that abort on OOM with a call-site message: `__FUNCTION__:__LINE__`.
 
-when defined macro `XMALLOC_TRACE` the macros routes to traced versions: `calloc_traced`/`xmalloc_traced`/`xrealloc_traced`/`xfree_traced`.
+```c
+// --- Untraced (default) ---
 
-when defined macro `XMALLOC_TRACE`, `xmalloc.c` has an initializer that defines `atexit()` hook at `__attribute__((constructor))` to check if there are leaks. Leak reporting will include the call site info too.
+void* xcalloc(size_t count, size_t size, const char* caller, int line);
+void* xmalloc(size_t size, const char* caller, int line);
+void* xrealloc(void* ptr, size_t size, const char* caller, int line);
+void  xfree(void* ptr);
 
-Leak tracking data structure (a hash table on allocated ptr, choose a simple hashing function, use linked list for collision resolution):
+// Call these; the caller/line arguments are filled in by the macro.
+#define XCALLOC(count, size) /* xcalloc(count, size, __FUNCTION__, __LINE__) */
+#define XMALLOC(size)        /* xmalloc(size, __FUNCTION__, __LINE__) */
+#define XREALLOC(ptr, size)  /* xrealloc(ptr, size, __FUNCTION__, __LINE__) */
+#define XFREE(ptr)           /* xfree(ptr) */
+
+// --- Traced (XMALLOC_TRACE) ---
+
+void* xcalloc_traced(size_t count, size_t size, const char* caller, int line);
+void* xmalloc_traced(size_t size, const char* caller, int line);
+void* xrealloc_traced(void* ptr, size_t size, const char* caller, int line);
+void  xfree_traced(void* ptr, const char* caller, int line);
+
+// The macros route to the *_traced variants and keep the call site.
+#define XCALLOC(count, size) /* xcalloc_traced(...) */
+#define XMALLOC(size)        /* xmalloc_traced(...) */
+#define XREALLOC(ptr, size)  /* xrealloc_traced(...) */
+#define XFREE(ptr)           /* xfree_traced(...) */
+```
+
+With `XMALLOC_TRACE`, `xmalloc.c` installs an `atexit()` hook via `__attribute__((constructor))` and reports leaks with the original call site.
+
+Leak tracking data structure (hash table on allocated pointer; simple hash, linked-list collision resolution):
 
 ```c
 typedef struct {
@@ -17,13 +43,12 @@ typedef struct {
 } Pointer;
 
 typedef struct {
-  Pointer p; // ptr set to 0 when empty
-  PointerBucket* next; // for collision relsolution, null when no next
+  Pointer p;           // ptr == 0 when empty
+  PointerBucket* next; // NULL when no next
 } PointerBucket;
 
 typedef struct {
-  size_t bucket_cap; // expand when fill rate at 65%
-  PointerBucket* pointer_buckets; // the buffer
+  size_t bucket_cap;               // expand at 65% fill rate
+  PointerBucket* pointer_buckets;  // the buffer
 } PointerTracker;
 ```
-

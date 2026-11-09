@@ -1,46 +1,68 @@
 Regexp building helpers
 
-Some automatic state management.
+Some automatic state management on top of [aut](aut.md).
 
-On top of aut.
+### Interface
 
-- Creating and destructing builder: `re_new(aut)`, `re_del()`.
-- Range management
-  - `re_range_new()`, `re_range_del()`
-  - `re_range_add(range, start_cp, end_cp)` -- sorted and merged
-    - min codepoint = 0, max codepoint = 0x10FFFF
-  - in-place negate a range  `re_range_neg(range)`
-- Regexp group management
-  - stack top is 0 by default
-  - `re_lparen(re)` push a stack (left paren)
-  - `re_fork(re)` start a new branch, forked at stack top
-  - `re_append_ch(re, int32_t codepoint, DebugInfo di)`: can have negative codepoints for special purpose
-  - `re_append_range(re, range, DebugInfo di)`
-  - `re_rparen(re)` pop a stack state
-  - `re_action(re, action_id)` make it emit action at current state
-- Debug info
-  - `re_append_ch` and `re_append_range` accept `DebugInfo di` (line/col in the regexp source file)
-  - passed through to `aut_transition` for diagnostics
-  - callers that don't need debug info pass `(DebugInfo){0, 0}` (line 0 means no debug location)
+```c
+typedef struct Re Re;
 
-Regexp don't handle EOF or other boundaries, because they are zero width (can stack multiple times but still consumes 0 input). Other DFA-based libraries don't handle this either.
+// Sorted, merged list of codepoint intervals. Codepoints are [0, 0x10FFFF].
+typedef struct {
+  int32_t start;
+  int32_t end;
+} ReInterval;
 
-# Ignore-case APIs
+typedef struct {
+  ReInterval* ivs; // darray
+  bool negated;
+} ReRange;
 
-- `re_range_ic(range)` make the range ignore case (if the range is negative, revert first)
-- `re_append_ch_ic(re, int32_t codepoint, DebugInfo di)`
+ReRange* re_range_new(void);
+void re_range_del(ReRange* range);
+void re_range_add(ReRange* range, int32_t start_cp, int32_t end_cp); // kept sorted + merged
+void re_range_neg(ReRange* range);                                  // in-place
+void re_range_ic(ReRange* range);                                   // ignore case; negates first if needed
 
-# Predefined char groups
+// --- Builder ---
 
-- `re_append_group_s(re_range)`
-- `re_append_group_d(re_range)`
-- `re_append_group_w(re_range)`
-- `re_append_group_dot(re_range)`
+Re* re_new(Aut* aut);
+void re_del(Re* re);
 
-# Predefined escape
+// Group stack. Top is state 0; re_lparen() pushes, re_rparen() pops.
+void re_lparen(Re* re);
+void re_fork(Re* re);      // new branch forked at the stack top
+void re_rparen(Re* re);    // pop the group (connects branches to the exit)
+void re_loop_back(Re* re); // epsilon from current state back to group start (+ / * loops)
 
-- `re_append_c_escape(re, char symbol)` - `\\[bfnrtv]`
+// Append a literal codepoint / range. Negative codepoints are allowed for
+// internal sentinels. `di` is passed to aut_transition for diagnostics.
+void re_append_ch(Re* re, int32_t codepoint, DebugInfo di);
+void re_append_ch_ic(Re* re, int32_t codepoint, DebugInfo di);
+void re_append_range(Re* re, ReRange* range, DebugInfo di);
 
-# Hex
+void re_action(Re* re, int32_t action_id); // emit this action at the current state
+int32_t re_cur_state(Re* re);
 
-- `re_append_hex(re, char* h, size_t size)`
+// --- Predefined ranges ---
+
+void re_append_group_s(ReRange* range);   // \s
+void re_append_group_d(ReRange* range);   // \d
+void re_append_group_w(ReRange* range);   // \w
+void re_append_group_h(ReRange* range);   // \h
+void re_append_group_dot(ReRange* range); // .
+
+int32_t re_c_escape(char symbol);                  // \\[bfnrtv] -> codepoint, -1 if unknown
+int32_t re_hex_to_codepoint(const char* h, size_t size);
+
+// --- Simple pattern compiler (one regexp per line) ---
+
+typedef struct ReLex ReLex;
+
+// `mode` flags: i = case-insensitive, b = binary (bytes, not UTF-8 codepoints).
+ReLex* re_lex_new(const char* mode);
+void re_lex_del(ReLex* l);
+int32_t re_lex_add(ReLex* l, const char* pattern, int32_t line, int32_t col, int32_t action_id);
+```
+
+Regexps don't handle EOF or other boundaries, because they are zero width (can stack multiple times but still consume 0 input). Other DFA-based libraries don't handle this either.

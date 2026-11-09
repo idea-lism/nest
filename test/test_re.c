@@ -14,7 +14,7 @@
 // --- Lifecycle ---
 
 TEST(test_lifecycle) {
-  Aut* a = aut_new("f", "test.rules");
+  Aut* a = aut_new();
   Re* re = re_new(a);
   assert(re);
   re_del(re);

@@ -35,9 +35,6 @@ typedef struct {
 } DfaTrans;
 
 struct Aut {
-  const char* function_name;
-  const char* source_file_name;
-
   NfaTrans* nfa_trans;
   EpsTrans* eps_trans;
   int32_t* state_actions;
@@ -48,10 +45,8 @@ struct Aut {
   int optimized;
 };
 
-Aut* aut_new(const char* function_name, const char* source_file_name) {
+Aut* aut_new(void) {
   Aut* a = XCALLOC(1, sizeof(Aut));
-  a->function_name = function_name;
-  a->source_file_name = source_file_name;
   a->max_state = -1;
   return a;
 }

@@ -46,6 +46,6 @@ void re_loop_back(Re* re);
 int32_t re_cur_state(Re* re);
 
 typedef struct ReLex ReLex;
-ReLex* re_lex_new(const char* func_name, const char* source_file_name, const char* mode);
+ReLex* re_lex_new(const char* mode);
 void re_lex_del(ReLex* l);
 int32_t re_lex_add(ReLex* l, const char* pattern, int32_t line, int32_t col, int32_t action_id);
