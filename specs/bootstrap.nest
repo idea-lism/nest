@@ -15,7 +15,7 @@
 # when used in editor, scopes are auto-foldable and can be selected with text object commands
 main = {
   vpa
-  peg
+  ll
   *noise
   EOF .end
 }
@@ -35,7 +35,7 @@ main = {
 }
 
 vpa = /\s*\[\[vpa\]\]\n/ .begin {
-  /\[\[peg\]\]/ .unparse .end
+  /\[\[ll\]\]/ .unparse .end
   *directive_keywords
   *vpa_commons
   scope

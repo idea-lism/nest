@@ -8,7 +8,6 @@
 #include <string.h>
 
 #include "../build/subprocess.h"
-#include "compat.h"
 
 #define TEST(name) static void name(void)
 #define RUN(name)                                                                                                      \

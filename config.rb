@@ -57,10 +57,10 @@ def sh *cmd, **opts
 end
 
 IS_WINDOWS = RUBY_PLATFORM =~ /mingw|mswin|cygwin/
+
 # --- Ensure subprocess.h is available ---
 SUBPROCESS_H = "build/subprocess.h"
 unless File.exist?(SUBPROCESS_H)
-  require 'open-uri'
   FileUtils.mkdir_p("build")
   url = "https://raw.githubusercontent.com/sheredom/subprocess.h/b49c56e9fe214488493021017bf3954b91c7c1f5/subprocess.h"
   puts "Downloading subprocess.h..."
@@ -76,10 +76,8 @@ ALL_SRCS = (Dir.glob '{src,test}/**/*.{c,h}').join ' '
 
 ARCH_CFLAGS = RUBY_PLATFORM =~ /x86_64|amd64/ ? "-mavx2" : ""
 
-llvm_cc = (RUBY_PLATFORM =~ /darwin/ ? "xcrun clang" : (ENV["CC"] || "clang"))
-
 BASE_CFLAGS = %<
-  -std=c23 -D_POSIX_C_SOURCE=200809L -DLLVM_CC="\\"#{llvm_cc}\\"" -Wall -Wextra -Werror -fvisibility=hidden #{ARCH_CFLAGS}
+  -std=c23 -D_POSIX_C_SOURCE=200809L -Wall -Wextra -Werror -fvisibility=hidden #{ARCH_CFLAGS}
 >.strip
 
 BUILDDIR = "build/#{MODE}"
@@ -107,26 +105,9 @@ rule cc_test
   depfile = $out.d
   description = CC $in
 
-rule cc_g4
-  command = #{CC} #{CFLAGS} -I#{BUILDDIR} -MMD -MF $out.d -c $in -o $out
-  depfile = $out.d
-  description = CC $in
-
 rule ar
   command = #{AR} rcs $out $in
   description = AR $out
-
-rule gen_nest_lex
-  command = $in $out
-  description = GEN $out
-
-rule ll_cc
-  command = #{CC} -c $in -o $out
-  description = LLCC $in
-
-rule gen_str_header
-  command = ruby scripts/gen_str_header.rb $in $out
-  description = GEN_STR_HEADER $out
 
 rule format
   command = #{CLANG_FORMAT} -i $in
@@ -136,31 +117,17 @@ rule amalgamate
   command = ruby scripts/amalgamate.rb $flags $in $out
   description = AMALGAMATE $out
 
+rule gen_str_header
+  command = ruby scripts/gen_str_header.rb $in $out
+  description = GEN_STR_HEADER $out
+
 rule link
   command = #{CC} #{link_flags} $in -o $out
   description = LINK $out
 
 build format: format #{ALL_SRCS}
 
-build #{BUILDDIR}/nest_lex.ll: gen_nest_lex #{BUILDDIR}/parse_gen
-build #{BUILDDIR}/nest_lex.o: ll_cc #{BUILDDIR}/nest_lex.ll
-
-build #{BUILDDIR}/llir_lex.ll: gen_nest_lex #{BUILDDIR}/llir_parse_gen
-build #{BUILDDIR}/llir_lex.o: ll_cc #{BUILDDIR}/llir_lex.ll
-
-rule nest_compile
-  command = cd $builddir && $nest c $grammar -p $prefix
-  description = NEST_COMPILE $prefix
-
-build #{BUILDDIR}/g4_grammar.h #{BUILDDIR}/g4_grammar.ll #{BUILDDIR}/g4_grammar.c: nest_compile src/g4.nest | #{BUILDDIR}/nest
-  nest = #{Dir.pwd}/#{BUILDDIR}/nest
-  grammar = #{Dir.pwd}/src/g4.nest
-  prefix = g4_grammar
-  builddir = #{Dir.pwd}/#{BUILDDIR}
-build #{BUILDDIR}/g4_grammar.ll.o: ll_cc #{BUILDDIR}/g4_grammar.ll
-
   NINJA
-
 
   lib_outputs = {}
   emitted = {}
@@ -196,7 +163,7 @@ build #{BUILDDIR}/g4_grammar.ll.o: ll_cc #{BUILDDIR}/g4_grammar.ll
     objs = exe[:srcs].map do |src|
       obj = "#{BUILDDIR}/#{src.sub(/\.c$/, '.o')}"
       unless emitted[obj]
-        rule = src.start_with?("test/") ? "cc_test" : (src == "src/g4.c" ? "cc_g4" : "cc")
+        rule = src.start_with?("test/") ? "cc_test" : "cc"
         od = obj_order_deps[obj]
         order_suffix = od.empty? ? "" : " || #{od.join(' ')}"
         f.puts "build #{obj}: #{rule} #{src}#{order_suffix}"

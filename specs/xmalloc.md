@@ -27,8 +27,3 @@ typedef struct {
 } PointerTracker;
 ```
 
-# LLVM IR Adaption
-
-For calloc/malloc/realloc/free in generated LLVM IR, also implement a similar macro, report with call-site function name / rule name.
-
-IR generators also check if macro `XMALLOC_TRACE` is defined and decide if generated IR should route to traced wrappers.

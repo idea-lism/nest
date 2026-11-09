@@ -692,9 +692,3 @@ int32_t re_lex_add(ReLex* l, const char* pattern, int32_t line, int32_t col, int
   re_action(l->re, action_id);
   return action_id;
 }
-
-void re_lex_gen(ReLex* l, IrWriter* w, bool debug_mode) {
-  re_rparen(l->re);
-  aut_optimize(l->aut);
-  aut_gen_dfa(l->aut, w, debug_mode);
-}

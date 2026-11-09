@@ -1,7 +1,5 @@
 #pragma once
 
-#include "header_writer.h"
-#include "irwriter.h"
 #include "re_ir.h"
 #include "symtab.h"
 
@@ -78,5 +76,3 @@ typedef struct {
   const char* source_file_name;
   ReFrags re_frags; // owned by ParseState, indexed by frag_id
 } VpaGenInput;
-
-void vpa_gen(VpaGenInput* input, HeaderWriter* hw, IrWriter* w, const char* prefix);

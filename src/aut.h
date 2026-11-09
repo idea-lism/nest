@@ -1,6 +1,5 @@
 #pragma once
 
-#include "irwriter.h"
 #include <stdbool.h>
 #include <stdint.h>
 
@@ -25,4 +24,3 @@ void aut_epsilon(Aut* dfa, int32_t from_state, int32_t to_state);
 void aut_action(Aut* dfa, int32_t state, int32_t action_id);
 void aut_optimize(Aut* dfa);
 int32_t aut_dfa_nstates(Aut* dfa);
-void aut_gen_dfa(Aut* dfa, IrWriter* writer, bool debug_mode);
