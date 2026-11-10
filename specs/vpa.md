@@ -1,104 +1,112 @@
-# Visibly pushdown generator
+# Scoped lexer (VPA)
 
-Create `src/vpa.c` (`void vpa_gen(VpaGenInput* input, HeaderWriter* hw, IrWriter* w, const char* prefix)`):
-- `prefix` comes from `nest` command arg `-p`.
-- emit LLVM IR only for DFA functions and `{prefix}_init_lexers`.
-- emit C header declarations/helpers for the lexer.
+`vpa` compiles scoped regexps into per-scope DFAs and drives the character-level
+scan. Its output is a stream of events (`token` / `hook`, with a source span),
+not a token tree. Each event is fed immediately to the LL(1) parser of the
+innermost active scope that has one; the scope stack is the feed path. No token
+array or token chunk is materialized for parsing.
 
-It iterates the parsed & desugared AST, utilize src/re.h to generate DFA, utilize src/irwriter.h to emit automata definitions.
+This spec fixes the input contract and VPA semantics only. Table encoding,
+generation, and runtime output are [vm](vm.md) concerns.
 
-### Input & input processing
+## Input
 
-Action means: a list of action_unit, each action_unit can be emit a token, do special control for hooks, or call user-defined hook, and interpret the result.
+An action is an ordered list of action units. A unit either emits a term or
+runs a builtin/user hook.
 
 ```c
 typedef enum {
-  VPA_RE, // for literals, we have VpaUnit.re built from string, and action_units = { literal_tok_id }
-  VPA_CALL,
-  VPA_MACRO_REF,
+  VPA_RE,        // regexp matcher; action_units normally holds its literal token
+  VPA_CALL,      // call another scope
+  VPA_MACRO_REF, // expanded by post_process; absent from VPA input
+  VPA_EOF,       // matches end of input
 } VpaUnitKind;
 
+// > 0: term id (token or scope, see parse.md); < 0: -hook_id
 typedef int32_t* VpaActionUnits;
 
 typedef struct {
   VpaUnitKind kind;
-
-  // kind = VPA_RE
-  ReIr re;            // regexp representation
-  bool binary_mode;  // true if tagged with 'b' mode
-
-  // kind = VPA_CALL
+  ReIr re;             // kind = VPA_RE
+  bool binary_mode;    // 'b' mode
   int32_t call_scope_id;
-
-  // kind = VPA_MACRO_REF
-  // expanded in post_process
-  char* macro_name;
-
-  // see the `action` rule in bootstrap.nest and numbering in parse.md
-  // action_unit_id > 0: maps to token_id
-  // action_unit_id < 0: maps to -hook_id
+  char* macro_name;    // kind = VPA_MACRO_REF, before post_process
   VpaActionUnits action_units;
-
-  int32_t source_line; // line in .nest file (for LLVM IR debug info), 0 = unknown
+  int32_t source_line; // diagnostics only; 0 = unknown
   int32_t source_col;
 } VpaUnit;
 
-// use `VpaUnits` when we mean a darray
 typedef VpaUnit* VpaUnits;
 
 typedef struct {
-  int32_t scope_id; // only non-macro scopes have scope_id, incremental
-  char* name;       // (owned)
-  VpaUnit leader;
-  VpaUnits children;
-  bool is_macro; // after pp_inline_macros no macro scope is left
-  bool has_parser;
-  int32_t eof_action;  // action_id for VPA_EOF child, 0 = none
-  int32_t source_line; // line in .nest file (for LLVM IR debug info), 0 = unknown
+  int32_t scope_id;     // stable id used by the runtime
+  char* name;           // owned
+  VpaUnit leader;       // every scope except main has one
+  VpaUnits children;    // body lines: regexp + actions, or scope call
+  bool is_macro;        // removed by pp_inline_macros
+  bool has_parser;      // same-name, non-TODO LL(1) rule exists
+  int32_t eof_action;   // action for VPA_EOF, 0 = none
+  int32_t source_line;
   int32_t source_col;
 } VpaScope;
 
 typedef struct {
   int32_t hook_id;
-  VpaActionUnits effects;
+  VpaActionUnits effects; // allowed return values
 } EffectDecl;
 typedef EffectDecl* EffectDecls;
 
 typedef struct {
   VpaScope* scopes;
   EffectDecls effect_decls; // owned by ParseState
-  Symtab tokens; // owned by ParseState, can be used to lookup token name, start from 1
-  Symtab hooks;  // owned by ParseState, can be used to lookup hook name, start from 0
+  Symtab tokens;            // owned by ParseState, 1-based
+  Symtab hooks;             // owned by ParseState
+  Symtab ignore_names;      // tokens suppressed from the feed
   const char* source_file_name;
-  ReFrags re_frags;
+  ReFrags re_frags;         // owned by ParseState
 } VpaGenInput;
 ```
 
-A first pre-processing is to create actions table:
+Preprocess once into an action table. The table is indexed by action id;
+entry 0 is the empty action.
 
 ```c
 typedef struct {
-  int32_t action_id; // map to index in Acitons array, start from 1
-  VpaActionUnits action_units; // from VpaUnit, not owned
-  const char* end_scope_name;  // if action contains .end, scope name for parse_{name}
-  int32_t begin_scope_id;      // if action contains .begin, target scope_id; -1 otherwise
+  VpaActionUnits action_units; // not owned
+  int32_t begin_scope_id;      // target of .begin, -1 if none
 } Action;
-
-typedef Action* Actions; // darray, prefill actions[0] with an empty entry
 ```
 
-### Scope handling
+`end_scope_name` is gone: `.end` pops the runtime scope stack, so no generated
+`parse_{name}` callback is needed.
 
-Every scope, except the `main`, has a starting regex. After the starting regex is matched, following hooks or tokens can be emitted, or get into child scope looping.
+## Actions
 
-For all scopes, the built-in hook `.begin` / `.end` will push / pop the VPA stack.
+Units run in order.
 
-For scopes with `.has_parser`, the built-in hook `.begin` / `.end` also denotes when to push / pop a TokenChunk too. No PEG parser is invoked by VPA.
+- `id > 0` feeds the term to the active parser; ignored tokens are dropped
+  before feeding.
+- `id < 0` runs hook `-id`.
+- Builtins: `.begin` pushes a scope, `.end` pops and completes it, `.fail`
+  aborts lexing, `.unparse` puts the matched input back (no progress), `.noop`
+  does nothing.
+- A user hook with `%effect` must return a declared effect. Anything else is
+  fatal. A hook without `%effect` has its return value ignored.
+- An empty action is valid: consume input and commit progress without emitting
+  a term or running a hook.
+- Greedy match; when several actions accept on the same state, the smallest
+  action id wins ([aut](aut.md) MIN-RULE).
 
-Sub-scope calls inlines the leader regexp as matcher. Assume we have a scope like this:
+## Scopes and leader inlining
 
-```c
-# braced
+`main` is the entry and has no leader. Every other scope has a leader regexp;
+once it matches, the scope body is the union of its lines.
+
+A scope call in a body inlines the callee's leader regexp. If that leader
+matches, run the callee's leader actions, then continue with the callee's body.
+Thus, for
+
+```nest
 s = /regex1/ {
   /regex2/
   a
@@ -109,168 +117,46 @@ a = /regex3/ .hook1 {
 }
 ```
 
-The matcher for `s` first matches `/regex1/`, then the braced union. Since `a` is called, the brace in `s` should be compiled to the union of `/regex2/` and `/regex3/` (the leader regexp of `a`). And if `/regex3/` is matched, go into `a`'s following processing: 1. invoke `.hoo1`, 2. loop into `a`'s braced union with `/regex4/`.
+the matcher for `s` is `/regex1/` followed by `/regex2/ | /regex3/`. Matching
+`/regex3/` runs `.hook1` and then continues in `a`'s body.
 
-The automata's `action_id` is the index in actions array, codegen will create basic blocks in LLVM IR for all actions, invoking the action units in sequence.
-- With the label array and computed-goto extension, we can dispatch by action_id.
-- Empty-action regexp units are valid: they consume input and commit lexer progress without emitting tokens or invoking hooks.
-- if a user hook have `%effect` definition, check if returned value is within definition:
-  - if yes, emit token or execute primitive hook.
-  - if no, add parse error and terminate parsing (TODO: continuable parsing)
-- if a user hook doesn't have `%effect` definition, the returned value is ignored.
+`.begin` / `.end` push/pop the scope stack for every scope. `has_parser` only
+controls whether `.begin` also attaches a new LL(1) parser instance.
 
-### Usage interface for generated code
+## Token feed
 
-generated header defines the lexer interface and hook context.
+- The innermost active parser receives every term. Scopes without a parser are
+  transparent: their terms feed the nearest enclosing parser.
+- On `.begin` of a scope with a parser, create the child parser. The parent
+  parser is suspended; it does not see the child's tokens.
+- On `.end`, finalize the child parser, then feed exactly one scope term to the
+  parent parser. A parse error is recoverable: record it, finish/close the
+  child, and still feed the scope term to the parent.
+- This is why no token chunk is needed: the parent sees one term per
+  materialized scope, at the point the child finishes.
+- `.begin` / `.end` of a scope without a parser only move the scope stack.
+- The scope's `eof_action`, if any, fires at end of input before the final
+  mismatch.
+- Lexer failure is fatal: no transition, `.fail`, an invalid `%effect`, or an
+  out-of-range hook result stops scanning immediately.
 
-Assume there are 2 hooks `.foo` and `.bar` in lexer definition, generated header should have this interface
+## Output contract
 
-```c
-// common data structures emit by common_header_gen
-...
+Each scope yields one DFA (states, transition ranges, accepting action id) and
+an EOF action id. The action table above is emitted alongside it. Term ids are
+the `action_unit_id` contract; `TOK_*` / `HOOK_*` constants belong to codegen,
+not VPA.
 
-typedef struct {
-  int64_t state;
-  int64_t action_id;
-} {Prefix}AutResult;
+## Errors
 
-typedef struct {
-  int64_t state;
-  int64_t action_id;
-} (*{Prefix}AutFn)(int64_t state, int64_t cp);
+VPA reports only lexer/hook failures and their source spans. Parse error
+records, recovery policy, and message layout live in [ll1](ll1.md) and
+[vm](vm.md).
 
-typedef struct {
-  {Prefix}AutFn aut_{scope_or_dfa_name_1};
-  {Prefix}AutFn aut_{scope_or_dfa_name_2};
-  ...
-} {Prefix}Lexer;
+## Tests
 
-// defined in LLVM IR
-extern void {prefix}_init_lexers({Prefix}Lexer* lexer);
-
-typedef struct {
-  void* user_data;
-  const char* source_file_name;
-  LexHook foo;
-  LexHook bar;
-} ParseContext;
-```
-
-The final `{prefix}_parse` / `{prefix}_cleanup` API is emitted in the generated header after both [PEG GEN](peg_gen.md) and VPA declarations exist.
-
-If a user hook emits some token or some action, user should define it like this:
-
-```c
-// %effect .my_foo_hook = @bax | .fail
-// the return value is in the same numbering system as action_unit_id
-int32_t my_foo_hook(void* userdata, Token* token, const char* token_str_start) {
-  ...
-  if (...) {
-    return TOKEN_BAZ;
-  } else {
-    return HOOK_FAIL;
-  }
-  return HOOK_NOOP;
-}
-```
-
-To make implementation simpler, a hook can only emit one of the effect. If user have to emit multiple hooks:
-
-```nest
-/some-pattern/ .hook1 .hook2 .hook3
-```
-
-They will be executed in order.
-
-A typical usage example (the load_xxx functions are defined by [PEG GEN](peg_gen.md)):
-
-```c
-struct ParseContext ctx = { .source_file_name = source_file_name, .userdata = NULL, .foo = my_foo_hook, .bar = my_bar_hook };
-const char* src = ustr_from_file(ctx.source_file_name);
-struct ParseResult res = {prefix}_parse(ctx, src);
-if (res.error) {
-  fprintf(stderr, "%s", res.error);
-} else {
-  MainNode n = {prefix}_load_main(res.main);
-  ...
-}
-{prefix}_cleanup(res);
-```
-
-### Generated LLVM IR
-
-VPA generated LLVM IR contains only:
-
-```c
-struct { int64_t state; int64_t action_id; } aut_{name}(int64_t state, int64_t cp);
-void {prefix}_init_lexers({Prefix}Lexer* lexer);
-```
-
-No token_tree creation, lex loop, PEG parser call, cleanup wrapper, or final parse API is emitted into VPA LLVM IR.
-
-### Generated C lexer loop
-
-The generated header contains the C lexer loop used by the final parse API.
-
-Similar to the `_lex_scope` in the [parse spec][parse.md].
-- Union of regexps with multiple actions
-  - Inlines child scope's leader regexp
-- Greedy match, and trigger `last_action_id` on no match / eof
-- Empty-action matches update the committed match position, but dispatch no action.
-- Manages scoping stack and token_tree.
-- A lexer failure is fatal. If no VPA action can be dispatched, a hook returns `.fail`, or a hook returns an invalid `%effect`, lexing stops immediately and no more input is consumed.
-
-### Error reporting
-
-The error data structure is defined in parse_result.inc and will be emit by common_header_gen.
-
-```c
-typedef enum {
-  PARSE_ERROR_INVALID_HOOK,
-  PARSE_ERROR_REQUIRE_MORE_INPUT,
-  PARSE_ERROR_TOKEN_ERR,
-  PARSE_ERROR_INVALID_SYNTAX,
-} ParseErrorType;
-
-typedef struct __attribute__((packed, aligned(8))) {
-  char* message; // always dynamic allocated, cleanup frees them
-  ParseErrorType type;
-  int32_t cp_offset;
-  int32_t cp_size;
-} ParseError;
-```
-
-After final parse API runs the generated C lexer loop:
-- if there is token error, just report token error, no need to report parse error. error kinds are:
-  - PARSE_ERROR_INVALID_HOOK
-  - PARSE_ERROR_REQUIRE_MORE_INPUT
-  - PARSE_ERROR_TOKEN_ERR
-- if there is no token error, the final API walks materializable token chunks and invokes PEG parser function pointers from `{Prefix}Parser`.
-  - A PEG failure is **not** a lexer failure. If it fails, set the chunk's `has_parse_error = 1` and `token_tree->has_parse_error = 1`.
-  - if there is parse error, collect error messages by `tt_collect_parse_errors(token_tree, {prefix}_parse_error_collect, (void*)&parse_errors)`
-    - each error kind is PARSE_ERROR_INVALID_SYNTAX
-
-### Header generating
-
-Resulting parser needs:
-
-- token ids: `TOK_XXX` numbered in the system of action_unit_id.
-  - but don't include the token ids for keyword literals (the ids in the form of `@lit.xxx`) because we have no way to upcase them.
-- primitive hook ids: `HOOK_XXX` numbered in the system of action_unit_id.
-
-### Misc
-
-When need to print upper cased string, don't create string buf, use this helper instead:
-
-```c
-void _print_upper(HeaderWriter hw, const char* s) {
-  for (; *s; s++) {
-    hw_rawc(hw, toupper(*s));
-  }
-}
-```
-
-### Testing
-
-- test should check if token tree is created when there are multiple scopes, not a flatten token stream.
-- test should cover empty-action regexp units inside scope bodies.
+- Nested scopes, leader inlining, and a scope call from inside a body.
+- Empty-action branches, ignored tokens, and EOF actions.
+- Valid and invalid `%effect` returns.
+- Feed trace `(scope, term)` for scopes with and without parsers; no token-tree
+  assertion.

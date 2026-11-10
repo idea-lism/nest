@@ -10,6 +10,7 @@
 # pre-define partial regexp for later use
 %define ID /[a-z_]\w*/
 
+# declare a custom decision hook that can yield a set of the decisions (in declaration order)
 %effect .str_check_end = @char | .end
 
 # when used in editor, scopes are auto-foldable and can be selected with text object commands
@@ -47,8 +48,8 @@ vpa = /\s*\[\[vpa\]\]\n/ .begin {
   /\.begin/ @hook_begin
   /\.end/ @hook_end
   /\.fail/ @hook_fail
-  /\.unparse/ @hook_unparse
   /\.noop/ @hook_noop
+  /\.unparse/ @hook_unparse
   ID @vpa_id
   "EOF" @pseudo_frag_eof
   /[A-Z]\w*/ @re_frag_id

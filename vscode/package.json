@@ -1,0 +1,39 @@
+{
+  "name": "nest",
+  "displayName": "Nest",
+  "description": "Syntax highlighting for Nest grammar files",
+  "version": "0.0.1",
+  "publisher": "nest-lang",
+  "license": "BSD-2-Clause",
+  "engines": {
+    "vscode": "^1.85.0"
+  },
+  "categories": [
+    "Programming Languages"
+  ],
+  "scripts": {
+    "deploy": "pnpm dlx @vscode/vsce package --allow-missing-repository --out nest.vsix && code --install-extension nest.vsix --force"
+  },
+  "contributes": {
+    "languages": [
+      {
+        "id": "nest",
+        "aliases": [
+          "Nest",
+          "nest"
+        ],
+        "extensions": [
+          ".nest"
+        ],
+        "configuration": "./language-configuration.json"
+      }
+    ],
+    "grammars": [
+      {
+        "language": "nest",
+        "scopeName": "source.nest",
+        "path": "./syntaxes/nest.tmLanguage.json"
+      }
+    ]
+  }
+}

@@ -1,0 +1,160 @@
+{
+  "$schema": "https://raw.githubusercontent.com/martinring/tmlanguage/master/tmlanguage.json",
+  "name": "Nest",
+  "scopeName": "source.nest",
+  "patterns": [
+    { "include": "#comment" },
+    { "include": "#section" },
+    { "include": "#directive" },
+    { "include": "#rule" },
+    { "include": "#regexp" },
+    { "include": "#string" },
+    { "include": "#token" },
+    { "include": "#hook" },
+    { "include": "#module" },
+    { "include": "#keyword" },
+    { "include": "#operator" }
+  ],
+  "repository": {
+    "comment": {
+      "patterns": [
+        {
+          "name": "comment.line.number-sign.nest",
+          "match": "#.*$"
+        }
+      ]
+    },
+    "section": {
+      "patterns": [
+        {
+          "name": "entity.name.section.nest",
+          "match": "^\\s*\\[\\[[A-Za-z_]+\\]\\]"
+        }
+      ]
+    },
+    "directive": {
+      "patterns": [
+        {
+          "name": "keyword.control.directive.nest",
+          "match": "^\\s*%(?:ignore|effect|define)\\b"
+        }
+      ]
+    },
+    "rule": {
+      "patterns": [
+        {
+          "match": "^(\\s*)(\\*?[A-Za-z_]\\w*)(\\s*)(=)",
+          "captures": {
+            "2": { "name": "entity.name.function.rule.nest" },
+            "4": { "name": "keyword.operator.assignment.nest" }
+          }
+        }
+      ]
+    },
+    "regexp": {
+      "patterns": [
+        {
+          "name": "string.regexp.nest",
+          "begin": "(?<![\\w@.])((?:bi|ib|b|i)?)(/)",
+          "beginCaptures": {
+            "1": { "name": "storage.modifier.nest" },
+            "2": { "name": "punctuation.definition.regexp.begin.nest" }
+          },
+          "end": "(/)",
+          "endCaptures": {
+            "1": { "name": "punctuation.definition.regexp.end.nest" }
+          },
+          "patterns": [
+            {
+              "name": "constant.other.fragment.nest",
+              "match": "\\\\\\{\\w+\\}"
+            },
+            {
+              "name": "constant.character.escape.codepoint.nest",
+              "match": "\\\\\\{\\h+\\}"
+            },
+            {
+              "name": "constant.character.escape.nest",
+              "match": "\\\\[bfnrtv]"
+            },
+            {
+              "name": "constant.character.escape.nest",
+              "match": "\\\\."
+            },
+            {
+              "name": "punctuation.definition.character-class.nest",
+              "match": "\\[[^\\]\\n]*\\]"
+            }
+          ]
+        }
+      ]
+    },
+    "string": {
+      "patterns": [
+        {
+          "name": "string.quoted.nest",
+          "begin": "[\"']",
+          "end": "[\"']",
+          "patterns": [
+            {
+              "name": "constant.character.escape.codepoint.nest",
+              "match": "\\\\\\{\\h+\\}"
+            },
+            {
+              "name": "constant.character.escape.nest",
+              "match": "\\\\[bfnrtv]"
+            },
+            {
+              "name": "constant.character.escape.nest",
+              "match": "\\\\."
+            }
+          ]
+        }
+      ]
+    },
+    "token": {
+      "patterns": [
+        {
+          "name": "variable.other.token.nest",
+          "match": "@[A-Za-z_]\\w*"
+        }
+      ]
+    },
+    "hook": {
+      "patterns": [
+        {
+          "name": "support.function.builtin.hook.nest",
+          "match": "\\.(?:begin|end|fail|unparse|noop)\\b"
+        },
+        {
+          "name": "entity.name.function.hook.nest",
+          "match": "\\.[A-Za-z_]\\w*"
+        }
+      ]
+    },
+    "module": {
+      "patterns": [
+        {
+          "name": "variable.other.module.nest",
+          "match": "(?<![\\w])\\*[A-Za-z_]\\w*"
+        }
+      ]
+    },
+    "keyword": {
+      "patterns": [
+        {
+          "name": "constant.language.nest",
+          "match": "\\b(?:EOF|TODO)\\b"
+        }
+      ]
+    },
+    "operator": {
+      "patterns": [
+        {
+          "name": "keyword.operator.nest",
+          "match": "[=|{}()\\[\\]<>?+*:]"
+        }
+      ]
+    }
+  }
+}
