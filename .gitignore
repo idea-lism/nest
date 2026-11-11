@@ -3,6 +3,7 @@ build.ninja
 compile_commands.json
 out
 lex.o
+.tmp
 lex_wrap.o
 *.dSYM
 .cache
